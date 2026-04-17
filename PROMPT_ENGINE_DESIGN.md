@@ -123,6 +123,35 @@ type ContextOverlay = {
 };
 ```
 
+## Iteration Turn Overlays
+
+Iteration loops (user responds to an output, the app regenerates) are
+modelled as overlays rather than a separate chat-history primitive. A
+**turn overlay** is an ordinary overlay whose metadata carries the user's
+verbatim follow-up plus an optional compacted form:
+
+```
+metadata: {
+  kind: "turn",
+  verbatim: "actually please make it shorter",
+  compacted: "Prefer concise output."   // optional
+}
+```
+
+The overlay's active `text` is the compacted form when present, otherwise
+the verbatim. Compaction is produced by a named route (e.g.
+`compact_turn`) using the same engine surface — no special code path.
+Preserving the verbatim in metadata means the caller can:
+
+- Revert to verbatim (swap `text` ↔ `metadata.verbatim`)
+- Re-compact (re-run the compaction route against `metadata.verbatim`)
+- Audit what the user actually said versus what was shown to the model
+
+A small helper (`make_turn_overlay(verbatim, compacted=None, priority=25)`)
+is the recommended constructor so the `kind: "turn"` contract is uniform.
+Orchestration (when to compact, what params to use) stays in the caller —
+the library only provides the data primitive and the route.
+
 ## Template Slots
 
 Templates should allow explicit slots such as:
@@ -447,6 +476,27 @@ It can compare:
 - Similarity score
 
 This memory should be bounded and context-aware. Clearing it on major context changes is often useful, while preserving it across minor overlays can avoid loops.
+
+## Run History
+
+Distinct from recent-output memory. Recent-output memory exists to detect
+repetition (Jaccard over text). Run history exists to let UIs and callers
+*replay* past runs — reloading the exact request shape that produced a
+given output.
+
+Each record captures:
+
+- The `GenerationRequest` as sent (mode, inputs, injections, config overrides)
+- The cleaned output text
+- Whether it was accepted
+- The route that handled it
+- A timestamp
+- Optional metadata
+
+Keep it bounded and keep it separate. Two primitives each doing one thing
+beats a single struct with a growing optional-field bag. A caller wanting
+chat-style history can read run history; a caller only wanting dedup
+continues to use recent-output memory; neither depends on the other.
 
 ## Programmatic Additions
 
