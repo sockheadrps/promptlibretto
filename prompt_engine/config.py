@@ -16,6 +16,7 @@ class GenerationConfig:
     timeout_ms: int = 60_000
     retries: int = 1
     lock_params: bool = False
+    max_prompt_chars: Optional[int] = None
 
     def merged_with(self, overrides: Optional[Mapping[str, Any]]) -> "GenerationConfig":
         if not overrides:

@@ -11,18 +11,26 @@ from .context.overlay import ContextOverlay, ContextSnapshot, make_turn_overlay
 from .context.template import TemplateRenderer, TemplateField, TemplateRenderOptions
 from .context.store import ContextStore
 from .assets.registry import PromptAssetRegistry, InjectionTemplate, PromptInjection
-from .routing.route import PromptRoute
+from .routing.route import PromptRoute, InputValidationError
 from .routing.router import PromptRouter
 from .builders.builder import PromptBuilder, PromptPackage, GenerationRequest
 from .builders.composite import CompositeBuilder, section, join_sections
-from .providers.base import ProviderAdapter, ProviderRequest, ProviderResponse
+from .providers.base import (
+    ProviderAdapter,
+    ProviderRequest,
+    ProviderResponse,
+    ProviderStreamChunk,
+    StreamingProviderAdapter,
+    supports_streaming,
+)
 from .providers.ollama import OllamaProvider
 from .providers.mock import MockProvider
 from .output.processor import OutputProcessor, ValidationResult, OutputPolicy
 from .output.memory import RecentOutputMemory
 from .output.history import RunHistory, RunRecord
 from .runtime.trace import GenerationTrace, GenerationAttempt
-from .runtime.engine import PromptEngine, GenerationResult
+from .runtime.engine import PromptEngine, GenerationResult, GenerationChunk
+from .runtime.middleware import Middleware, apply_before, apply_after
 
 __all__ = [
     "GenerationConfig",
@@ -40,6 +48,7 @@ __all__ = [
     "InjectionTemplate",
     "PromptInjection",
     "PromptRoute",
+    "InputValidationError",
     "PromptRouter",
     "PromptBuilder",
     "PromptPackage",
@@ -50,6 +59,9 @@ __all__ = [
     "ProviderAdapter",
     "ProviderRequest",
     "ProviderResponse",
+    "ProviderStreamChunk",
+    "StreamingProviderAdapter",
+    "supports_streaming",
     "OllamaProvider",
     "MockProvider",
     "OutputProcessor",
@@ -62,4 +74,8 @@ __all__ = [
     "GenerationAttempt",
     "PromptEngine",
     "GenerationResult",
+    "GenerationChunk",
+    "Middleware",
+    "apply_before",
+    "apply_after",
 ]

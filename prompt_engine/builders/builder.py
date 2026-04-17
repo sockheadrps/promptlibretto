@@ -22,6 +22,7 @@ class GenerationRequest:
     injections: Sequence[str] = field(default_factory=tuple)
     metadata: Mapping[str, Any] = field(default_factory=dict)
     debug: bool = False
+    config_overrides: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass

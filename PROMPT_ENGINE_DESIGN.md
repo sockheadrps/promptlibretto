@@ -498,6 +498,111 @@ beats a single struct with a growing optional-field bag. A caller wanting
 chat-style history can read run history; a caller only wanting dedup
 continues to use recent-output memory; neither depends on the other.
 
+## Streaming
+
+Some providers can emit tokens incrementally. The engine exposes this via
+`generate_stream(request)`, an async iterator of chunks:
+
+- Intermediate chunks carry a `delta` string.
+- The terminal chunk has `done=True` and a fully populated `GenerationResult`
+  so downstream callers pick up `accepted`, `route`, and an optional trace
+  without a second round.
+
+Providers declare support by implementing `stream()` alongside `generate()`.
+A helper `supports_streaming(provider)` lets the engine refuse the request
+cleanly when the adapter is non-streaming.
+
+Streaming deliberately runs the output processor exactly once on the
+aggregated buffer — retries are skipped because replaying a stream
+mid-output is more surprising than useful. Callers that need retry
+semantics can fall back to `generate_once` when the terminal result is
+rejected. This keeps the pipeline identical for both paths: a single
+buffer is cleaned, validated, recorded to run history, and passed through
+middleware.
+
+## Middleware
+
+Cross-cutting concerns — logging, metrics, caching, rate-limiting, redaction
+— belong neither inside builders nor inside providers. The engine exposes a
+small middleware hook around the generation path:
+
+```
+Middleware:
+  before(request) -> request | None
+  after(request, result) -> result | None
+```
+
+Either method may be sync or async. Returning `None` means pass-through.
+Middleware runs in registration order on the way in and reverse order on
+the way out, so outer middleware wraps inner. Both `generate_once` and
+`generate_stream` pass through the same hooks.
+
+What middleware does NOT do: intercept provider calls directly, add retry
+semantics, or mutate prompt construction. Those concerns live in the
+builder, the output processor, and the route config respectively. Keeping
+middleware small preserves the invariant that *all generation goes through
+one code path* — schedulers, stepper debuggers, and middleware all see the
+same `GenerationResult`.
+
+## Typed Route Inputs
+
+`GenerationRequest.inputs` is `Mapping[str, Any]` — intentionally loose
+so callers can pass arbitrary payloads through to builders. Routes that
+want a tighter contract can declare an `inputs_schema` dataclass. When
+present, the engine validates inputs before the builder runs:
+
+- Required fields (no `default`, no `default_factory`) must appear in
+  `inputs`.
+- Missing required fields raise `InputValidationError(route, missing)`
+  with a list of field names.
+- Extras are allowed. The contract is additive so a caller passing
+  metadata through does not break routes that do not know about it.
+
+This is opt-in per route. Routes without a schema behave exactly as
+before. The validation step is cheap — a single field scan — so it does
+not bloat the hot path. The design goal is to give consumers a clean
+error at the boundary (before prompt construction, before the provider
+call) rather than a confused model output when a builder silently
+references a missing key.
+
+The library accepts any dataclass rather than pulling in pydantic
+because dataclasses are part of the standard library and carry no
+runtime cost beyond field inspection. Teams that want runtime type
+coercion can still build on top with their own schema type — the engine
+only asks that `required_inputs()` and `validate_inputs()` do the right
+thing, so subclassing `PromptRoute` or registering a custom route type
+remains an option.
+
+## Prompt-Size Budget
+
+When overlays accumulate (iteration turns, user preferences, transient
+facts), the built prompt can grow past what the model or the surrounding
+app can tolerate. The engine supports an optional `max_prompt_chars`
+budget on `GenerationConfig` (or per-route via `generation_overrides`).
+
+When set, the engine:
+
+1. Builds the prompt package normally.
+2. If `len(system) + len(user)` exceeds the budget, drops the
+   lowest-priority overlay from the snapshot and rebuilds.
+3. Repeats until the prompt fits or no overlays remain.
+
+Priority is the existing overlay field — higher means applied first and
+also "more important", so lowest-priority drops first. Ties break on
+overlay name for determinism.
+
+The budget operates on character count rather than token count because a
+character budget is provider-agnostic and has no tokenizer dependency. It
+is conservative relative to token budgets (tokens are usually 3–4 chars
+each), which matches the intent of "don't let overlays silently balloon
+the prompt."
+
+The debug trace reports budget state under `metadata.budget`:
+`{budget_chars, final_chars, dropped, over_budget}`. When the prompt is
+still over budget after exhausting overlays, `over_budget=True` flags it
+rather than erroring — the engine never silently drops user-authored base
+context.
+
 ## Programmatic Additions
 
 Some output features are better handled after generation.

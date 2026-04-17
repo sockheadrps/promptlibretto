@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prompt Engine — Test Bench</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Prompt Engine Test Bench</h1>
+    <div class="header-right">
+      <button id="scenarios-btn" type="button" class="ghost-action">Scenarios</button>
+      <button id="example-btn" type="button" class="example">Load Example Scenario</button>
+      <div class="meta">
+        <span id="meta-provider">provider: …</span>
+        <span id="meta-model">model: …</span>
+        <span id="meta-url">url: …</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- LEFT: composition + state as tabs -->
+    <section class="panel controls-panel">
+      <nav class="tabs" role="tablist">
+        <div class="tab active" role="tab" tabindex="0" data-tab="compose" aria-selected="true">
+          <span class="tab-num">1</span>
+          <span class="tab-label">Compose</span>
+          <button class="help" type="button" data-help="compose">?</button>
+        </div>
+        <div class="tab" role="tab" tabindex="0" data-tab="state" aria-selected="false">
+          <span class="tab-num">2</span>
+          <span class="tab-label">Context State</span>
+          <button class="help" type="button" data-help="state">?</button>
+        </div>
+      </nav>
+
+      <div class="tab-panel" data-tab="compose" role="tabpanel">
+        <label class="field">
+          <span class="field-label">Route <button class="help" type="button" data-help="route">?</button></span>
+          <select id="route-select"></select>
+          <small id="route-desc" class="muted"></small>
+        </label>
+
+        <label class="field">
+          <span class="field-label">User Input <button class="help" type="button" data-help="input">?</button></span>
+          <textarea id="input-text" rows="6" placeholder="Type the request, question, brief, or source text…"></textarea>
+        </label>
+
+        <fieldset class="field">
+          <legend class="field-label">Injections <button class="help" type="button" data-help="injections">?</button></legend>
+          <div id="injection-groups" class="injection-groups"></div>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend class="field-label">Generation Overrides <button class="help" type="button" data-help="overrides">?</button></legend>
+          <div class="grid-2">
+            <label><span>temperature</span><input id="cfg-temperature" type="number" step="0.05" min="0" max="2" /></label>
+            <label><span>top_p</span><input id="cfg-top_p" type="number" step="0.05" min="0" max="1" /></label>
+            <label><span>top_k</span><input id="cfg-top_k" type="number" step="1" min="0" /></label>
+            <label><span>max_tokens</span><input id="cfg-max_tokens" type="number" step="16" min="16" /></label>
+            <label><span>repeat_penalty</span><input id="cfg-repeat_penalty" type="number" step="0.05" min="0" /></label>
+            <label><span>retries</span><input id="cfg-retries" type="number" step="1" min="0" max="5" /></label>
+            <label><span>max_prompt_chars</span><input id="cfg-max_prompt_chars" type="number" step="100" min="0" placeholder="off" title="cap the outgoing prompt; drops lowest-priority overlays until it fits" /></label>
+          </div>
+        </fieldset>
+      </div>
+
+      <div class="tab-panel" data-tab="state" role="tabpanel" hidden>
+        <label class="field">
+          <span class="field-label">Base Context <button class="help" type="button" data-help="base">?</button></span>
+          <textarea id="base-text" rows="4" placeholder="Long-lived facts and framing…"></textarea>
+          <div class="base-actions">
+            <button id="save-base" type="button" class="ghost-action">Save Base</button>
+            <button id="save-base-as" type="button" class="ghost-action">Save As…</button>
+            <button id="load-base" type="button" class="ghost-action">Load…</button>
+          </div>
+        </label>
+
+        <div class="subhead">
+          <span>Overlays</span>
+          <button class="help" type="button" data-help="overlays">?</button>
+          <span class="spacer"></span>
+          <input id="suggest-count" type="number" min="1" max="20" step="1" value="5" class="inline-num" title="how many overlays to suggest" />
+          <button id="suggest-overlays" type="button" class="ghost-action small" title="Ask the model to suggest overlays based on the current base context">✨ Suggest</button>
+        </div>
+        <div id="overlay-suggestions" class="overlay-suggestions" hidden></div>
+        <div id="overlay-list" class="overlay-list"></div>
+        <div class="overlay-form">
+          <input id="overlay-name" placeholder="overlay name" />
+          <input id="overlay-priority" type="number" placeholder="priority" value="10" />
+          <textarea id="overlay-text" rows="2" placeholder="overlay text…"></textarea>
+          <div class="actions">
+            <button id="add-overlay" type="button">Add / Replace</button>
+            <button id="clear-overlays" type="button" class="ghost">Clear All</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- RIGHT: output -->
+    <section class="panel output-panel">
+      <header class="panel-header">
+        <span class="section-title">3. Output</span>
+        <button class="help" type="button" data-help="output">?</button>
+        <span class="spacer"></span>
+        <label class="switch" title="toggle debug trace">
+          <input id="debug-toggle" type="checkbox" checked />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">debug trace</span>
+        </label>
+        <button class="help" type="button" data-help="debug">?</button>
+        <button id="generate-btn" type="button" class="primary-action">Generate ⏎</button>
+      </header>
+      <div class="output-meta">
+        <span id="out-route" class="pill">route: —</span>
+        <span id="out-accepted" class="pill">—</span>
+        <span id="out-timing" class="pill">—</span>
+        <span id="out-usage" class="pill">—</span>
+        <span class="spacer"></span>
+        <div class="view-toggle" role="group" aria-label="Output view">
+          <button id="view-rendered" type="button" class="toggle active">rendered</button>
+          <button id="view-raw" type="button" class="toggle">raw</button>
+        </div>
+      </div>
+      <div id="output-rendered" class="output-text markdown">(no generation yet)</div>
+      <pre id="output-raw" class="output-text" hidden>(no generation yet)</pre>
+
+      <div class="iterate-strip">
+        <div class="subhead">
+          <span>Iterate</span>
+          <button class="help" type="button" data-help="iterate">?</button>
+        </div>
+        <textarea id="iterate-input" rows="3" placeholder="Respond to the output. We'll attach your follow-up as an overlay so the next generation accounts for it."></textarea>
+        <div class="iterate-actions">
+          <button id="iterate-verbatim" type="button" class="ghost-action">Use verbatim</button>
+          <button id="iterate-compact" type="button" class="primary-action">Compact &amp; insert</button>
+        </div>
+        <details class="iterate-params">
+          <summary class="muted">compaction params</summary>
+          <div class="grid-2">
+            <label><span>temperature</span><input id="compact-temperature" type="number" step="0.05" min="0" max="2" placeholder="0.4" /></label>
+            <label><span>max_tokens</span><input id="compact-max_tokens" type="number" step="16" min="16" placeholder="160" /></label>
+          </div>
+        </details>
+      </div>
+
+      <div class="recent-strip">
+        <div class="subhead">
+          <span>Recent Runs</span>
+          <button class="help" type="button" data-help="recent">?</button>
+          <span class="spacer"></span>
+          <button id="clear-recent" type="button" class="ghost small">Clear All</button>
+        </div>
+        <div id="run-history" class="run-history"></div>
+      </div>
+    </section>
+
+    <!-- FAR RIGHT: debug trace -->
+    <section class="panel debug-panel">
+      <header class="panel-header">
+        <span class="section-title">4. Debug Trace</span>
+        <button class="help" type="button" data-help="trace">?</button>
+      </header>
+      <div class="debug-body">
+        <h4>System Prompt</h4>
+        <pre id="trace-system" class="trace"></pre>
+        <h4>User Prompt</h4>
+        <pre id="trace-user" class="trace"></pre>
+        <h4>Active Context</h4>
+        <pre id="trace-active" class="trace"></pre>
+        <h4>Attempts</h4>
+        <pre id="trace-attempts" class="trace"></pre>
+        <h4>Usage &amp; Timing</h4>
+        <pre id="trace-usage" class="trace"></pre>
+        <h4>Resolved Config</h4>
+        <pre id="trace-config" class="trace"></pre>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header>
+        <h3 id="modal-title">Help</h3>
+        <button class="modal-close" type="button" data-close aria-label="Close">×</button>
+      </header>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

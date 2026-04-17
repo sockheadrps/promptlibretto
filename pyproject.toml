@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "prompt_engine"
+version = "0.1.0"
+description = "Composable prompt-construction library with named routes, context overlays, injections, streaming, middleware, and output validation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "sockheadrps" }]
+keywords = ["prompt", "llm", "ollama", "prompt-engineering"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []
+
+[project.optional-dependencies]
+ollama = ["httpx>=0.25"]
+server = ["fastapi>=0.110", "uvicorn>=0.27", "httpx>=0.25", "pydantic>=2.0"]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.25",
+]
+
+[project.urls]
+Homepage = "https://github.com/sockheadrps/PromptEngine"
+Issues = "https://github.com/sockheadrps/PromptEngine/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["prompt_engine"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "prompt_engine/",
+    "README.md",
+    "PROMPT_ENGINE_DESIGN.md",
+    "pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

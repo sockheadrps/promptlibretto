@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import time
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 import httpx
 
@@ -9,6 +10,7 @@ from .base import (
     ProviderAdapter,
     ProviderRequest,
     ProviderResponse,
+    ProviderStreamChunk,
     ProviderTiming,
     ProviderUsage,
 )
@@ -26,18 +28,46 @@ class OllamaProvider(ProviderAdapter):
         self,
         base_url: str = "http://localhost:11434",
         chat_path: str = "/api/chat",
+        payload_shape: str = "auto",
         client: Optional[httpx.AsyncClient] = None,
     ):
+        """
+        `payload_shape` controls how sampling params are encoded in the request:
+
+        - "ollama": wrap in `options: {...}` with `num_predict` for max tokens.
+          Matches Ollama's `/api/chat` and `/api/generate`.
+        - "openai": top-level `temperature`, `max_tokens`, `top_p`. Matches
+          llama.cpp-server, vLLM, and other OpenAI-compatible backends on
+          `/v1/chat/completions`.
+        - "auto" (default): picks "openai" when `chat_path` contains `/v1/`,
+          else "ollama". Covers the common cases without explicit config.
+        """
         self._base_url = base_url.rstrip("/")
         self._chat_path = chat_path if chat_path.startswith("/") else "/" + chat_path
+        if payload_shape == "auto":
+            payload_shape = "openai" if "/v1/" in self._chat_path else "ollama"
+        if payload_shape not in ("ollama", "openai"):
+            raise ValueError(f"unknown payload_shape: {payload_shape!r}")
+        self._payload_shape = payload_shape
         self._owned_client = client is None
         self._client = client or httpx.AsyncClient()
 
-    async def aclose(self) -> None:
-        if self._owned_client:
-            await self._client.aclose()
-
-    async def generate(self, request: ProviderRequest) -> ProviderResponse:
+    def _build_payload(self, request: ProviderRequest, stream: bool) -> dict[str, Any]:
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+        if self._payload_shape == "openai":
+            payload: dict[str, Any] = {
+                "model": request.model,
+                "messages": messages,
+                "stream": stream,
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+            }
+            if request.top_p is not None:
+                payload["top_p"] = request.top_p
+            # OpenAI-compatible servers typically don't accept top_k /
+            # repeat_penalty at the top level; skip them rather than send
+            # fields that could be rejected.
+            return payload
         options: dict[str, Any] = {
             "temperature": request.temperature,
             "num_predict": request.max_tokens,
@@ -48,13 +78,19 @@ class OllamaProvider(ProviderAdapter):
             options["top_k"] = request.top_k
         if request.repeat_penalty is not None:
             options["repeat_penalty"] = request.repeat_penalty
-
-        payload = {
+        return {
             "model": request.model,
-            "messages": [{"role": m.role, "content": m.content} for m in request.messages],
-            "stream": False,
+            "messages": messages,
+            "stream": stream,
             "options": options,
         }
+
+    async def aclose(self) -> None:
+        if self._owned_client:
+            await self._client.aclose()
+
+    async def generate(self, request: ProviderRequest) -> ProviderResponse:
+        payload = self._build_payload(request, stream=False)
 
         url = f"{self._base_url}{self._chat_path}"
         timeout = max(1.0, request.timeout_ms / 1000.0)
@@ -75,6 +111,57 @@ class OllamaProvider(ProviderAdapter):
             eval_ms=_ns_to_ms(data.get("eval_duration")),
         )
         return ProviderResponse(text=text, usage=usage, timing=timing, raw=data)
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderStreamChunk]:
+        payload = self._build_payload(request, stream=True)
+        url = f"{self._base_url}{self._chat_path}"
+        timeout = max(1.0, request.timeout_ms / 1000.0)
+
+        buffer: list[str] = []
+        started = time.perf_counter()
+        final_data: Optional[dict] = None
+        async with self._client.stream("POST", url, json=payload, timeout=timeout) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line:
+                    continue
+                # OpenAI-compatible servers use SSE: `data: {json}` / `data: [DONE]`.
+                if line.startswith("data:"):
+                    line = line[5:].strip()
+                    if line == "[DONE]":
+                        break
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                piece = self._extract_text(data)
+                if piece:
+                    buffer.append(piece)
+                    yield ProviderStreamChunk(text=piece, done=False)
+                if data.get("done"):
+                    final_data = data
+                    break
+
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        text = "".join(buffer)
+        data = final_data or {}
+        yield ProviderStreamChunk(
+            text="",
+            done=True,
+            response=ProviderResponse(
+                text=text,
+                usage=self._extract_usage(data),
+                timing=ProviderTiming(
+                    total_ms=_ns_to_ms(data.get("total_duration")) or elapsed_ms,
+                    load_ms=_ns_to_ms(data.get("load_duration")),
+                    prompt_eval_ms=_ns_to_ms(data.get("prompt_eval_duration")),
+                    eval_ms=_ns_to_ms(data.get("eval_duration")),
+                ),
+                raw=data,
+            ),
+        )
 
     @staticmethod
     def _extract_text(data: dict) -> str:

@@ -23,11 +23,25 @@ branch.
 ## Install
 
 ```bash
-pip install httpx  # only needed for OllamaProvider
+pip install .                 # library only, no runtime deps
+pip install ".[ollama]"       # adds httpx for OllamaProvider
+pip install ".[server]"       # adds FastAPI stack for the test bench
+pip install ".[dev]"          # adds pytest + pytest-asyncio for the test suite
 ```
 
-The library itself has no runtime dependencies. Drop the `prompt_engine/`
-package into your project, or install from source.
+The library itself has no runtime dependencies. The extras above pull in
+only what the named surface needs.
+
+## Tests
+
+```bash
+pip install ".[dev]"
+pytest
+```
+
+Covers engine flow, composite builder, overlay priority + expiry, prompt
+budget trim, middleware ordering, streaming, output policy, run history,
+and typed route inputs.
 
 ## Core concepts
 
@@ -172,6 +186,40 @@ to omit the section. That's the whole extension point for `CompositeBuilder`.
 For anything more elaborate, implement the `PromptBuilder` protocol — a
 single method, `build(ctx: BuildContext) -> PromptPackage`.
 
+## Typed route inputs (opt-in)
+
+Routes can declare an `inputs_schema` — any dataclass — that describes
+what `GenerationRequest.inputs` must contain. The engine validates inputs
+before building and raises `InputValidationError` with a list of missing
+required fields:
+
+```python
+from dataclasses import dataclass, field
+from prompt_engine import InputValidationError, PromptRoute
+
+@dataclass
+class AnalystInputs:
+    topic: str                # required
+    tone: str = "neutral"     # optional
+    tags: list[str] = field(default_factory=list)
+
+route = PromptRoute(
+    name="analyst",
+    builder=analyst_builder,
+    inputs_schema=AnalystInputs,
+)
+
+try:
+    await engine.generate_once(GenerationRequest(mode="analyst", inputs={"tone": "crisp"}))
+except InputValidationError as e:
+    print(e.route, e.missing)   # "analyst", ["topic"]
+```
+
+The contract is additive — extras beyond the schema are allowed, so
+callers can pass metadata through without breaking existing routes.
+Leaving `inputs_schema` unset preserves the old `Mapping[str, Any]`
+behavior, so this is opt-in per route.
+
 ## Templating
 
 `TemplateRenderer` does small-footprint `{slot}` substitution, useful when
@@ -234,6 +282,59 @@ await engine.generate_once(GenerationRequest(
 - `MockProvider()` — echoes the prompt; handy for tests.
 
 Write your own by implementing `async def generate(request) -> ProviderResponse`.
+
+### Streaming
+
+Providers can optionally implement `async def stream(request)` yielding
+`ProviderStreamChunk(text=..., done=False)` per token and a terminal
+`ProviderStreamChunk(done=True, response=ProviderResponse(...))`. Both
+`MockProvider` and `OllamaProvider` support this. The engine exposes
+`generate_stream(request)`, which yields `GenerationChunk(delta=...)` per
+chunk and a final `GenerationChunk(done=True, result=GenerationResult(...))`:
+
+```python
+async for chunk in engine.generate_stream(request):
+    if chunk.done:
+        final = chunk.result        # same shape as generate_once returns
+    elif chunk.delta:
+        print(chunk.delta, end="", flush=True)
+```
+
+Streaming makes exactly one provider call — retries are skipped because
+replaying a stream mid-output is more surprising than useful. If the
+terminal `result.accepted` is `False`, fall back to `generate_once`.
+
+## Middleware
+
+Attach cross-cutting concerns (logging, metrics, caching, rate-limiting,
+redaction) without touching prompt construction:
+
+```python
+class LatencyLogger:
+    async def before(self, request):
+        self.started = time.perf_counter()
+    async def after(self, request, result):
+        print(f"route={result.route} ms={(time.perf_counter() - self.started)*1000:.1f}")
+
+engine = PromptEngine(..., middlewares=[LatencyLogger()])
+engine.add_middleware(OtherMiddleware())
+```
+
+Either method can be sync or async. Returning `None` means pass-through;
+returning a new request/result replaces it for inner middleware and the
+engine. `before` runs in registration order, `after` in reverse, so a
+middleware registered first sees the final outbound request and the final
+returned result. Middleware wraps both `generate_once` and `generate_stream`.
+
+## Prompt-size budget
+
+Set `max_prompt_chars` on `GenerationConfig` (or via a route's
+`generation_overrides`) to cap the outgoing prompt. When the built
+`system + user` exceeds the budget, the engine drops the lowest-priority
+overlay from the snapshot, rebuilds the package, and repeats until it fits
+or no overlays remain. The debug trace reports under `metadata.budget`
+which overlays were dropped, the final size, and whether the prompt was
+still over budget after exhausting overlays.
 
 ## Output processor
 

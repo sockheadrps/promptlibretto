@@ -43,3 +43,24 @@ class ContextSnapshot:
     active: str
     overlays: dict[str, ContextOverlay] = field(default_factory=dict)
     fields: dict[str, Any] = field(default_factory=dict)
+
+    def with_overlays(self, overlays: Mapping[str, ContextOverlay]) -> "ContextSnapshot":
+        """Return a new snapshot with `active` rebuilt from `base` + `overlays`.
+
+        Priority order (desc) is preserved. Used by the engine's prompt-size
+        budget trim to produce a snapshot with the lowest-priority overlays
+        dropped without touching the underlying ContextStore.
+        """
+        ordered = sorted(overlays.items(), key=lambda kv: kv[1].priority, reverse=True)
+        sections = [self.base] if self.base else []
+        for _, overlay in ordered:
+            text = overlay.text.strip()
+            if text:
+                sections.append(text)
+        active = "\n\n".join(sections).strip()
+        return ContextSnapshot(
+            base=self.base,
+            active=active,
+            overlays=dict(overlays),
+            fields=dict(self.fields),
+        )

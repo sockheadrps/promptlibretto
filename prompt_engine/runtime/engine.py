@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from typing import Optional, Sequence
+from typing import AsyncIterator, Optional, Sequence
 
 from ..assets.registry import PromptAssetRegistry, PromptInjection
 from ..builders.builder import BuildContext, GenerationRequest, PromptPackage
@@ -15,9 +15,11 @@ from ..providers.base import (
     ProviderMessage,
     ProviderRequest,
     ProviderResponse,
+    supports_streaming,
 )
 from ..random_source import DefaultRandom, RandomSource
 from ..routing.router import PromptRouter
+from .middleware import apply_after, apply_before
 from .trace import GenerationAttempt, GenerationTrace
 
 
@@ -27,6 +29,21 @@ class GenerationResult:
     accepted: bool
     route: str
     trace: Optional[GenerationTrace] = None
+
+
+@dataclass
+class GenerationChunk:
+    """Single event from `PromptEngine.generate_stream`.
+
+    Intermediate events carry a `delta` text. The terminal event has
+    `done=True` and a fully-populated `result` so callers can pick up
+    `accepted`, `route`, and optionally the trace without doing a second
+    non-streaming round.
+    """
+
+    delta: str = ""
+    done: bool = False
+    result: Optional[GenerationResult] = None
 
 
 class PromptEngine:
@@ -48,6 +65,7 @@ class PromptEngine:
         recent_memory: Optional[RecentOutputMemory] = None,
         run_history: Optional[RunHistory] = None,
         random: Optional[RandomSource] = None,
+        middlewares: Optional[Sequence[object]] = None,
     ):
         self.config = config
         self.context_store = context_store
@@ -58,25 +76,31 @@ class PromptEngine:
         self.recent_memory = recent_memory
         self.run_history = run_history
         self.random = random or DefaultRandom()
+        self.middlewares: list[object] = list(middlewares or [])
 
     def update_config(self, config: GenerationConfig) -> None:
         self.config = config
 
+    def add_middleware(self, middleware: object) -> None:
+        self.middlewares.append(middleware)
+
     async def generate_once(self, request: GenerationRequest) -> GenerationResult:
+        if self.middlewares:
+            request = await apply_before(self.middlewares, request)
+        result = await self._generate_core(request)
+        if self.middlewares:
+            result = await apply_after(self.middlewares, request, result)
+        return result
+
+    async def _generate_core(self, request: GenerationRequest) -> GenerationResult:
         snapshot = self.context_store.get_state()
         injections = self._materialize_injections(request.injections)
 
         route = self.router.select(snapshot, request)
-        build_ctx = BuildContext(
-            snapshot=snapshot,
-            request=request,
-            assets=self.asset_registry,
-            random=self.random,
-            injections=injections,
+        route.validate_inputs(request.inputs)
+        package, snapshot, merged_config, trim_info = self._build_with_budget(
+            route, request, snapshot, injections
         )
-        package = route.builder.build(build_ctx)
-
-        merged_config = self.config.merged_with(package.generation_overrides)
         policy = self.output_processor.policy_for(package.output_policy)
 
         attempts: list[GenerationAttempt] = []
@@ -140,6 +164,7 @@ class PromptEngine:
                     },
                     "package_metadata": dict(package.metadata),
                     "reject_reason": reject_reason if not accepted else None,
+                    "budget": trim_info,
                 },
             )
 
@@ -165,7 +190,177 @@ class PromptEngine:
             trace=trace,
         )
 
+    async def generate_stream(
+        self, request: GenerationRequest
+    ) -> AsyncIterator[GenerationChunk]:
+        """Stream a single generation, yielding text deltas and a final result.
+
+        Streaming paths always make exactly one provider call — retries are
+        skipped because replaying a stream mid-output is more surprising
+        than useful. Callers that need retry semantics should fall back to
+        `generate_once` when a chunk's terminal `result.accepted` is False.
+
+        The provider must implement `stream`; if it doesn't, this raises.
+        """
+        if not supports_streaming(self.provider):
+            raise RuntimeError(
+                f"provider {type(self.provider).__name__} does not support streaming"
+            )
+
+        if self.middlewares:
+            request = await apply_before(self.middlewares, request)
+
+        snapshot = self.context_store.get_state()
+        injections = self._materialize_injections(request.injections)
+        route = self.router.select(snapshot, request)
+        route.validate_inputs(request.inputs)
+        package, snapshot, merged_config, trim_info = self._build_with_budget(
+            route, request, snapshot, injections
+        )
+        policy = self.output_processor.policy_for(package.output_policy)
+
+        provider_request = self._build_provider_request(package, merged_config)
+        final_response: Optional[ProviderResponse] = None
+        buffer = ""
+        async for chunk in self.provider.stream(provider_request):
+            if chunk.done:
+                final_response = chunk.response
+                break
+            if chunk.text:
+                buffer += chunk.text
+                yield GenerationChunk(delta=chunk.text)
+
+        raw = final_response.text if final_response else buffer
+        ctx = ProcessingContext(
+            route=route.name,
+            user_prompt=package.user,
+            recent=self.recent_memory,
+            metadata=dict(package.metadata),
+        )
+        cleaned = self.output_processor.clean(raw, ctx, policy)
+        validation = self.output_processor.validate(cleaned, ctx, policy)
+
+        if validation.ok and self.recent_memory is not None:
+            self.recent_memory.add(cleaned)
+
+        trace: Optional[GenerationTrace] = None
+        if request.debug:
+            trace = GenerationTrace(
+                route=route.name,
+                active_context=snapshot.active,
+                user_prompt=package.user,
+                system_prompt=package.system,
+                injections=[i.name for i in injections],
+                config=merged_config.to_dict(),
+                output_raw=raw,
+                output_final=cleaned,
+                attempts=[GenerationAttempt(
+                    raw=raw, cleaned=cleaned,
+                    accepted=validation.ok, reject_reason=validation.reason,
+                )],
+                usage=asdict(final_response.usage) if final_response else None,
+                timing=asdict(final_response.timing) if final_response else None,
+                metadata={
+                    "fields": snapshot.fields,
+                    "overlays": {
+                        n: {"text": o.text, "priority": o.priority, "expires_at": o.expires_at}
+                        for n, o in snapshot.overlays.items()
+                    },
+                    "package_metadata": dict(package.metadata),
+                    "reject_reason": None if validation.ok else validation.reason,
+                    "streamed": True,
+                    "budget": trim_info,
+                },
+            )
+
+        result = GenerationResult(
+            text=cleaned,
+            accepted=validation.ok,
+            route=route.name,
+            trace=trace,
+        )
+
+        if self.run_history is not None:
+            self.run_history.add(
+                RunRecord(
+                    request={
+                        "mode": request.mode,
+                        "inputs": dict(request.inputs or {}),
+                        "injections": list(request.injections or []),
+                        "config_overrides": merged_config.to_dict(),
+                    },
+                    text=cleaned,
+                    accepted=validation.ok,
+                    route=route.name,
+                    metadata={"streamed": True},
+                )
+            )
+
+        if self.middlewares:
+            result = await apply_after(self.middlewares, request, result)
+
+        yield GenerationChunk(done=True, result=result)
+
     # --- internals -----------------------------------------------------
+    def _build_with_budget(
+        self,
+        route,
+        request: GenerationRequest,
+        snapshot,
+        injections: list[PromptInjection],
+    ):
+        """Build the prompt package, trimming overlays if a char budget is set.
+
+        Lowest-priority overlays are dropped first. Ties break by name so the
+        result is deterministic. The returned `trim_info` dict is `None` when
+        no budget is configured; otherwise it reports the final size, budget,
+        and names dropped (empty list if none were needed).
+        """
+        def build(snap):
+            ctx = BuildContext(
+                snapshot=snap,
+                request=request,
+                assets=self.asset_registry,
+                random=self.random,
+                injections=injections,
+            )
+            pkg = route.builder.build(ctx)
+            cfg = (
+                self.config
+                .merged_with(pkg.generation_overrides)
+                .merged_with(request.config_overrides)
+            )
+            return pkg, cfg
+
+        package, merged_config = build(snapshot)
+        budget = merged_config.max_prompt_chars
+        if budget is None or budget <= 0:
+            return package, snapshot, merged_config, None
+
+        def size(pkg):
+            return len(pkg.system or "") + len(pkg.user or "")
+
+        dropped: list[str] = []
+        current_snapshot = snapshot
+        # Drop lowest-priority overlays one at a time until under budget.
+        while size(package) > budget and current_snapshot.overlays:
+            victim = min(
+                current_snapshot.overlays.items(),
+                key=lambda kv: (kv[1].priority, kv[0]),
+            )[0]
+            remaining = {n: o for n, o in current_snapshot.overlays.items() if n != victim}
+            current_snapshot = current_snapshot.with_overlays(remaining)
+            dropped.append(victim)
+            package, merged_config = build(current_snapshot)
+
+        trim_info = {
+            "budget_chars": budget,
+            "final_chars": size(package),
+            "dropped": dropped,
+            "over_budget": size(package) > budget,
+        }
+        return package, current_snapshot, merged_config, trim_info
+
     def _materialize_injections(self, names: Sequence[str]) -> list[PromptInjection]:
         out: list[PromptInjection] = []
         for name in names or []:
@@ -174,17 +369,18 @@ class PromptEngine:
                 out.append(inj)
         return out
 
-    async def _call_provider(
+    def _build_provider_request(
         self,
         package: PromptPackage,
         config: GenerationConfig,
-    ) -> ProviderResponse:
+        *,
+        stream: bool = False,
+    ) -> ProviderRequest:
         messages: list[ProviderMessage] = []
         if package.system:
             messages.append(ProviderMessage(role="system", content=package.system))
         messages.append(ProviderMessage(role="user", content=package.user))
-
-        request = ProviderRequest(
+        return ProviderRequest(
             model=config.model,
             messages=messages,
             temperature=config.temperature,
@@ -192,7 +388,14 @@ class PromptEngine:
             top_p=config.top_p,
             top_k=config.top_k,
             repeat_penalty=config.repeat_penalty,
-            stream=False,
+            stream=stream,
             timeout_ms=config.timeout_ms,
         )
+
+    async def _call_provider(
+        self,
+        package: PromptPackage,
+        config: GenerationConfig,
+    ) -> ProviderResponse:
+        request = self._build_provider_request(package, config, stream=False)
         return await self.provider.generate(request)

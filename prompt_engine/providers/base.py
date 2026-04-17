@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional, Protocol, Sequence
+from typing import Any, AsyncIterator, Optional, Protocol, Sequence
 
 
 @dataclass
@@ -47,6 +47,39 @@ class ProviderResponse:
 
 
 class ProviderAdapter(Protocol):
-    """Wraps a model backend behind a normalized request/response."""
+    """Wraps a model backend behind a normalized request/response.
+
+    Providers MUST implement `generate`. Streaming is optional: providers
+    that support it implement `stream`, which yields text chunks as they
+    arrive and returns a final `ProviderResponse` via `StopAsyncIteration`'s
+    value — or more pragmatically, callers use `supports_streaming()` to
+    check and fall back to `generate` otherwise.
+    """
 
     async def generate(self, request: ProviderRequest) -> ProviderResponse: ...
+
+
+@dataclass
+class ProviderStreamChunk:
+    text: str
+    done: bool = False
+    # Populated on the final chunk; callers can read usage/timing there.
+    response: Optional[ProviderResponse] = None
+
+
+class StreamingProviderAdapter(ProviderAdapter, Protocol):
+    """Optional extension: providers that can emit incremental chunks.
+
+    Implementers yield `ProviderStreamChunk` as tokens arrive. The final
+    chunk has `done=True` and a `response` holding the aggregated text,
+    usage, and timing so downstream processors have the same shape they'd
+    see from `generate`.
+    """
+
+    def stream(
+        self, request: ProviderRequest
+    ) -> AsyncIterator["ProviderStreamChunk"]: ...
+
+
+def supports_streaming(provider: ProviderAdapter) -> bool:
+    return callable(getattr(provider, "stream", None))
