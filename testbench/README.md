@@ -105,11 +105,12 @@ and don't become sticky GUI overrides on reload.
 
 ```bash
 pip install "promptlibretto[testbench]"
-python run.py                         # defaults to Ollama at localhost:8080
-PROMPT_ENGINE_MOCK=1 python run.py    # no model required; echoes prompts
+promptlibretto-testbench                         # defaults to Ollama at localhost:8080
+PROMPT_ENGINE_MOCK=1 promptlibretto-testbench    # no model required; echoes prompts
 ```
 
-Env vars: `OLLAMA_URL`, `OLLAMA_MODEL`, `PROMPT_ENGINE_MOCK`.
+Env vars: `HOST`, `PORT`, `OLLAMA_URL`, `OLLAMA_MODEL`, `PROMPT_ENGINE_MOCK`,
+`PROMPTLIBRETTO_DATA_DIR` (defaults to `~/.promptlibretto/testbench`).
 
 ## Files
 

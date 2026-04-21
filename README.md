@@ -158,6 +158,17 @@ async def main():
 asyncio.run(main())
 ```
 
+To run against a real model, swap the provider and config:
+
+```python
+from promptlibretto import OllamaProvider
+
+provider = OllamaProvider(base_url="http://localhost:11434")
+config = GenerationConfig(provider="ollama", model="llama3")
+```
+
+Everything else stays the same.
+
 ---
 
 ## Prompt engineering & routing

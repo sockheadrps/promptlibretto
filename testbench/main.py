@@ -72,8 +72,18 @@ def _build_engine() -> tuple[PromptEngine, LatencyLogger]:
     return engine, latency
 
 
-_LIBRARY_PATH = Path(__file__).parent / "base_library.json"
-_SCENARIO_PATH = Path(__file__).parent / "scenario_library.json"
+def _data_dir() -> Path:
+    override = os.environ.get("PROMPTLIBRETTO_DATA_DIR")
+    if override:
+        path = Path(override)
+    else:
+        path = Path.home() / ".promptlibretto" / "testbench"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+_LIBRARY_PATH = _data_dir() / "base_library.json"
+_SCENARIO_PATH = _data_dir() / "scenario_library.json"
 
 
 @asynccontextmanager

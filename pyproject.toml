@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "promptlibretto"
-version = "0.1.1"
+version = "0.1.2"
 description = "Composable prompt-construction library with named routes, context overlays, injections, streaming, middleware, and output validation."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,8 +35,15 @@ dev = [
 Homepage = "https://github.com/sockheadrps/promptlibretto"
 Issues = "https://github.com/sockheadrps/promptlibretto/issues"
 
+[project.scripts]
+promptlibretto-testbench = "testbench.run:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["promptlibretto", "testbench"]
+exclude = [
+    "testbench/base_library.json",
+    "testbench/scenario_library.json",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
