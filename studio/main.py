@@ -579,6 +579,7 @@ class ExportBody(BaseModel):
     route: Optional[str] = None
     injections: list[str] = Field(default_factory=list)
     include_overlays: bool = True
+    section_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 class SaveExportBody(BaseModel):
@@ -638,6 +639,7 @@ def export_route(body: ExportBody):
             route=body.route,
             injections=tuple(body.injections),
             include_overlays=body.include_overlays,
+            section_overrides=body.section_overrides or None,
         )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))

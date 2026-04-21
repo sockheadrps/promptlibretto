@@ -980,7 +980,12 @@ async function exportPython() {
     const res = await fetch("/api/export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ route, injections, include_overlays: true }),
+      body: JSON.stringify({
+        route,
+        injections,
+        include_overlays: true,
+        section_overrides: pendingSectionOverrides || {},
+      }),
     });
     if (!res.ok) {
       const detail = await res.text();
