@@ -7,7 +7,7 @@ the engine's full surface area against a local model.
 """
 from __future__ import annotations
 
-from prompt_engine import (
+from promptlibretto import (
     CompositeBuilder,
     InjectionTemplate,
     PromptAssetRegistry,
@@ -15,7 +15,7 @@ from prompt_engine import (
     PromptRouter,
     section,
 )
-from prompt_engine.builders.builder import BuildContext
+from promptlibretto.builders.builder import BuildContext
 
 
 # ----------------------------------------------------------------------

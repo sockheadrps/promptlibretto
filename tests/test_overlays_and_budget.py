@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from prompt_engine import (
+from promptlibretto import (
     ContextOverlay,
     ContextStore,
     GenerationConfig,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from prompt_engine import (
+from promptlibretto import (
     CompositeBuilder,
     GenerationConfig,
     GenerationRequest,

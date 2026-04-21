@@ -9,7 +9,7 @@ from typing import Callable, Optional
 
 import pytest
 
-from prompt_engine import (
+from promptlibretto import (
     CompositeBuilder,
     ContextStore,
     GenerationConfig,
@@ -23,7 +23,7 @@ from prompt_engine import (
     RunHistory,
     section,
 )
-from prompt_engine.providers.base import ProviderRequest
+from promptlibretto.providers.base import ProviderRequest
 
 
 def make_engine(

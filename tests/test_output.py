@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from prompt_engine import OutputPolicy, OutputProcessor, RecentOutputMemory
-from prompt_engine.output.processor import ProcessingContext
+from promptlibretto import OutputPolicy, OutputProcessor, RecentOutputMemory
+from promptlibretto.output.processor import ProcessingContext
 
 
 def _ctx(recent=None):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from prompt_engine import GenerationRequest
+from promptlibretto import GenerationRequest
 
 
 async def test_middleware_before_and_after_fire(make_engine_fn):
@@ -90,7 +90,7 @@ async def test_stream_applies_middleware(make_engine_fn):
 
 
 async def test_stream_history_keeps_request_overrides_separate(make_engine_fn):
-    from prompt_engine import RunHistory
+    from promptlibretto import RunHistory
 
     history = RunHistory(capacity=5)
     engine = make_engine_fn(history=history)

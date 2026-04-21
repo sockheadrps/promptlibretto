@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from prompt_engine import (
+from promptlibretto import (
     CompositeBuilder,
     GenerationRequest,
     PromptRoute,
     PromptRouter,
     section,
 )
-from prompt_engine.context.overlay import ContextSnapshot
+from promptlibretto.context.overlay import ContextSnapshot
 
 
 def _builder(name="t"):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from prompt_engine.providers.base import ProviderMessage, ProviderRequest
-from prompt_engine.providers.ollama import OllamaProvider
+from promptlibretto.providers.base import ProviderMessage, ProviderRequest
+from promptlibretto.providers.ollama import OllamaProvider
 
 
 class _FakeStreamResponse:

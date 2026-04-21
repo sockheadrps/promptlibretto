@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from prompt_engine import (
+from promptlibretto import (
     ContextOverlay,
     ContextStore,
     GenerationConfig,
@@ -30,7 +30,7 @@ from prompt_engine import (
     RunHistory,
     make_turn_overlay,
 )
-from prompt_engine.builders.builder import GenerationRequest as EngineRequest
+from promptlibretto.builders.builder import GenerationRequest as EngineRequest
 
 from .base_library import BaseLibrary
 from .middleware import LatencyLogger
@@ -410,7 +410,7 @@ def replace_run_history(body: RunHistoryReplaceBody):
     if not eng.run_history:
         raise HTTPException(status_code=503, detail="run history not enabled")
     import time as _time
-    from prompt_engine import RunRecord
+    from promptlibretto import RunRecord
     eng.run_history.clear()
     for r in body.records:
         try:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from prompt_engine import (
+from promptlibretto import (
     CompositeBuilder,
     ContextOverlay,
     ContextStore,
@@ -8,8 +8,8 @@ from prompt_engine import (
     PromptAssetRegistry,
     section,
 )
-from prompt_engine.builders.builder import BuildContext
-from prompt_engine.random_source import DefaultRandom
+from promptlibretto.builders.builder import BuildContext
+from promptlibretto.random_source import DefaultRandom
 
 
 def _build(builder: CompositeBuilder, *, store: ContextStore | None = None, inputs=None, injections=()):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from prompt_engine import RunHistory, RunRecord
+from promptlibretto import RunHistory, RunRecord
 
 
 def _rec(text: str) -> RunRecord:

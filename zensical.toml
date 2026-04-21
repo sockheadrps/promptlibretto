@@ -1,8 +1,8 @@
 [project]
-site_name = "prompt_engine"
+site_name = "promptlibretto"
 site_description = "A small, composable library for apps that send more than one kind of prompt to an LLM."
-site_url = "https://sockheadrps.github.io/PromptEngine/"
-repo_url = "https://github.com/sockheadrps/PromptEngine"
+site_url = "https://sockheadrps.github.io/promptlibretto/"
+repo_url = "https://github.com/sockheadrps/promptlibretto"
 
 nav = [
   { "Home" = "index.md" },

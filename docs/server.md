@@ -1,6 +1,6 @@
 # Test Bench Server
 
-A browser-based test bench for the `prompt_engine` library. FastAPI on the
+A browser-based test bench for the `promptlibretto` library. FastAPI on the
 back, vanilla JS on the front, one engine instance per process. The goal
 isn't to be a product — it's to exercise every surface of the library
 (routes, overlays, injections, run history, iteration turns, streaming,

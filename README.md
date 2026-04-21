@@ -1,4 +1,4 @@
-# prompt_engine
+# promptlibretto
 
 A small library for apps that send more than one kind of prompt to an LLM.
 Define named **routes** that each compose their own system + user prompt,
@@ -11,8 +11,8 @@ task, prompt A/B testing, iterative refinement loops where each user
 follow-up becomes a reusable overlay, and any app where prompt-construction
 logic has outgrown f-strings.
 
-Design rationale: [`PROMPT_ENGINE_DESIGN.md`](PROMPT_ENGINE_DESIGN.md).
-Browser test bench: [`test-bench` branch](https://github.com/sockheadrps/PromptEngine/tree/test-bench).
+Design rationale: [`DESIGN.md`](DESIGN.md).
+Browser test bench: [`testbench/`](testbench/).
 
 ![Analyst route generating](docs/assets/screenshots/generation.gif)
 
@@ -21,7 +21,7 @@ Browser test bench: [`test-bench` branch](https://github.com/sockheadrps/PromptE
 ```bash
 pip install .                 # library only, no runtime deps
 pip install ".[ollama]"       # adds httpx for OllamaProvider
-pip install ".[server]"       # adds FastAPI stack for the test bench
+pip install ".[testbench]"       # adds FastAPI stack for the test bench
 pip install ".[dev]"          # adds pytest + pytest-asyncio
 ```
 
@@ -31,7 +31,7 @@ The smallest useful engine — one route, mock provider, one line of output:
 
 ```python
 import asyncio
-from prompt_engine import (
+from promptlibretto import (
     CompositeBuilder, ContextStore, GenerationConfig, GenerationRequest,
     MockProvider, OutputProcessor, PromptAssetRegistry, PromptEngine,
     PromptRoute, PromptRouter, section,
@@ -110,12 +110,12 @@ ContextStore     PromptAssetRegistry                     OutputProcessor
 
 ```python
 import asyncio
-from prompt_engine import (
+from promptlibretto import (
     CompositeBuilder, ContextStore, GenerationConfig, GenerationRequest,
     MockProvider, OutputProcessor, PromptAssetRegistry, PromptEngine,
     PromptRoute, PromptRouter, section,
 )
-from prompt_engine.builders.builder import BuildContext
+from promptlibretto.builders.builder import BuildContext
 
 
 def frame(ctx: BuildContext) -> str:
@@ -169,7 +169,7 @@ applies first; overlays can expire. Use them for transient facts, user
 preferences, or iteration follow-ups.
 
 ```python
-from prompt_engine import ContextOverlay, make_turn_overlay
+from promptlibretto import ContextOverlay, make_turn_overlay
 
 store.set_overlay("budget", ContextOverlay(text="Keep total under $800.", priority=20))
 store.set_overlay("iter_1", make_turn_overlay(

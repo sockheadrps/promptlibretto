@@ -24,8 +24,8 @@ Thumbs.db
 
 # Runtime artefacts
 *.log
-server/base_library.json
-server/scenario_library.json
+testbench/base_library.json
+testbench/scenario_library.json
 
 # Zensical build output
 site/
