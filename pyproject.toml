@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "promptlibretto"
-version = "0.2.0"
+version = "0.3.0"
 description = "Composable prompt-construction library with named routes, context overlays, injections, streaming, middleware, and output validation."
 readme = "README.md"
 requires-python = ">=3.10"
