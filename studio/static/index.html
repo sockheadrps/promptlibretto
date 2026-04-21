@@ -215,18 +215,14 @@
     <div class="modal-backdrop" data-close-edit-prompt></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="edit-prompt-title">
       <header>
-        <h3 id="edit-prompt-title">Edit resolved prompt (next run only)</h3>
+        <h3 id="edit-prompt-title">Edit system prompt (next run only)</h3>
         <button class="modal-close" type="button" data-close-edit-prompt aria-label="Close">×</button>
       </header>
       <div class="modal-body">
-        <p class="muted">These replace the route's built prompt for the next generation only. Nothing is written back to the route. Clear to restore normal builder output.</p>
+        <p class="muted">Replaces the route's built system prompt for the next generation only. The user prompt still comes from your input + the route's user_sections. Nothing is written back to the route.</p>
         <label class="field">
           <span class="field-label">System prompt</span>
-          <textarea id="edit-system" rows="8" placeholder="(empty — no system prompt)"></textarea>
-        </label>
-        <label class="field">
-          <span class="field-label">User prompt</span>
-          <textarea id="edit-user" rows="10"></textarea>
+          <textarea id="edit-system" rows="14" placeholder="(empty — no system prompt)"></textarea>
         </label>
         <div class="actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
           <button id="edit-prompt-reset" type="button" class="ghost-action">Reload from route</button>

@@ -288,7 +288,6 @@ const els = {
   editPromptBtn: $("edit-prompt-btn"),
   editPromptModal: $("edit-prompt-modal"),
   editSystem: $("edit-system"),
-  editUser: $("edit-user"),
   editApply: $("edit-prompt-apply"),
   editClear: $("edit-prompt-clear"),
   editReset: $("edit-prompt-reset"),
@@ -1350,11 +1349,9 @@ async function openEditPrompt() {
   try {
     if (pendingSectionOverrides) {
       els.editSystem.value = pendingSectionOverrides.system ?? "";
-      els.editUser.value = pendingSectionOverrides.user ?? "";
     } else {
-      const { system, user } = await fetchResolvedPrompt();
+      const { system } = await fetchResolvedPrompt();
       els.editSystem.value = system || "";
-      els.editUser.value = user || "";
     }
     els.editPromptModal.hidden = false;
   } catch (err) {
@@ -1367,10 +1364,7 @@ function closeEditPrompt() {
 }
 
 function applyEditPrompt() {
-  pendingSectionOverrides = {
-    system: els.editSystem.value,
-    user: els.editUser.value,
-  };
+  pendingSectionOverrides = { system: els.editSystem.value };
   updateSectionOverrideBanner();
   closeEditPrompt();
 }
@@ -1382,9 +1376,8 @@ function clearSectionOverride() {
 
 async function resetEditPrompt() {
   try {
-    const { system, user } = await fetchResolvedPrompt();
+    const { system } = await fetchResolvedPrompt();
     els.editSystem.value = system || "";
-    els.editUser.value = user || "";
   } catch (err) {
     alert("Reload failed: " + err.message);
   }
