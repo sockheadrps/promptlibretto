@@ -14,7 +14,10 @@ logic has outgrown f-strings.
 Design rationale: [design.md](design.md). Test bench: [server.md](server.md).
 Source: [test-bench branch](https://github.com/sockheadrps/PromptEngine/tree/test-bench).
 
-![Analyst route generating](assets/screenshots/generation.gif)
+<video autoplay loop muted playsinline style="max-width:100%;border-radius:6px">
+  <source src="assets/screenshots/generation.webm" type="video/webm">
+  <source src="assets/screenshots/generation.mp4" type="video/mp4">
+</video>
 
 ## Install
 

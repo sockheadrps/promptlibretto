@@ -13,7 +13,10 @@ Live generation — the `analyst` route with two steering overlays
 (`budget`, `preferences`) and the `tighten` + `markdown` injections
 applied:
 
-![Analyst route generating](assets/screenshots/generation.gif)
+<video autoplay loop muted playsinline style="max-width:100%;border-radius:6px">
+  <source src="assets/screenshots/generation.webm" type="video/webm">
+  <source src="assets/screenshots/generation.mp4" type="video/mp4">
+</video>
 
 ## Framing
 
