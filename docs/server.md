@@ -7,6 +7,14 @@ isn't to be a product — it's to exercise every surface of the library
 middleware, budget) against a real local model, so you can *see* the
 pieces move when you change them.
 
+![Test bench overview](assets/screenshots/test-bench-overview.png)
+
+Live generation — the `analyst` route with two steering overlays
+(`budget`, `preferences`) and the `tighten` + `markdown` injections
+applied:
+
+![Analyst route generating](assets/screenshots/generation.gif)
+
 ## Framing
 
 The engine is the source of truth. The server is a thin translation layer:
@@ -80,6 +88,28 @@ obvious and keeps each store single-purpose.
 
 Both `BaseLibrary` and `ScenarioLibrary` are tiny JSON-backed caches with
 atomic tmp-file writes and a lock. They don't warrant a database.
+
+## The panels
+
+**Compose tab.** Route selector, user input, injection checkboxes, and
+generation overrides all live here. Changing the route updates the
+injection groups underneath — each route opts in to which groups it
+accepts.
+
+![Compose tab](assets/screenshots/compose-tab.png)
+
+**Context state tab.** Long-lived base text at the top, named overlays
+below with priority and expiry. The "Suggest" button asks the model to
+propose overlays against the current base.
+
+![Context state tab](assets/screenshots/context-state-tab.png)
+
+**Debug trace panel.** System prompt, user prompt, active context, every
+attempt, and the resolved config — all live-updated on each run.
+
+![Debug trace part 1](assets/screenshots/debug-trace-1.png)
+
+![Debug trace part 2](assets/screenshots/debug-trace-2.png)
 
 ## Composition, not configuration
 

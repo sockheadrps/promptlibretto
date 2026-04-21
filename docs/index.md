@@ -14,6 +14,8 @@ logic has outgrown f-strings.
 Design rationale: [design.md](design.md). Test bench: [server.md](server.md).
 Source: [test-bench branch](https://github.com/sockheadrps/PromptEngine/tree/test-bench).
 
+![Analyst route generating](assets/screenshots/generation.gif)
+
 ## Install
 
 ```bash
@@ -22,6 +24,55 @@ pip install ".[ollama]"       # adds httpx for OllamaProvider
 pip install ".[server]"       # adds FastAPI stack for the test bench
 pip install ".[dev]"          # adds pytest + pytest-asyncio
 ```
+
+## Hello world
+
+The smallest useful engine — one route, mock provider, one line of output:
+
+```python
+import asyncio
+from prompt_engine import (
+    CompositeBuilder, ContextStore, GenerationConfig, GenerationRequest,
+    MockProvider, OutputProcessor, PromptAssetRegistry, PromptEngine,
+    PromptRoute, PromptRouter, section,
+)
+
+router = PromptRouter(default_route="default")
+router.register(PromptRoute(
+    name="default",
+    builder=CompositeBuilder(name="default", user_sections=(section("Say hi."),)),
+))
+
+engine = PromptEngine(
+    config=GenerationConfig(provider="mock", model="demo"),
+    context_store=ContextStore(base=""),
+    asset_registry=PromptAssetRegistry(),
+    router=router,
+    provider=MockProvider(),
+    output_processor=OutputProcessor(),
+)
+
+print(asyncio.run(engine.generate_once(GenerationRequest())).text)
+```
+
+Everything after this adds features on top of the same shape.
+
+## Why not just f-strings?
+
+Use this when:
+
+- **You have more than one kind of prompt** and they share structure — frame,
+  rules, persona, output format. Routes let you name and swap strategies
+  without duplicating boilerplate.
+- **Follow-ups should affect future runs**, not just the current one.
+  Overlays let a user's "make it shorter" stick around as a reusable piece
+  of context.
+- **Output needs validation or retry** — required regex, stripped code
+  fences, banned phrases — handled once by the output processor instead of
+  copy-pasted around call sites.
+
+Don't use it when you send exactly one prompt shape and don't need any of
+the above. An f-string and a direct provider call are fine.
 
 ## Core concepts
 
@@ -180,8 +231,7 @@ Implement `async def generate(request) -> ProviderResponse` for your own.
 
 Providers may implement `stream(request)`. The engine exposes
 `generate_stream(request)` yielding `GenerationChunk(delta=...)` per chunk
-and a terminal `GenerationChunk(done=True, result=...)`. Streaming makes
-one provider call — retries are skipped.
+and a terminal `GenerationChunk(done=True, result=...)`.
 
 ```python
 async for chunk in engine.generate_stream(request):
@@ -190,6 +240,11 @@ async for chunk in engine.generate_stream(request):
     elif chunk.delta:
         print(chunk.delta, end="", flush=True)
 ```
+
+!!! warning
+    Streaming makes exactly one provider call — output-policy retries are
+    skipped because replaying a stream mid-output is more surprising than
+    useful. If `result.accepted` is `False`, fall back to `generate_once`.
 
 ### Output processor
 
@@ -240,9 +295,13 @@ engine = PromptEngine(..., middlewares=[LatencyLogger()])
 
 `GenerationRequest(debug=True)` attaches a `GenerationTrace` with
 system/user prompts, every attempt, resolved config, and context snapshot.
-Config provenance appears under `metadata.config_layers` (base / package /
-request / resolved) so route defaults stay distinguishable from user
-overrides.
+
+!!! note
+    Config merge order is **base → route → request**. Values on
+    `GenerationRequest.config_overrides` win over a route's
+    `generation_overrides`, which in turn win over the engine's base
+    `GenerationConfig`. The trace exposes all four layers under
+    `metadata.config_layers` so you can see exactly who contributed what.
 
 ### Run history
 
