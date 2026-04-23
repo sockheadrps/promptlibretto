@@ -218,34 +218,43 @@ def load_engine(source: Union[str, Path, Mapping[str, Any]]) -> tuple[PromptEngi
     inline_required_set = set(inline_required)
     inline_slot_set = inline_required_set | set(inline_optional)
 
-    async def run(user_input: str = "", **kwargs: str) -> GenerationResult:
-        # Underscore-prefixed kwargs are reserved transport-level controls
-        # for the run closure itself (not user context). Pop them before
-        # any overlay/slot processing so they can never collide with names.
+    def _prepare(user_input: str, kwargs: dict) -> "GenerationRequest":
+        """Apply slot/overlay side-effects to the engine's context_store and
+        return the GenerationRequest that `run` would hand to the engine.
+        Raises ValueError on missing required slots.
+        """
         debug = bool(kwargs.pop("_debug", False))
-
         for _name in list(engine.context_store.overlays()):
             if _name not in fixed_set:
                 engine.context_store.clear_overlay(_name)
-
         for name in inline_required_set:
             if not kwargs.get(name, ""):
                 raise ValueError(f"runtime slot {name!r} is required")
-
         inline_values: dict[str, str] = {}
         for name in list(kwargs):
             if name in inline_slot_set:
                 inline_values[name] = str(kwargs.pop(name) or "")
-
         for name, value in kwargs.items():
             if value:
                 engine.context_store.set_overlay(
                     name, ContextOverlay(text=str(value), priority=10)
                 )
-
         inputs = {"input": user_input, **inline_values}
-        return await engine.generate_once(GenerationRequest(inputs=inputs, debug=debug))
+        return GenerationRequest(inputs=inputs, debug=debug)
 
+    async def run(user_input: str = "", **kwargs: str) -> GenerationResult:
+        request = _prepare(user_input, kwargs)
+        return await engine.generate_once(request)
+
+    def prepare(user_input: str = "", **kwargs: str) -> "GenerationRequest":
+        """Pre-LLM half of `run` exposed for callers that own the provider
+        call themselves (e.g. the studio's browser-direct flow). Returns the
+        `GenerationRequest` after mutating the engine's context_store the same
+        way `run` would.
+        """
+        return _prepare(user_input, dict(kwargs))
+
+    run.prepare = prepare  # type: ignore[attr-defined]
     return engine, run
 
 

@@ -1,4 +1,9 @@
+import { mountConnectionChip, getConnection } from "/static/connection.js";
+import { generate as ollamaGenerate } from "/static/ollama_client.js";
+
 const $ = (sel) => document.querySelector(sel);
+
+mountConnectionChip(document.getElementById("connection-slot"));
 
 const els = {
   models: $("#model-list"),
@@ -490,29 +495,106 @@ async function run() {
     user_input: els.userInput.value,
     context: gatherContextRows(),
   };
+  const conn = getConnection();
+  const useBrowserDirect = !!conn.model;
+
   els.run.disabled = true;
   els.status.textContent = `running ${exports_.length}…`;
   const t0 = performance.now();
   try {
-    const res = await fetch("/api/ensemble/generate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      els.status.textContent = `error: ${err.detail || res.status}`;
-      return;
-    }
-    const data = await res.json();
+    const data = useBrowserDirect
+      ? await runBrowserDirect(body, conn)
+      : await runServerSide(body);
     const ms = Math.round(performance.now() - t0);
     els.status.textContent = `${data.results.length} done in ${ms} ms`;
     renderResults(data.results);
   } catch (e) {
-    els.status.textContent = `failed: ${e}`;
+    els.status.textContent = `failed: ${e.message || e}`;
   } finally {
     els.run.disabled = false;
   }
+}
+
+async function runServerSide(body) {
+  const res = await fetch("/api/ensemble/generate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `${res.status}`);
+  }
+  return res.json();
+}
+
+async function runBrowserDirect(body, conn) {
+  // 1. Resolve all members server-side (no LLM call).
+  const resolveRes = await fetch("/api/ensemble/resolve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resolveRes.ok) {
+    const err = await resolveRes.json().catch(() => ({}));
+    throw new Error(err.detail || `${resolveRes.status}`);
+  }
+  const { results: resolved } = await resolveRes.json();
+
+  // 2. For each ok resolution, fan out to the browser's configured LLM,
+  //    then post the raw output through /api/process for policy cleanup.
+  //    All fan-outs run in parallel — each member is independent.
+  const tasks = resolved.map(async (r) => {
+    if (!r.ok) return r;
+    const providerReq = {
+      ...r.provider_request,
+      model: conn.model || r.provider_request.model,
+    };
+    try {
+      const llm = await ollamaGenerate(conn, providerReq);
+      const processed = await postJson("/api/process", {
+        raw_text: llm.text,
+        output_policy: r.output_policy,
+        route: r.route,
+        usage: llm.usage || null,
+        timing: llm.timing || null,
+        trace_scaffolding: null,
+        debug: false,
+        attempt_history: [],
+      });
+      return {
+        name: r.name,
+        ok: true,
+        text: processed.text,
+        accepted: processed.accepted,
+        route: r.route,
+        context_applied: r.context_applied,
+        prompt: r.prompt,
+      };
+    } catch (err) {
+      return {
+        name: r.name,
+        ok: false,
+        error: `provider unreachable: ${err.message || err}`,
+        context_applied: r.context_applied,
+      };
+    }
+  });
+  const results = await Promise.all(tasks);
+  return { results };
+}
+
+async function postJson(path, body) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `${res.status}`);
+  }
+  return res.json();
 }
 
 els.reload.addEventListener("click", loadModels);

@@ -1,5 +1,9 @@
 // promptlibretto studio — talks to the FastAPI server.
+import { mountConnectionChip, getConnection } from "/static/connection.js";
+import { generate as ollamaGenerate, streamGenerate as ollamaStream } from "/static/ollama_client.js";
 const $ = (id) => document.getElementById(id);
+
+mountConnectionChip(document.getElementById("connection-slot"));
 
 // --- minimal, safe markdown renderer -------------------------------
 // Escapes HTML first, then converts a small subset of CommonMark.
@@ -259,9 +263,6 @@ const EXAMPLES = [
 ];
 
 const els = {
-  metaProvider: $("meta-provider"),
-  metaModel: $("meta-model"),
-  metaUrl: $("meta-url"),
   routeSelect: $("route-select"),
   routeDesc: $("route-desc"),
   inputText: $("input-text"),
@@ -389,12 +390,6 @@ async function api(method, path, body) {
     throw new Error(`${res.status} ${res.statusText}\n${message}`);
   }
   return res.status === 204 ? null : res.json();
-}
-
-function renderMeta(state) {
-  els.metaProvider.textContent = `provider: ${state.config.provider}${state.ollama.mock ? " (mock)" : ""}`;
-  els.metaModel.textContent = `model: ${state.config.model}`;
-  els.metaUrl.textContent = `url: ${state.ollama.url}`;
 }
 
 function renderRoutes(state) {
@@ -1028,7 +1023,6 @@ function applyResolvedOverrides() {
 
 async function refresh() {
   const state = await api("GET", "/api/state");
-  renderMeta(state);
   renderRoutes(state);
   renderInjections(state);
   renderBase(state);
@@ -1428,8 +1422,14 @@ async function generate() {
       };
     }
     activateOutputTab("output");
+    const conn = getConnection();
+    const useBrowserDirect = !!conn.model;
     if (els.stream.checked) {
-      var result = await generateStream(request);
+      var result = useBrowserDirect
+        ? await generateBrowserDirect(request, conn, { stream: true })
+        : await generateStream(request);
+    } else if (useBrowserDirect) {
+      var result = await generateBrowserDirect(request, conn, { stream: false });
     } else {
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), 15_000);
@@ -1455,6 +1455,53 @@ async function generate() {
   } finally {
     els.generate.disabled = false;
   }
+}
+
+// Browser-direct path: server resolves the prompt, the browser calls the
+// user's local LLM, then the server cleans/validates the output. Retries
+// (from route config) loop here; streaming forwards deltas straight to the UI.
+async function generateBrowserDirect(request, conn, { stream }) {
+  const resolved = await api("POST", "/api/resolve", request);
+  const providerReq = {
+    ...resolved.provider_request,
+    model: conn.model || resolved.provider_request.model,
+  };
+  let attempts = [];
+  const retries = Math.max(0, resolved.retries || 0);
+  let lastProcess = null;
+
+  for (let i = 0; i <= retries; i++) {
+    let llm;
+    if (stream) {
+      let buf = "";
+      llm = await ollamaStream(conn, providerReq, (piece) => {
+        buf += piece;
+        setOutputText(buf, "Generating…");
+      });
+    } else {
+      llm = await ollamaGenerate(conn, providerReq);
+    }
+    lastProcess = await api("POST", "/api/process", {
+      raw_text: llm.text,
+      output_policy: resolved.output_policy,
+      route: resolved.route,
+      usage: llm.usage || null,
+      timing: llm.timing || null,
+      trace_scaffolding: resolved.trace_scaffolding,
+      debug: request.debug,
+      attempt_history: attempts,
+    });
+    attempts = lastProcess.attempts || attempts;
+    if (lastProcess.accepted) break;
+  }
+  return {
+    text: lastProcess.text,
+    accepted: lastProcess.accepted,
+    route: resolved.route,
+    usage: lastProcess.usage,
+    timing: lastProcess.timing,
+    trace: lastProcess.trace,
+  };
 }
 
 async function generateStream(request) {

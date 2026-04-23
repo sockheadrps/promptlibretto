@@ -28,6 +28,7 @@ from promptlibretto import (
     load_engine,
     make_turn_overlay,
 )
+from promptlibretto.output.processor import OutputPolicy, ProcessingContext
 
 from .base_library import BaseLibrary
 from .custom_route_library import CustomRouteLibrary
@@ -584,6 +585,156 @@ def resolve_prompt(body: ResolveBody):
     }
 
 
+class ProcessBody(BaseModel):
+    """Output payload posted back to the server after a browser-direct LLM call."""
+    raw_text: str = ""
+    output_policy: dict[str, Any] = Field(default_factory=dict)
+    route: str = ""
+    usage: Optional[dict[str, Any]] = None
+    timing: Optional[dict[str, Any]] = None
+    trace_scaffolding: Optional[dict[str, Any]] = None
+    debug: bool = True
+    attempt_history: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def _policy_to_dict(policy: OutputPolicy) -> dict[str, Any]:
+    """asdict with sequences coerced to lists so JSON round-trips cleanly."""
+    out = asdict(policy)
+    for k, v in list(out.items()):
+        if isinstance(v, tuple):
+            out[k] = list(v)
+    return out
+
+
+@app.post("/api/resolve")
+def resolve_full(body: GenerateRequest):
+    """Build a fully-resolved ProviderRequest + output policy without calling
+    the LLM. The browser posts the result to the user's local Ollama/llama.cpp
+    and sends the raw text back to /api/process."""
+    eng = _engine()
+    req = GenerationRequest(
+        mode=body.mode,
+        inputs=body.inputs,
+        injections=list(body.injections),
+        debug=body.debug,
+        config_overrides=body.config_overrides,
+        section_overrides=body.section_overrides,
+    )
+    snapshot = eng.context_store.get_state()
+    with _patched_injections(eng, body.injection_text_overrides):
+        try:
+            route = eng.router.select(snapshot, req)
+            injections = eng._materialize_injections(req.injections)
+            package, final_snapshot, merged_config, config_layers, trim_info = (
+                eng._build_with_budget(route, req, snapshot, injections)
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        policy = eng.output_processor.policy_for(package.output_policy)
+
+    messages: list[dict[str, str]] = []
+    if package.system:
+        messages.append({"role": "system", "content": package.system})
+    messages.append({"role": "user", "content": package.user})
+
+    scaffolding = None
+    if body.debug:
+        scaffolding = {
+            "active_context": final_snapshot.active,
+            "system_prompt": package.system or "",
+            "user_prompt": package.user,
+            "config": merged_config.to_dict(),
+            "config_layers": config_layers,
+            "overlays": {
+                n: {"text": o.text, "priority": o.priority, "expires_at": o.expires_at}
+                for n, o in final_snapshot.overlays.items()
+            },
+            "package_metadata": dict(package.metadata or {}),
+            "budget": trim_info,
+            "injections": [i.name for i in injections],
+        }
+
+    return {
+        "provider_request": {
+            "model": merged_config.model,
+            "messages": messages,
+            "temperature": merged_config.temperature,
+            "max_tokens": merged_config.max_tokens,
+            "top_p": merged_config.top_p,
+            "top_k": merged_config.top_k,
+            "repeat_penalty": merged_config.repeat_penalty,
+            "timeout_ms": merged_config.timeout_ms,
+        },
+        "output_policy": _policy_to_dict(policy),
+        "route": route.name,
+        "injections": [i.name for i in injections],
+        "retries": max(0, merged_config.retries),
+        "trace_scaffolding": scaffolding,
+    }
+
+
+@app.post("/api/process")
+def process_output(body: ProcessBody):
+    """Clean + validate raw LLM output against a resolved output policy. The
+    browser calls this after each attempt of a browser-direct LLM request; on
+    rejection it may loop and call again up to `retries`."""
+    eng = _engine()
+    try:
+        policy = OutputPolicy(**body.output_policy) if body.output_policy else OutputPolicy()
+    except TypeError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid output_policy: {exc}")
+
+    scaf = body.trace_scaffolding or {}
+    ctx = ProcessingContext(
+        route=body.route,
+        user_prompt=scaf.get("user_prompt", ""),
+        metadata=dict(scaf.get("package_metadata") or {}),
+    )
+    cleaned = eng.output_processor.clean(body.raw_text, ctx, policy)
+    validation = eng.output_processor.validate(cleaned, ctx, policy)
+
+    attempt = {
+        "raw": body.raw_text,
+        "cleaned": cleaned,
+        "accepted": validation.ok,
+        "reject_reason": validation.reason,
+    }
+    attempts = list(body.attempt_history) + [attempt]
+
+    trace = None
+    if body.debug and scaf:
+        trace = {
+            "route": body.route,
+            "active_context": scaf.get("active_context", ""),
+            "system_prompt": scaf.get("system_prompt", ""),
+            "user_prompt": scaf.get("user_prompt", ""),
+            "config": scaf.get("config", {}),
+            "injections": scaf.get("injections", []),
+            "output_raw": body.raw_text,
+            "output_final": cleaned,
+            "attempts": attempts,
+            "usage": body.usage,
+            "timing": body.timing,
+            "metadata": {
+                "overlays": scaf.get("overlays", {}),
+                "package_metadata": scaf.get("package_metadata", {}),
+                "config_layers": scaf.get("config_layers", {}),
+                "budget": scaf.get("budget"),
+                "reject_reason": None if validation.ok else validation.reason,
+            },
+        }
+
+    return {
+        "text": cleaned,
+        "accepted": validation.ok,
+        "reject_reason": validation.reason,
+        "usage": body.usage,
+        "timing": body.timing,
+        "trace": trace,
+        "attempts": attempts,
+    }
+
+
 @app.post("/api/export")
 def export_route(body: ExportBody):
     eng = _engine()
@@ -877,6 +1028,73 @@ async def ensemble_generate(body: EnsembleGenerateBody):
             }
 
     results = await asyncio.gather(*(_run_one(n, r) for n, _e, r in members))
+    return {"results": results}
+
+
+@app.post("/api/ensemble/resolve")
+def ensemble_resolve(body: EnsembleGenerateBody):
+    """Resolve prompts for a browser-direct ensemble fanout. Returns one
+    provider_request + output_policy per selected export. The browser fires
+    the LLM calls itself, then posts each raw output to /api/process."""
+    names = [n for n in (body.exports or []) if n]
+    if not names:
+        raise HTTPException(status_code=400, detail="exports required")
+
+    def _context_for(name: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for row in body.context or []:
+            if not row.key or name in (row.exclude or []):
+                continue
+            out[row.key] = row.value
+        return out
+
+    results: list[dict[str, Any]] = []
+    for name in names:
+        try:
+            engine, run = _load_ensemble_member(name)
+        except HTTPException as exc:
+            results.append({"name": name, "ok": False, "error": str(exc.detail)})
+            continue
+        ctx = _context_for(name)
+        try:
+            request = run.prepare(body.user_input or "", **ctx)  # type: ignore[attr-defined]
+            snapshot = engine.context_store.get_state()
+            route = engine.router.select(snapshot, request)
+            injections = engine._materialize_injections(request.injections)
+            package, final_snapshot, merged_config, _layers, _trim = (
+                engine._build_with_budget(route, request, snapshot, injections)
+            )
+            policy = engine.output_processor.policy_for(package.output_policy)
+        except (KeyError, ValueError) as exc:
+            results.append({"name": name, "ok": False, "error": str(exc), "context_applied": ctx})
+            continue
+
+        messages: list[dict[str, str]] = []
+        if package.system:
+            messages.append({"role": "system", "content": package.system})
+        messages.append({"role": "user", "content": package.user})
+
+        results.append({
+            "name": name,
+            "ok": True,
+            "provider_request": {
+                "model": merged_config.model,
+                "messages": messages,
+                "temperature": merged_config.temperature,
+                "max_tokens": merged_config.max_tokens,
+                "top_p": merged_config.top_p,
+                "top_k": merged_config.top_k,
+                "repeat_penalty": merged_config.repeat_penalty,
+                "timeout_ms": merged_config.timeout_ms,
+            },
+            "output_policy": _policy_to_dict(policy),
+            "route": route.name,
+            "context_applied": ctx,
+            "prompt": {
+                "system": package.system or "",
+                "user": package.user,
+            },
+        })
     return {"results": results}
 
 

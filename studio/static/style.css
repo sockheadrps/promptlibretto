@@ -266,6 +266,29 @@ header h1 {
   border-color: var(--border);
 }
 
+.connection-slot { display: inline-flex; }
+.meta-chip--action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.meta-chip--action .chip-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted-soft);
+  box-shadow: 0 0 0 1px var(--border-subtle) inset;
+}
+.meta-chip--action .chip-dot[data-ok="1"] {
+  background: #5ab178;
+  box-shadow: 0 0 6px rgba(90, 177, 120, 0.5);
+}
+.meta-chip--action .chip-sep { color: var(--border-subtle); }
+.meta-chip--action .chip-model { color: var(--muted); }
+
+#conn-status[data-kind="ok"] { color: #5ab178; }
+#conn-status[data-kind="warn"] { color: #d4a95a; }
+#conn-status[data-kind="err"] { color: #c86b6b; }
+
 
 /* ── Buttons ───────────────────────────────────────────────────── */
 input, select, textarea, button {
