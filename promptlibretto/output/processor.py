@@ -4,9 +4,6 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
-from .memory import RecentOutputMemory
-
-
 @dataclass(frozen=True)
 class ValidationResult:
     ok: bool
@@ -24,23 +21,47 @@ class OutputPolicy:
     max_length: Optional[int] = None
     min_length: Optional[int] = None
     require_patterns: Sequence[str] = field(default_factory=tuple)
-    dedupe_against_recent: bool = False
-    dedupe_similarity_threshold: float = 0.9
     append_suffix: Optional[str] = None
     collapse_whitespace: bool = True
 
     def merged_with(self, overrides: Optional[Mapping[str, Any]]) -> "OutputPolicy":
+        """Merge `overrides` onto this policy. Sequence-typed fields
+        (`strip_prefixes`, `strip_patterns`, `forbidden_substrings`,
+        `forbidden_patterns`, `require_patterns`) are extended additively —
+        layered injections accumulate rules rather than clobbering them.
+        Scalar fields (`max_length`, `min_length`, `append_suffix`,
+        `collapse_whitespace`) replace.
+        """
         if not overrides:
             return self
-        valid = {k: v for k, v in overrides.items() if hasattr(self, k)}
-        return replace(self, **valid)
+        unknown = [k for k in overrides if not hasattr(self, k)]
+        if unknown:
+            raise ValueError(
+                f"unknown OutputPolicy fields: {unknown} "
+                f"(known: {sorted(self.__dataclass_fields__.keys())})"
+            )
+        additive_fields = {
+            "strip_prefixes",
+            "strip_patterns",
+            "forbidden_substrings",
+            "forbidden_patterns",
+            "require_patterns",
+        }
+        merged: dict[str, Any] = {}
+        for k, v in overrides.items():
+            if k in additive_fields:
+                existing = tuple(getattr(self, k) or ())
+                incoming = tuple(v or ())
+                merged[k] = existing + incoming
+            else:
+                merged[k] = v
+        return replace(self, **merged)
 
 
 @dataclass
 class ProcessingContext:
     route: str
     user_prompt: str
-    recent: Optional[RecentOutputMemory] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -104,7 +125,4 @@ class OutputProcessor:
         for pattern in p.require_patterns:
             if pattern and not re.search(pattern, text):
                 return ValidationResult(False, f"missing required pattern: {pattern!r}")
-        if p.dedupe_against_recent and ctx.recent is not None:
-            if ctx.recent.is_too_similar(text, threshold=p.dedupe_similarity_threshold):
-                return ValidationResult(False, "duplicate of recent output")
         return ValidationResult(True)

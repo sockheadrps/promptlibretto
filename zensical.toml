@@ -1,6 +1,6 @@
 [project]
 site_name = "promptlibretto"
-site_description = "Prompt-engineering library plus a browser studio to design, tune, and export prompts as runnable Python."
+site_description = "Prompt-engineering library plus a browser studio to design, tune, and export prompts as portable JSON."
 site_url = "https://sockheadrps.github.io/promptlibretto/"
 repo_url = "https://github.com/sockheadrps/promptlibretto"
 

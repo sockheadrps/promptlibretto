@@ -87,23 +87,3 @@ async def test_stream_applies_middleware(make_engine_fn):
         if chunk.done:
             break
     assert events == ["before", "after"]
-
-
-async def test_stream_history_keeps_request_overrides_separate(make_engine_fn):
-    from promptlibretto import RunHistory
-
-    history = RunHistory(capacity=5)
-    engine = make_engine_fn(history=history)
-    async for chunk in engine.generate_stream(
-        GenerationRequest(
-            inputs={"input": "q"},
-            config_overrides={"max_tokens": 12},
-        )
-    ):
-        if chunk.done:
-            break
-
-    item = history.items()[0]
-    assert item.request["config_overrides"] == {"max_tokens": 12}
-    assert item.metadata["resolved_config"]["max_tokens"] == 12
-    assert item.metadata["streamed"] is True

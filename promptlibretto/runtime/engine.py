@@ -8,8 +8,6 @@ from ..builders.builder import BuildContext, GenerationRequest, PromptPackage
 from ..builders.composite import CompositeBuilder, SectionFn, section
 from ..config import GenerationConfig
 from ..context.store import ContextStore
-from ..output.history import RunHistory, RunRecord
-from ..output.memory import RecentOutputMemory
 from ..output.processor import OutputProcessor, ProcessingContext
 from ..providers.base import (
     ProviderAdapter,
@@ -53,8 +51,6 @@ class PromptEngine:
         router: Union[PromptRouter, Sequence[PromptRoute], None] = None,
         provider: Union[ProviderAdapter, str, None] = None,
         output_processor: Optional[OutputProcessor] = None,
-        recent_memory: Optional[RecentOutputMemory] = None,
-        run_history: Optional[RunHistory] = None,
         random: Optional[RandomSource] = None,
         middlewares: Optional[Sequence[object]] = None,
         *,
@@ -66,16 +62,26 @@ class PromptEngine:
         self.asset_registry = asset_registry or PromptAssetRegistry()
         self.router = _coerce_router(router, routes)
         self.output_processor = output_processor or OutputProcessor()
-        self.recent_memory = recent_memory
-        self.run_history = run_history
         self.random = random or DefaultRandom()
         self.middlewares: list[object] = list(middlewares or [])
 
     def update_config(self, config: GenerationConfig) -> None:
         self.config = config
 
-    def add_middleware(self, middleware: object) -> None:
-        self.middlewares.append(middleware)
+    def register_route(self, route: Union[PromptRoute, Mapping[str, Any]], *, replace: bool = False) -> PromptRoute:
+        """Add a route to the router. Pass a PromptRoute or a serialized
+        spec mapping (see RouteSpec.from_dict). If `replace=True`, an
+        existing route with the same name is overwritten in place."""
+        if isinstance(route, Mapping):
+            route = PromptRoute.from_dict(route)
+        if replace:
+            self.router.replace(route)
+        else:
+            self.router.register(route)
+        return route
+
+    def unregister_route(self, name: str) -> bool:
+        return self.router.unregister(name)
 
     async def generate_once(
         self,
@@ -112,7 +118,6 @@ class PromptEngine:
             ctx = ProcessingContext(
                 route=route.name,
                 user_prompt=package.user,
-                recent=self.recent_memory,
                 metadata=dict(package.metadata),
             )
             cleaned = self.output_processor.clean(raw, ctx, policy)
@@ -128,8 +133,6 @@ class PromptEngine:
             if result.ok:
                 accepted = True
                 final_text = cleaned
-                if self.recent_memory is not None:
-                    self.recent_memory.add(cleaned)
                 break
             reject_reason = result.reason
             final_text = cleaned
@@ -149,7 +152,6 @@ class PromptEngine:
                 usage=asdict(provider_response.usage) if provider_response else None,
                 timing=asdict(provider_response.timing) if provider_response else None,
                 metadata={
-                    "fields": snapshot.fields,
                     "overlays": {
                         n: {
                             "text": o.text,
@@ -163,17 +165,6 @@ class PromptEngine:
                     "reject_reason": reject_reason if not accepted else None,
                     "budget": trim_info,
                 },
-            )
-
-        if self.run_history is not None:
-            self.run_history.add(
-                RunRecord(
-                    request=self._history_request(request),
-                    text=final_text,
-                    accepted=accepted,
-                    route=route.name,
-                    metadata={"resolved_config": merged_config.to_dict()},
-                )
             )
 
         return GenerationResult(
@@ -192,7 +183,9 @@ class PromptEngine:
         """Stream deltas, then a terminal chunk with the final result.
 
         Makes exactly one provider call; output-policy retries are skipped.
-        If `result.accepted` is False, fall back to `generate_once`.
+        Validation runs on the buffered text after streaming finishes — if it
+        fails, the terminal chunk's `result.accepted` is False (no retry,
+        no fallback to `generate_once`).
         """
         request = _coerce_request(request)
         if not supports_streaming(self.provider):
@@ -226,14 +219,10 @@ class PromptEngine:
         ctx = ProcessingContext(
             route=route.name,
             user_prompt=package.user,
-            recent=self.recent_memory,
             metadata=dict(package.metadata),
         )
         cleaned = self.output_processor.clean(raw, ctx, policy)
         validation = self.output_processor.validate(cleaned, ctx, policy)
-
-        if validation.ok and self.recent_memory is not None:
-            self.recent_memory.add(cleaned)
 
         trace: Optional[GenerationTrace] = None
         if request.debug:
@@ -253,7 +242,6 @@ class PromptEngine:
                 usage=asdict(final_response.usage) if final_response else None,
                 timing=asdict(final_response.timing) if final_response else None,
                 metadata={
-                    "fields": snapshot.fields,
                     "overlays": {
                         n: {"text": o.text, "priority": o.priority, "expires_at": o.expires_at}
                         for n, o in snapshot.overlays.items()
@@ -274,20 +262,6 @@ class PromptEngine:
             usage=asdict(final_response.usage) if final_response else None,
             timing=asdict(final_response.timing) if final_response else None,
         )
-
-        if self.run_history is not None:
-            self.run_history.add(
-                RunRecord(
-                    request=self._history_request(request),
-                    text=cleaned,
-                    accepted=validation.ok,
-                    route=route.name,
-                    metadata={
-                        "resolved_config": merged_config.to_dict(),
-                        "streamed": True,
-                    },
-                )
-            )
 
         if self.middlewares:
             result = await apply_after(self.middlewares, request, result)
@@ -364,29 +338,22 @@ class PromptEngine:
         }
         return package, current_snapshot, merged_config, config_layers, trim_info
 
-    @staticmethod
-    def _history_request(request: GenerationRequest) -> dict:
-        return {
-            "mode": request.mode,
-            "inputs": dict(request.inputs or {}),
-            "injections": list(request.injections or []),
-            "config_overrides": dict(request.config_overrides or {}),
-        }
-
     def _materialize_injections(self, names: Sequence[str]) -> list[PromptInjection]:
         out: list[PromptInjection] = []
         for name in names or []:
             inj = self.asset_registry.materialize_injection(name)
-            if inj is not None:
-                out.append(inj)
+            if inj is None:
+                known = list(self.asset_registry.injectors.keys())
+                raise KeyError(
+                    f"unknown injection: {name!r} (registered: {known})"
+                )
+            out.append(inj)
         return out
 
     def _build_provider_request(
         self,
         package: PromptPackage,
         config: GenerationConfig,
-        *,
-        stream: bool = False,
     ) -> ProviderRequest:
         messages: list[ProviderMessage] = []
         if package.system:
@@ -400,7 +367,6 @@ class PromptEngine:
             top_p=config.top_p,
             top_k=config.top_k,
             repeat_penalty=config.repeat_penalty,
-            stream=stream,
             timeout_ms=config.timeout_ms,
         )
 
@@ -409,7 +375,7 @@ class PromptEngine:
         package: PromptPackage,
         config: GenerationConfig,
     ) -> ProviderResponse:
-        request = self._build_provider_request(package, config, stream=False)
+        request = self._build_provider_request(package, config)
         return await self.provider.generate(request)
 
 
@@ -428,16 +394,26 @@ def _coerce_provider(provider: Any) -> ProviderAdapter:
 
 
 def _coerce_config(config: Any, provider: ProviderAdapter) -> GenerationConfig:
-    if isinstance(config, GenerationConfig):
-        return config
+    from dataclasses import replace as _replace
     default_provider = "mock" if isinstance(provider, MockProvider) else "ollama"
     default_model = "mock" if isinstance(provider, MockProvider) else "default"
+    if isinstance(config, GenerationConfig):
+        # Force `provider` to match the actual adapter — it's informational.
+        if config.provider == default_provider:
+            return config
+        return _replace(config, provider=default_provider)
     if config is None:
         return GenerationConfig(provider=default_provider, model=default_model)
     if isinstance(config, Mapping):
-        fields = {"provider": default_provider, "model": default_model, **dict(config)}
         known = {f for f in GenerationConfig.__dataclass_fields__}
-        return GenerationConfig(**{k: v for k, v in fields.items() if k in known})
+        unknown = [k for k in config if k not in known]
+        if unknown:
+            raise ValueError(
+                f"unknown GenerationConfig fields: {unknown} (known: {sorted(known)})"
+            )
+        # Caller's `provider` (if any) is silently overridden — it's derived.
+        fields = {"model": default_model, **dict(config), "provider": default_provider}
+        return GenerationConfig(**fields)
     raise TypeError(f"config must be GenerationConfig, Mapping, or None (got {type(config).__name__})")
 
 
@@ -504,10 +480,16 @@ def _coerce_router(
 ) -> PromptRouter:
     if isinstance(router, PromptRouter):
         return router
-    if isinstance(router, (list, tuple)) and all(isinstance(r, PromptRoute) for r in router):
-        built = PromptRouter(default_route=router[0].name if router else None)
-        built.register_many(router)
-        return built
+
+    if router is not None and not isinstance(router, PromptRouter):
+        import warnings
+        warnings.warn(
+            "Passing routes via `router=` is deprecated; use `routes=` for "
+            "mappings/sequences and reserve `router=` for a PromptRouter "
+            "instance.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     if router is None and routes is None:
         built = PromptRouter(default_route="default")

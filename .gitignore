@@ -18,6 +18,8 @@ env/
 # Editors / OS
 .vscode/
 .idea/
+.claude/
+.cache/
 .DS_Store
 Thumbs.db
 *.swp
@@ -26,6 +28,7 @@ Thumbs.db
 *.log
 studio/base_library.json
 studio/scenario_library.json
+promptlibretto_exports/
 
 # Zensical build output
 site/

@@ -16,151 +16,30 @@ logic has outgrown f-strings.
 Design rationale: [design.md](design.md). Studio: [server.md](server.md).
 Source: [studio/ on GitHub](https://github.com/sockheadrps/promptlibretto/tree/main/studio).
 
-<video autoplay loop muted playsinline style="max-width:100%;border-radius:6px">
-  <source src="assets/screenshots/generation.webm" type="video/webm">
-  <source src="assets/screenshots/generation.mp4" type="video/mp4">
-</video>
+![Analyst route generating](assets/screenshots/generation.gif)
 
-## Skip the prompt-chain code — use the studio
+## Two ways to use it
 
-If you don't want to wire `CompositeBuilder` / `PromptRoute` / overlays
-by hand, design your setup in the browser, export it as a `.py`, and
-import it.
-
-![Studio overview](assets/screenshots/test-bench-overview.png)
-
-### End-to-end in five steps
-
-**1.** Install the studio and a model provider (Ollama shown — any provider works):
-
-```bash
-pip install "promptlibretto[studio,ollama]"
-```
-
-**2.** From your project root, launch the studio. Saves land in `./promptlibretto_exports/` by default — `PROMPTLIBRETTO_EXPORT_DIR=.` drops them in CWD instead:
-
-```bash
-PROMPTLIBRETTO_EXPORT_DIR=. promptlibretto-studio
-```
-
-**3.** In the browser: pick a route, edit the base context, add overlays. For each overlay you want filled at call time, set its **runtime** dropdown to *optional* or *required*. Generate, iterate, inspect the debug trace until you're happy.
-
-**4.** Click **Export as Python** → type a name (e.g. `my_assistant`) → **Save to disk**. You now have `./my_assistant.py` next to your app code.
-
-**5.** In your app, depend on the library at runtime (no `[studio]` extra needed) and import the export:
-
-```bash
-pip install "promptlibretto[ollama]"
-```
+**Tune in the studio, load JSON from your app.** The browser studio lets
+you design routes, base context, overlays, and injections against a live
+model, then exports the resolved state to a versioned `.json`:
 
 ```python
-# your_app.py
-import asyncio
-from my_assistant import run
+from promptlibretto import load_engine
 
-async def main():
-    # Required + optional runtime slots are keyword args on run().
-    # Anything else (**extra) becomes a priority-10 overlay for that call.
-    result = await run(
-        "what should I cook tonight?",
-        location="kitchen",            # required slot you marked in the studio
-        focus="quick weeknight meal",  # optional slot
-        dietary="vegetarian",          # ad-hoc context via **extra
-    )
-    print(result.text)
-
-asyncio.run(main())
+engine, run = load_engine("my_assistant.json")
+result = await run("what should I cook tonight?", location="kitchen")
 ```
 
-That's the whole integration. The exported file reconstructs a
-`PromptEngine` with the exact config, base context, fixed overlays, and
-resolved route sections you tuned in the studio — your app depends on
-the `promptlibretto` library at runtime, not on the studio.
+`run(user_input, **slots)` handles runtime slots declared in the
+studio — required slots raise on missing, optional slots apply if
+non-empty, any other kwarg becomes a priority-10 overlay for that one
+call. `export_json(engine, route="...")` is also a public API if you
+want to serialise an engine you built in code. Full studio walkthrough
+with screenshots: [server.md](server.md).
 
-Want to tweak it later? Click **Load scenario** on the saved-export
-entry to restore the exact studio state that produced it, edit, and
-re-export over the same file.
-
-The walkthrough below covers each studio panel in detail. If you'd
-rather build the engine in code, jump to [Minimal example](#minimal-example).
-
-## Recommended workflow
-
-1. `pip install "promptlibretto[studio]"` and launch `promptlibretto-studio`.
-2. In the browser: pick a route, edit the base context, add overlays,
-   toggle injections, tweak overrides. Generate, iterate, inspect the
-   debug trace.
-3. Need to try a one-off tweak without touching the route? Click **Edit
-   prompt** next to the route selector to override the resolved system /
-   user text for the next run(s). The override sticks until you clear
-   it; it's never written back to the route.
-4. Click **Export as Python** → **Copy** the snippet, **Download** it as
-   a `.py` file, or **Save to disk** under a name. Saves land in
-   `./promptlibretto_exports/` by default — run `promptlibretto-studio`
-   from your project root and the file appears right in the project.
-   Override the target with `PROMPTLIBRETTO_EXPORT_DIR=./src/prompts`.
-
-The exported snippet reconstructs a `PromptEngine` with the exact config,
-base context, overlays, and resolved route sections you tuned. Dynamic
-user-input slots survive as lambdas. Your app imports the library and
-runs it — no studio dependency at runtime.
-
-!!! tip
-    `promptlibretto.export_python(engine, route="...")` is also a public
-    API — generate the same snippet from any `PromptEngine` you've wired
-    up in code, not just one built interactively.
-    `GenerationRequest.section_overrides={"system": "...", "user": "..."}`
-    is the library-level equivalent of the **Edit prompt** button:
-    bypass the builder for one call.
-
-### What the exported file looks like
-
-Every export ships with an `async def run(user_input="", *, <slots>, **extra)`
-wrapper, so calling code doesn't need to know about overlays:
-
-```python
-# my_assistant.py — generated by promptlibretto.export_python
-from promptlibretto import PromptEngine, ContextOverlay
-engine = PromptEngine(...)            # config, base, fixed overlays, route
-
-async def run(user_input="", *, location, focus="", **extra):
-    """Required runtime slots: location. Optional: focus.
-    Extra kwargs become priority-10 overlays."""
-    if not location:
-        raise ValueError("runtime slot 'location' is required")
-    engine.context_store.set_overlay("location", ContextOverlay(text=location, priority=20))
-    if focus:
-        engine.context_store.set_overlay("focus", ContextOverlay(text=focus, priority=15))
-    for _name, _value in extra.items():
-        if _value:
-            engine.context_store.set_overlay(_name, ContextOverlay(text=str(_value), priority=10))
-    return await engine.generate_once(user_input)
-```
-
-```python
-from my_assistant import run
-result = await run("what should I do?", location="kitchen", focus="cleanup")
-```
-
-In the studio, each overlay card has a **runtime** dropdown:
-
-- **fixed** — text is baked into the export.
-- **runtime — optional** — becomes a keyword arg with a `""` default; only applied if non-empty.
-- **runtime — required** — becomes a required keyword arg; raises `ValueError` if empty.
-
-![Runtime dropdown on an overlay card](assets/screenshots/overlay-runtime.png)
-
-Runtime-tagged overlays are skipped during studio generation (their text is a placeholder, not a value), and the exported `run()` clears any prior runtime/`**extra` overlays at entry so calls don't leak state into one another.
-
-![Export modal](assets/screenshots/export.png)
-
-### Editing an export later
-
-When you **Save to disk**, the studio also snapshots the current state as
-a scenario under the same name. The saved-exports list shows a **Load
-scenario** button — click it to restore the exact studio setup that
-produced the export, edit, and re-export. No round-trip parser; the
-scenario is the editable form.
+**Build it in code.** Wire a `PromptEngine` directly — see the
+[Minimal example](#minimal-example) below.
 
 ## Install
 
@@ -218,17 +97,14 @@ the above. An f-string and a direct provider call are fine.
 
 | Piece                  | What it does                                                              |
 | ---------------------- | ------------------------------------------------------------------------- |
-| `GenerationConfig`     | Sampling params + provider/model selection. Immutable; `merged_with()`.   |
-| `ContextStore`         | Long-lived base + named overlays with priority and optional expiry.       |
-| `PromptAssetRegistry`  | Named snippets: frames, rules, personas, endings, example/nudge pools, injectors. |
-| `PromptRoute` / `Router` | Named composition strategies. Router picks one per request.             |
+| `GenerationConfig`     | Sampling params + provider/model selection. Immutable; `merged_with()` raises on unknown keys. |
+| `ContextStore`         | Long-lived base + named overlays with priority and optional expiry. `get_state()` is pure; `prune()` evicts expired entries. |
+| `PromptAssetRegistry`  | Three flat maps: named strings, sampleable pools, named injectors.        |
+| `PromptRoute` / `PromptRouter` | Named composition strategies. Router picks one per request.       |
 | `CompositeBuilder`     | Assembles system + user prompts from ordered section callables.           |
 | `ProviderAdapter`      | Runs the model. Ships with `OllamaProvider`, `MockProvider`.              |
-| `OutputProcessor`      | Cleans and validates model output against a policy.                       |
-| `RecentOutputMemory`   | Bounded log for near-duplicate detection (Jaccard).                       |
-| `RunHistory`           | Bounded log of full runs for replay.                                      |
-| `TemplateRenderer`     | `{slot}` substitution for parameterised base / overlays.                  |
-| `RandomSource`         | Injectable RNG used by example/nudge pools.                               |
+| `OutputProcessor`      | Cleans and validates output. Sequence-typed policy fields merge additively across layers. |
+| `RandomSource`         | Injectable RNG used by sampled pools.                                     |
 | `PromptEngine`         | Glues it together. `generate_once(request)` is the entry point.           |
 
 ## Flow
@@ -259,7 +135,7 @@ from promptlibretto.builders.builder import BuildContext
 
 
 def frame(ctx: BuildContext) -> str:
-    return ctx.assets.frame("core")
+    return ctx.assets.get("frame.core")
 
 
 def user_input(ctx: BuildContext) -> str:
@@ -267,7 +143,7 @@ def user_input(ctx: BuildContext) -> str:
 
 
 assets = PromptAssetRegistry()
-assets.add_frame("core", "You are a careful, helpful assistant. Be concise.")
+assets.add("frame.core", "You are a careful, helpful assistant. Be concise.")
 
 router = PromptRouter(default_route="default")
 router.register(PromptRoute(
@@ -309,7 +185,7 @@ applies first; overlays can expire. Use them for transient facts, user
 preferences, or iteration follow-ups.
 
 ```python
-from promptlibretto import ContextOverlay, make_turn_overlay
+from promptlibretto import ContextOverlay, make_turn_overlay, make_runtime_overlay
 
 store.set_overlay("budget", ContextOverlay(text="Keep total under $800.", priority=20))
 store.set_overlay("iter_1", make_turn_overlay(
@@ -317,7 +193,17 @@ store.set_overlay("iter_1", make_turn_overlay(
     compacted="Prefer shorter responses.",
     priority=25,
 ))
+# Declare a slot filled at call-time. The caller supplies it via
+# run(location=...) or request.inputs. In the studio you can also
+# give a runtime overlay a template like `"Your mood is: {}. Respond
+# with that emotional influence."` — `{}` is replaced with the caller's
+# value at build time:
+store.set_overlay("location", make_runtime_overlay("required"))
 ```
+
+`ContextStore.get_state()` is a pure read — it returns a snapshot filtering
+expired overlays without mutating the store. Call `prune()` separately when
+you want to actually evict them.
 
 ### Routes and builders
 
@@ -353,8 +239,17 @@ assets.add_injector("json_only", InjectionTemplate(
 
 ### Templating
 
-`TemplateRenderer` does `{slot}` substitution with aliases and whitespace
-normalisation — useful for parameterised base contexts or overlays.
+Slot substitution happens at the section boundary via `str.format_map`.
+For exported engines, `user_sections` entries shaped as
+`{"template": "Q:\n{input}"}` get compiled to a callable that fills
+`{input}` (and any runtime-slot names) from `request.inputs`.
+
+If you build sections by hand, do the substitution yourself:
+
+```python
+def my_section(ctx):
+    return "Hello, {name}".format_map(dict(ctx.request.inputs))
+```
 
 ---
 
@@ -390,6 +285,12 @@ async for chunk in engine.generate_stream(request):
 Applies a policy derived from the route + injection overrides: strip code
 fences, enforce required regex, reject forbidden substrings. Rejected
 attempts retry up to `GenerationConfig.retries` times.
+
+Sequence-typed fields (`strip_prefixes`, `strip_patterns`,
+`forbidden_substrings`, `forbidden_patterns`, `require_patterns`) merge
+**additively** across layers — stacked injections accumulate rules rather
+than clobbering each other. Scalar fields still replace. Unknown keys raise
+`ValueError` instead of being silently dropped.
 
 ### Prompt-size budget
 
@@ -441,12 +342,6 @@ system/user prompts, every attempt, resolved config, and context snapshot.
     `generation_overrides`, which in turn win over the engine's base
     `GenerationConfig`. The trace exposes all four layers under
     `metadata.config_layers` so you can see exactly who contributed what.
-
-### Run history
-
-Plug a `RunHistory` in and every `generate_once` is recorded with its
-request shape for replay. Stores only the caller's explicit
-`config_overrides`; resolved config lives in record metadata.
 
 ---
 

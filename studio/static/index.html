@@ -4,19 +4,33 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>promptlibretto studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <header>
-    <h1>promptlibretto studio</h1>
-    <div class="header-right">
-      <button id="scenarios-btn" type="button" class="ghost-action">Scenarios</button>
-      <button id="example-btn" type="button" class="example">Load Example Scenario</button>
-      <div class="meta">
-        <span id="meta-provider">provider: …</span>
-        <span id="meta-model">model: …</span>
-        <span id="meta-url">url: …</span>
-      </div>
+    <div class="header-brand">
+      <h1>promptlibretto</h1>
+      <nav class="header-page-nav">
+        <span class="header-page-link active">Studio</span>
+        <a href="/ensemble" class="header-page-link">Ensemble</a>
+      </nav>
+      <button id="snapshots-btn" type="button" class="header-nav-btn">Load Snapshot</button>
+      <span id="snapshot-indicator" class="snapshot-indicator" hidden>
+        <span id="snapshot-name" class="snapshot-name"></span>
+        <span id="snapshot-dirty" class="snapshot-dirty" hidden>unsaved</span>
+        <button id="snapshot-quick-save" type="button" class="snapshot-save-btn" hidden title="Save changes to this snapshot">Save</button>
+      </span>
+    </div>
+    <div class="header-meta">
+      <button id="about-btn" type="button" class="header-nav-btn">About</button>
+      <button id="example-btn" type="button" class="header-nav-btn header-nav-accent">View Examples</button>
+      <span class="header-nav-sep"></span>
+      <span id="meta-provider" class="meta-chip">provider: …</span>
+      <span id="meta-model" class="meta-chip">model: …</span>
+      <span id="meta-url" class="meta-chip">url: …</span>
     </div>
   </header>
 
@@ -25,34 +39,80 @@
     <section class="panel controls-panel">
       <nav class="tabs" role="tablist">
         <div class="tab active" role="tab" tabindex="0" data-tab="compose" aria-selected="true">
-          <span class="tab-num">1</span>
           <span class="tab-label">Compose</span>
           <button class="help" type="button" data-help="compose">?</button>
         </div>
         <div class="tab" role="tab" tabindex="0" data-tab="state" aria-selected="false">
-          <span class="tab-num">2</span>
-          <span class="tab-label">Context State</span>
+          <span class="tab-label">Tuning</span>
           <button class="help" type="button" data-help="state">?</button>
         </div>
       </nav>
 
       <div class="tab-panel" data-tab="compose" role="tabpanel">
         <label class="field">
-          <span class="field-label">Route <button class="help" type="button" data-help="route">?</button></span>
-          <div style="display:flex;gap:6px;align-items:center">
-            <select id="route-select" style="flex:1"></select>
-            <button id="edit-prompt-btn" type="button" class="ghost-action small" title="Edit the resolved prompt for the next run (not persisted)">Edit prompt</button>
+          <span class="field-label">Base Context <button class="help" type="button" data-help="base">?</button></span>
+          <textarea id="base-text" rows="4" placeholder="Long-lived facts and framing — sets the stage for every route…"></textarea>
+          <div class="base-actions">
+            <button id="save-base" type="button" class="ghost-action">Save Base</button>
+            <button id="save-base-as" type="button" class="ghost-action">Save As…</button>
+            <button id="load-base" type="button" class="ghost-action">Load…</button>
           </div>
-          <small id="route-desc" class="muted"></small>
+        </label>
+
+        <div class="field">
+          <span class="field-label">Route <button class="help" type="button" data-help="route">?</button></span>
+          <div class="route-controls">
+            <select id="route-select"></select>
+            <button id="edit-prompt-btn" type="button" class="ghost-action small" title="Edit the resolved prompt for the next run (not persisted)">Edit prompt</button>
+            <button id="new-custom-route-btn" type="button" class="ghost-action small" title="Author a saveable custom route">+ Custom</button>
+            <button id="edit-custom-route-btn" type="button" class="ghost-action small" hidden title="Edit this custom route">Edit route</button>
+            <button id="delete-custom-route-btn" type="button" class="ghost-action small" hidden title="Delete this custom route">Delete</button>
+          </div>
+          <div id="route-desc-wrap" class="route-detail" hidden>
+            <span class="route-detail-label">Description</span>
+            <span id="route-desc" class="route-detail-value"></span>
+          </div>
+          <fieldset id="route-policy-fieldset" class="route-policy-fieldset" hidden>
+            <legend class="field-label">Output Policy</legend>
+            <div id="route-policy-list" class="route-policy-list"></div>
+          </fieldset>
+          <small class="muted">Base context and User Input below are still used — the route decides how to weave them in.</small>
           <small id="section-override-banner" class="muted" hidden style="color:var(--warn)">
             ⚠ Custom prompt active for next run — <a href="#" id="clear-section-override">clear</a>
           </small>
-        </label>
+        </div>
 
         <label class="field">
           <span class="field-label">User Input <button class="help" type="button" data-help="input">?</button></span>
           <textarea id="input-text" rows="6" placeholder="Type the request, question, brief, or source text…"></textarea>
         </label>
+      </div>
+
+      <div class="tab-panel" data-tab="state" role="tabpanel" hidden>
+        <div class="subhead">
+          <span>Overlays</span>
+          <button class="help" type="button" data-help="overlays">?</button>
+          <span class="spacer"></span>
+          <input id="suggest-count" type="number" min="1" max="20" step="1" value="5" class="inline-num" title="how many overlays to suggest" />
+          <button id="suggest-overlays" type="button" class="ghost-action small" title="Ask the model to suggest overlays based on the current base context">✨ Suggest</button>
+        </div>
+        <div id="overlay-suggestions" class="overlay-suggestions" hidden></div>
+        <div id="overlay-list" class="overlay-list"></div>
+        <div class="overlay-form">
+          <input id="overlay-name" placeholder="overlay name" />
+          <input id="overlay-priority" type="number" placeholder="priority" value="10" hidden />
+          <textarea id="overlay-text" rows="2" placeholder="overlay text…"></textarea>
+          <select id="overlay-runtime" title="In an exported run() wrapper, runtime slots become function arguments. Required raises ValueError if empty.">
+            <option value="">fixed (set at export time)</option>
+            <option value="optional">runtime — optional</option>
+            <option value="required">runtime — required</option>
+          </select>
+          <input id="overlay-template" placeholder="template, e.g. The category is {name} being discussed" hidden title="Wrap the runtime value in surrounding text. Use {name} where the value should be inserted." />
+          <div class="actions">
+            <button id="add-overlay" type="button">Add / Replace</button>
+            <button id="clear-overlays" type="button" class="ghost">Clear All</button>
+          </div>
+        </div>
 
         <fieldset class="field">
           <legend class="field-label">Injections <button class="help" type="button" data-help="injections">?</button></legend>
@@ -72,113 +132,85 @@
           </div>
         </fieldset>
       </div>
-
-      <div class="tab-panel" data-tab="state" role="tabpanel" hidden>
-        <label class="field">
-          <span class="field-label">Base Context <button class="help" type="button" data-help="base">?</button></span>
-          <textarea id="base-text" rows="4" placeholder="Long-lived facts and framing…"></textarea>
-          <div class="base-actions">
-            <button id="save-base" type="button" class="ghost-action">Save Base</button>
-            <button id="save-base-as" type="button" class="ghost-action">Save As…</button>
-            <button id="load-base" type="button" class="ghost-action">Load…</button>
-          </div>
-        </label>
-
-        <div class="subhead">
-          <span>Overlays</span>
-          <button class="help" type="button" data-help="overlays">?</button>
-          <span class="spacer"></span>
-          <input id="suggest-count" type="number" min="1" max="20" step="1" value="5" class="inline-num" title="how many overlays to suggest" />
-          <button id="suggest-overlays" type="button" class="ghost-action small" title="Ask the model to suggest overlays based on the current base context">✨ Suggest</button>
-        </div>
-        <div id="overlay-suggestions" class="overlay-suggestions" hidden></div>
-        <div id="overlay-list" class="overlay-list"></div>
-        <div class="overlay-form">
-          <input id="overlay-name" placeholder="overlay name" />
-          <input id="overlay-priority" type="number" placeholder="priority" value="10" />
-          <textarea id="overlay-text" rows="2" placeholder="overlay text…"></textarea>
-          <select id="overlay-runtime" title="In an exported run() wrapper, runtime slots become function arguments. Required raises ValueError if empty.">
-            <option value="">fixed (set at export time)</option>
-            <option value="optional">runtime — optional</option>
-            <option value="required">runtime — required</option>
-          </select>
-          <div class="actions">
-            <button id="add-overlay" type="button">Add / Replace</button>
-            <button id="clear-overlays" type="button" class="ghost">Clear All</button>
-          </div>
-        </div>
-
-      </div>
     </section>
 
     <!-- RIGHT: output -->
     <section class="panel output-panel">
       <header class="panel-header">
-        <span class="section-title">3. Output</span>
-        <button class="help" type="button" data-help="output">?</button>
-        <span class="spacer"></span>
-        <label class="switch" title="toggle debug trace">
-          <input id="debug-toggle" type="checkbox" checked />
-          <span class="switch-track"><span class="switch-thumb"></span></span>
-          <span class="switch-label">debug trace</span>
-        </label>
-        <label class="switch" title="stream tokens as they arrive">
-          <input id="stream-toggle" type="checkbox" />
-          <span class="switch-track"><span class="switch-thumb"></span></span>
-          <span class="switch-label">stream</span>
-        </label>
-        <button class="help" type="button" data-help="debug">?</button>
-        <button id="export-btn" type="button" class="ghost-action" title="Export the current route + context as runnable Python">Export as Python</button>
-        <button id="generate-btn" type="button" class="primary-action">Generate ⏎</button>
+        <div class="panel-header-row">
+          <span class="section-title">Output</span>
+          <button class="help" type="button" data-help="output">?</button>
+          <span class="spacer"></span>
+          <div class="gen-controls">
+            <label class="switch" title="stream tokens as they arrive" hidden>
+              <input id="stream-toggle" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+              <span class="switch-label">stream</span>
+            </label>
+            <label class="switch" title="toggle debug trace" hidden>
+              <input id="debug-toggle" type="checkbox" checked />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+              <span class="switch-label">debug</span>
+            </label>
+            <span class="gen-controls-sep" hidden></span>
+            <button id="export-btn" type="button" class="action-btn action-btn--secondary" title="Export the current route + context as JSON" hidden>Export JSON</button>
+            <button id="pregenerate-btn" type="button" class="action-btn action-btn--secondary" title="Resolve the prompt into draggable sections for review">Pre-generate</button>
+            <button id="generate-btn" type="button" class="action-btn action-btn--primary" title="Send the prompt to the model">Generate</button>
+          </div>
+        </div>
       </header>
-      <div class="output-meta">
-        <span id="out-route" class="pill">route: —</span>
-        <span id="out-accepted" class="pill">—</span>
-        <span id="out-timing" class="pill">—</span>
-        <span id="out-usage" class="pill">—</span>
-        <span class="spacer"></span>
-        <div class="view-toggle" role="group" aria-label="Output view">
-          <button id="view-rendered" type="button" class="toggle active">rendered</button>
-          <button id="view-raw" type="button" class="toggle">raw</button>
+      <nav class="output-tabs" role="tablist">
+        <div class="output-tab" data-output-tab="output" role="tab" aria-selected="true">Output</div>
+        <div class="output-tab" data-output-tab="stage" role="tab" aria-selected="false">Pre-generate <span id="stage-tab-badge" class="muted" hidden>· staged</span></div>
+      </nav>
+      <div class="output-panels">
+        <div class="output-panel-body" data-output-tab="output">
+          <div class="output-meta">
+            <span id="out-route" class="pill">route: —</span>
+            <span id="out-accepted" class="pill">—</span>
+            <span id="out-timing" class="pill">—</span>
+            <span id="out-usage" class="pill">—</span>
+            <span class="spacer"></span>
+            <div class="view-toggle" role="group" aria-label="Output view">
+              <button id="view-rendered" type="button" class="toggle active">rendered</button>
+              <button id="view-raw" type="button" class="toggle">raw</button>
+            </div>
+          </div>
+          <div id="reject-banner" class="reject-banner" hidden></div>
+          <div id="output-rendered" class="output-text markdown">(no generation yet)</div>
+          <textarea id="output-raw" class="output-text output-raw-edit" hidden readonly>(no generation yet)</textarea>
+        </div>
+        <div class="output-panel-body" data-output-tab="stage" hidden>
+          <div id="prompt-stage" class="prompt-stage">
+            <div class="stage-banner">
+              <span class="muted">Drag sections to reorder. Click <em>Generate</em> to send this exact order.</span>
+              <span class="spacer"></span>
+              <button id="stage-reset" type="button" class="ghost small" title="Discard ordering and go back to the live prompt">Reset</button>
+            </div>
+            <div class="stage-empty-root muted" hidden>Click <strong>Pre-generate</strong> to resolve the current prompt into draggable sections.</div>
+            <div class="stage-group" data-group="system">
+              <h4>System</h4>
+              <div class="stage-list" data-list="system"></div>
+              <div class="stage-empty muted" data-empty="system">(no system sections)</div>
+            </div>
+            <div class="stage-group" data-group="user">
+              <h4>User</h4>
+              <div class="stage-list" data-list="user"></div>
+              <div class="stage-empty muted" data-empty="user">(no user sections)</div>
+            </div>
+          </div>
         </div>
       </div>
-      <div id="output-rendered" class="output-text markdown">(no generation yet)</div>
-      <pre id="output-raw" class="output-text" hidden>(no generation yet)</pre>
 
       <div class="iterate-strip">
-        <div class="subhead">
-          <span>Iterate</span>
-          <button class="help" type="button" data-help="iterate">?</button>
-        </div>
-        <textarea id="iterate-input" rows="3" placeholder="Respond to the output. We'll attach your follow-up as an overlay so the next generation accounts for it."></textarea>
-        <div class="iterate-actions">
-          <button id="iterate-verbatim" type="button" class="ghost-action">Use verbatim</button>
-          <button id="iterate-compact" type="button" class="primary-action">Compact &amp; insert</button>
-        </div>
-        <details class="iterate-params">
-          <summary class="muted">compaction params</summary>
-          <div class="grid-2">
-            <label><span>temperature</span><input id="compact-temperature" type="number" step="0.05" min="0" max="2" placeholder="0.4" /></label>
-            <label><span>max_tokens</span><input id="compact-max_tokens" type="number" step="16" min="16" placeholder="160" /></label>
-          </div>
-        </details>
-      </div>
-
-      <div class="recent-strip">
-        <div class="subhead">
-          <span>Recent Runs</span>
-          <button class="help" type="button" data-help="recent">?</button>
-          <span class="spacer"></span>
-          <button id="clear-recent" type="button" class="ghost small">Clear All</button>
-        </div>
-        <div id="run-history" class="run-history"></div>
+        <button id="save-response-overlay" type="button" class="ghost-action" disabled title="Save the latest model output as a reusable overlay">Save response as overlay</button>
       </div>
     </section>
 
     <!-- FAR RIGHT: debug trace -->
     <section class="panel debug-panel">
       <header class="panel-header">
-        <span class="section-title">4. Debug Trace</span>
+        <span class="section-title">Debug Trace</span>
         <button class="help" type="button" data-help="trace">?</button>
       </header>
       <div class="debug-body">
@@ -233,16 +265,100 @@
     </div>
   </div>
 
+  <!-- Custom route modal -->
+  <div id="custom-route-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-custom-route></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="custom-route-title">
+      <header>
+        <h3 id="custom-route-title">Custom route</h3>
+        <button class="modal-close" type="button" data-close-custom-route aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="muted">Saveable, editable route. Custom routes are explicit-select only — auto-route never picks them. Use <code>{input}</code> in the user template to inject the user's request; other <code>{name}</code> placeholders pull from runtime kwargs.</p>
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input id="cr-name" type="text" placeholder="my_route" />
+        </label>
+        <label class="field">
+          <span class="field-label">Description</span>
+          <input id="cr-description" type="text" placeholder="What this route is for" />
+        </label>
+        <label class="field">
+          <span class="field-label">System prompt</span>
+          <textarea id="cr-system" rows="6" placeholder="(optional)"></textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">User template</span>
+          <textarea id="cr-user-template" rows="6" placeholder="{input}"></textarea>
+        </label>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+          <label class="field"><span class="field-label">Priority</span><input id="cr-priority" type="number" step="1" value="0" /></label>
+          <label class="field"><span class="field-label">Sampling overrides (JSON)</span><input id="cr-overrides" type="text" placeholder='{"temperature":0.4}' /></label>
+        </div>
+        <fieldset class="field policy-editor" id="cr-policy-editor">
+          <legend class="field-label">Output Policy</legend>
+          <div class="policy-row">
+            <label>
+              <span class="policy-label">Min length</span>
+              <input id="pol-min-length" type="number" min="0" placeholder="—" />
+            </label>
+            <label>
+              <span class="policy-label">Max length</span>
+              <input id="pol-max-length" type="number" min="0" placeholder="—" />
+            </label>
+          </div>
+          <div class="policy-row">
+            <label class="policy-check">
+              <input id="pol-collapse-ws" type="checkbox" />
+              <span class="policy-label">Collapse whitespace</span>
+            </label>
+          </div>
+          <label class="policy-field">
+            <span class="policy-label">Append suffix</span>
+            <input id="pol-append-suffix" type="text" placeholder="—" />
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Strip prefixes <small class="muted">(one per line)</small></span>
+            <textarea id="pol-strip-prefixes" rows="2" placeholder="e.g.&#10;Sure, here is"></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Strip patterns <small class="muted">(regex, one per line)</small></span>
+            <textarea id="pol-strip-patterns" rows="2" placeholder="e.g.&#10;```[\s\S]*?```"></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Required patterns <small class="muted">(regex, one per line — output must match all)</small></span>
+            <textarea id="pol-require-patterns" rows="2" placeholder="e.g.&#10;^\d+\."></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Forbidden substrings <small class="muted">(one per line)</small></span>
+            <textarea id="pol-forbidden-subs" rows="2" placeholder='e.g.&#10;username:&#10;"'></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Forbidden patterns <small class="muted">(regex, one per line)</small></span>
+            <textarea id="pol-forbidden-pats" rows="2" placeholder="e.g.&#10;(?i)as an ai"></textarea>
+          </label>
+        </fieldset>
+        <input id="cr-output-policy" type="hidden" />
+        <small id="cr-error" class="muted" style="color:var(--warn)" hidden></small>
+        <div class="actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+          <button id="cr-delete" type="button" class="ghost-action" hidden>Delete</button>
+          <button data-close-custom-route type="button" class="ghost-action">Cancel</button>
+          <button id="cr-save" type="button" class="primary-action">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Export modal -->
   <div id="export-modal" class="modal" hidden>
     <div class="modal-backdrop" data-close-export></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
       <header>
-        <h3 id="export-modal-title">Export as Python</h3>
+        <h3 id="export-modal-title">Export as JSON</h3>
         <button class="modal-close" type="button" data-close-export aria-label="Close">×</button>
       </header>
       <div class="modal-body">
-        <p class="muted">Copy-paste into your app, download the <code>.py</code>, or save by name to <code id="export-dir">./promptlibretto_exports/</code> (the directory where you launched the studio). Override with <code>PROMPTLIBRETTO_EXPORT_DIR</code>.</p>
+        <p class="muted">Load with <code>promptlibretto.load_engine("name.json")</code>. Copy, download <code>.json</code>, or save by name to <code id="export-dir">./promptlibretto_exports/</code> (the directory where you launched the studio). Override with <code>PROMPTLIBRETTO_EXPORT_DIR</code>.</p>
         <pre id="export-code" class="trace" style="max-height:50vh;overflow:auto"></pre>
         <div class="actions" style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
           <input id="export-name" placeholder="export name (e.g. analyst_v1)" style="flex:1;min-width:180px" />
@@ -253,6 +369,198 @@
         </div>
         <div class="subhead" style="margin-top:12px"><span>Saved exports</span></div>
         <div id="export-saved-list" class="run-history"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- About / Tour modal -->
+  <div id="about-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-about></div>
+    <div class="modal-card modal-card--tour" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <header>
+        <h3 id="about-title">How promptlibretto works</h3>
+        <button class="modal-close" type="button" data-close-about aria-label="Close">×</button>
+      </header>
+      <div class="modal-body about-slideshow">
+        <div class="slide-diagram">
+          <span class="sd-box sd-base" data-step="1">Base Context</span>
+          <span class="sd-plus" data-step="1">+</span>
+          <span class="sd-box sd-route" data-step="1">Route</span>
+          <span class="sd-plus" data-step="2">+</span>
+          <span class="sd-box sd-overlay" data-step="2">Overlays</span>
+          <span class="sd-plus" data-step="3">+</span>
+          <span class="sd-box sd-inj" data-step="3">Injections</span>
+          <span class="sd-arrow" data-step="4">→</span>
+          <span class="sd-box sd-out" data-step="4">Final Prompt</span>
+          <span class="sd-sep" data-step="5"></span>
+          <span class="sd-box sd-secondary" data-step="5">Pre-Generate</span>
+          <span class="sd-box sd-secondary" data-step="5">Export</span>
+          <span class="sd-box sd-secondary" data-step="6">Ensemble</span>
+        </div>
+
+        <div class="about-columns">
+          <!-- Left: slide text -->
+          <div class="about-content">
+            <div class="about-slide active" data-slide="0">
+              <h4>The Big Picture</h4>
+              <p>promptlibretto assembles prompts from composable pieces — like a musical score built from parts.</p>
+              <p>Instead of one monolithic prompt string, you define <strong>routes</strong>, <strong>context layers</strong>, and <strong>injections</strong> that snap together at generation time.</p>
+              <p>Once you've tuned and tested a configuration in the studio, <strong>export</strong> it as JSON. In your project, a single call loads the full prompt pipeline — context, route, injections, sampling, and output policy — ready to run:</p>
+              <pre class="about-code">from promptlibretto import load_engine
+
+eng = load_engine("analyst_v2.json")
+result = eng.run(input="How do I get my first 10 paying users?")</pre>
+              <p>Step through to see each piece add to the prompt on the right →</p>
+            </div>
+
+            <div class="about-slide" data-slide="1">
+              <h4>Base Context &amp; Route</h4>
+              <p><strong>Base Context</strong> is your long-lived framing — persona, constraints, stable facts. It appears in every prompt.</p>
+              <p>A <strong>route</strong> is a named strategy for one kind of prompt. It bundles:</p>
+              <ul>
+                <li>A <strong>composition recipe</strong> — ordered system + user sections</li>
+                <li><strong>Sampling defaults</strong> — temperature, max_tokens, etc.</li>
+                <li>An <strong>output policy</strong> — validation, cleanup, required patterns</li>
+              </ul>
+              <p>Leave the selector on <em>auto-route</em> or pick one explicitly.</p>
+            </div>
+
+            <div class="about-slide" data-slide="2">
+              <h4>Overlays</h4>
+              <p><strong>Overlays</strong> are temporary layers stacked on top of the base context — transient facts, signals, or emphasis. Each has a name and priority (higher = appears first). Some are fixed at export time, others are filled at runtime.</p>
+              <p><strong>Runtime overlays</strong> use a <strong>template</strong> with <code>{}</code> as the insertion point. At call time the value replaces <code>{}</code> — e.g. a template <code>The user's industry is {}</code> with value <code>SaaS</code> produces <code>The user's industry is SaaS</code>. Optional runtime slots are dropped when empty; required ones raise an error.</p>
+            </div>
+
+            <div class="about-slide" data-slide="3">
+              <h4>Injections</h4>
+              <p><strong>Injections</strong> are reusable fragments that <em>modify</em> the active route — adding instruction text and overriding sampling or output policy.</p>
+              <p>Multiple injections stack. Use the pencil button to tweak text for this session without changing the source.</p>
+            </div>
+
+            <div class="about-slide" data-slide="4">
+              <h4>Generation &amp; Output</h4>
+              <p>When you hit <strong>Generate</strong>, the engine:</p>
+              <ol>
+                <li>Selects a route (auto or explicit)</li>
+                <li>Assembles system + user prompts from all layers</li>
+                <li>Sends to the provider with resolved config</li>
+                <li>Validates the response against the output policy</li>
+                <li>Retries if validation fails</li>
+              </ol>
+              <p>Enable <strong>Debug Trace</strong> to inspect the exact prompts and attempts.</p>
+            </div>
+
+            <div class="about-slide" data-slide="5">
+              <h4>Pre-Generate &amp; Export</h4>
+              <p><strong>Pre-Generate</strong> previews assembled sections before sending — drag to reorder, fill in runtime slot values.</p>
+              <p><strong>Export</strong> saves as JSON, loadable with <code>promptlibretto.load_engine()</code>. Runtime overlays become function arguments.</p>
+              <p><strong>Snapshots</strong> capture the full studio state to return to later.</p>
+            </div>
+
+            <div class="about-slide" data-slide="6">
+              <h4>Ensemble</h4>
+              <p>The <strong>Ensemble</strong> page fans out the same input across multiple saved exports, each running independently with its own route, context, and config.</p>
+              <p>A <strong>Shared Directive</strong> is sent to every selected model — your request, question, or instruction. This is additional prompt input on top of each export's built-in prompt.</p>
+              <p><strong>Context Overrides</strong> let you inject extra key-value pairs per-model or across all models — filling in runtime slots or adding context without editing the export.</p>
+              <p>Compare results in <strong>cards</strong> view or spot differences with <strong>diff</strong> view.</p>
+            </div>
+          </div>
+
+          <!-- Right: progressive prompt preview -->
+          <div class="tour-prompt">
+            <div class="tour-prompt-title">Prompt Preview</div>
+            <div class="tour-prompt-scroll">
+              <!-- System prompt -->
+              <div class="tour-block-divider" data-show-at="1">── system prompt ──</div>
+              <div class="tour-block" data-show-at="1">
+                <div class="tour-block-label sd-route">route · system frame</div>
+                <div class="tour-block-text">You are a precise analyst. Prefer structure, evidence, and named tradeoffs. Distinguish facts from inferences.
+
+Use markdown when it aids scanning, but never gratuitously.
+
+Do not narrate what you are about to do — just do it.</div>
+              </div>
+
+              <!-- User prompt -->
+              <div class="tour-block-divider" data-show-at="1">── user prompt ──</div>
+              <div class="tour-block" data-show-at="1">
+                <div class="tour-block-label sd-base">base context</div>
+                <div class="tour-block-text">You are a thinking partner for a solo founder. Generate a range of concrete options, not pep talks. Prefer specificity over breadth.</div>
+              </div>
+              <div class="tour-block" data-show-at="2">
+                <div class="tour-block-label sd-overlay">overlay · constraints</div>
+                <div class="tour-block-text">Monthly burn must stay under $300. No paid ads, no paid tooling beyond what already exists.
+
+Founder is solo and cannot hire or delegate. Anything suggested must be doable by one person in under 10 hours per week.</div>
+              </div>
+              <div class="tour-block" data-show-at="2">
+                <div class="tour-block-label sd-overlay">overlay · industry <span class="tour-runtime-tag">runtime</span></div>
+                <div class="tour-block-text"><span class="tour-template-hint">template: The user's industry is {}</span>
+→ The user's industry is SaaS</div>
+              </div>
+              <div class="tour-block" data-show-at="3">
+                <div class="tour-block-label sd-inj">injection · tighten</div>
+                <div class="tour-block-text">Compress aggressively. Aim for the shortest answer that is still complete.</div>
+              </div>
+              <div class="tour-block" data-show-at="3">
+                <div class="tour-block-label sd-inj">injection · json_only</div>
+                <div class="tour-block-text">Format the response using markdown. Use ## headings to organise sections, bullet lists for enumerations, **bold** for key terms.</div>
+              </div>
+              <div class="tour-block" data-show-at="1">
+                <div class="tour-block-label sd-route">route · output structure</div>
+                <div class="tour-block-text">Structure your response with these sections: **Summary**, **Key facts**, **Tradeoffs**, **Open questions**.
+
+Respond using the requested structure exactly.</div>
+              </div>
+              <div class="tour-block" data-show-at="1">
+                <div class="tour-block-label sd-route">route · user input</div>
+                <div class="tour-block-text">How do I get my first 10 paying users for a self-hosted social media platform. I've been live for two weeks and have 400 users but no revenue.</div>
+              </div>
+
+              <!-- Output -->
+              <div class="tour-block-divider" data-show-at="4">── output ──</div>
+              <div class="tour-block tour-block--output" data-show-at="4">
+                <div class="tour-block-label sd-out">model response</div>
+                <div class="tour-block-text">## Summary
+**Acquire** 10 users by manually onboarding **5 high-value targets** from your current 400, using **free outreach**. **Convert** to paid via **immediate payment** after setup.
+
+## Key facts
+• 400 users, $0 revenue, 2 weeks live
+• Monthly burn &lt; $300, solo founder
+• Max 10 hours/week effort
+
+## Tradeoffs
+• **Speed vs. Scale**: Manual outreach yields faster conversion but caps at ~10 users/month
+• **Feature vs. Service**: Manual service sells instantly vs. features that take dev time
+• **Generic vs. Niche**: Targeting one community type succeeds over broad appeal
+
+## Open questions
+• What prevents these 400 users from upgrading?
+• Which 5 users complain most about setup?</div>
+              </div>
+
+              <!-- Ensemble additions -->
+              <div class="tour-block-divider" data-show-at="6">── ensemble additions ──</div>
+              <div class="tour-block" data-show-at="6">
+                <div class="tour-block-label sd-ensemble">shared directive</div>
+                <div class="tour-block-text">Focus specifically on pricing strategy — freemium vs one-time fee vs subscription</div>
+              </div>
+              <div class="tour-block" data-show-at="6">
+                <div class="tour-block-label sd-ensemble">context override · user_count</div>
+                <div class="tour-block-text">400</div>
+              </div>
+
+              <!-- Empty state for slide 0 -->
+              <div class="tour-prompt-empty" data-hide-at="1">Step through the slides to watch the prompt build up layer by layer.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="about-nav">
+          <button id="about-prev" type="button" class="ghost" disabled>← Prev</button>
+          <div class="about-dots"></div>
+          <button id="about-next" type="button" class="ghost">Next →</button>
+        </div>
       </div>
     </div>
   </div>

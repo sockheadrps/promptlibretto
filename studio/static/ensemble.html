@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>promptlibretto studio · ensemble</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/ensemble.css" />
+</head>
+<body>
+  <header>
+    <div class="header-brand">
+      <h1>promptlibretto</h1>
+      <nav class="header-page-nav">
+        <a href="/" class="header-page-link">Studio</a>
+        <span class="header-page-link active">Ensemble</span>
+      </nav>
+    </div>
+  </header>
+
+  <main class="ensemble-layout">
+    <!-- Sidebar: models -->
+    <aside class="ensemble-sidebar panel">
+      <header class="panel-header">
+        <span class="section-title">Models</span>
+        <span class="spacer"></span>
+        <button id="reload-models" type="button" class="ghost small">Reload</button>
+      </header>
+      <p class="muted ensemble-sidebar-hint">Pick saved exports to fan out to. Each runs independently.</p>
+      <div id="model-list" class="ensemble-models"></div>
+    </aside>
+
+    <!-- Main area: input + results stacked -->
+    <div class="ensemble-main">
+      <section class="panel ensemble-input-panel">
+        <header class="panel-header">
+          <span class="section-title">Input &amp; Context</span>
+          <button class="help" type="button" data-help="ensemble-input">?</button>
+          <span class="spacer"></span>
+          <button id="run-btn" type="button" class="action-btn action-btn--primary">Run on selected</button>
+        </header>
+        <div class="ensemble-input-body">
+          <div class="ensemble-input-col">
+            <label class="field">
+              <span class="field-label">Shared Directive <button class="help" type="button" data-help="ensemble-directive">?</button></span>
+              <textarea id="user-input" rows="4" placeholder="The prompt sent to every selected model — your request, question, or instruction."></textarea>
+            </label>
+          </div>
+          <div class="ensemble-context-col">
+            <fieldset class="field">
+              <legend class="field-label">Context Overrides <button class="help" type="button" data-help="ensemble-context">?</button></legend>
+              <div class="ctx-header">
+                <nav class="ctx-tabs" role="tablist">
+                  <div class="ctx-tab active" data-ctx-tab="__all__" role="tab">All Models</div>
+                </nav>
+                <span class="spacer"></span>
+                <span id="ctx-status" class="muted"></span>
+                <button id="add-context" type="button" class="ghost small">+ row</button>
+              </div>
+              <div id="ctx-tab-panels"></div>
+            </fieldset>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel results-panel">
+        <header class="panel-header">
+          <span class="section-title">Results</span>
+          <div class="view-toggle" role="group" aria-label="Results view">
+            <button id="view-cards" type="button" class="toggle active">cards</button>
+            <button id="view-diff" type="button" class="toggle">diff</button>
+          </div>
+          <span class="spacer"></span>
+          <span id="run-status" class="muted"></span>
+        </header>
+        <div id="results" class="ensemble-results">
+          <div class="muted" style="padding:12px">No runs yet.</div>
+        </div>
+        <div id="results-diff" class="ensemble-diff" hidden></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Inspect export modal -->
+  <div id="inspect-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-inspect></div>
+    <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="inspect-title">
+      <header>
+        <h3 id="inspect-title">Export</h3>
+        <button class="modal-close" type="button" data-close-inspect aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <pre id="inspect-json" class="inspect-json"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/static/ensemble.js"></script>
+</body>
+</html>

@@ -18,7 +18,9 @@ def _safe_name(name: str) -> str:
     return cleaned
 
 
-class ExportLibrary:
+class CustomRouteLibrary:
+    """One JSON file per custom route. Each file is a RouteSpec.to_dict()."""
+
     def __init__(self, path: Path):
         self.path = path
         self.path.mkdir(parents=True, exist_ok=True)
@@ -29,15 +31,16 @@ class ExportLibrary:
 
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
-            rows = []
+            out: list[dict[str, Any]] = []
             for p in self.path.glob("*.json"):
                 try:
                     stat = p.stat()
-                except OSError:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
                     continue
-                rows.append({"name": p.stem, "saved_at": stat.st_mtime, "size": stat.st_size})
-            rows.sort(key=lambda r: r["saved_at"], reverse=True)
-            return rows
+                out.append({"name": p.stem, "saved_at": stat.st_mtime, "spec": data})
+            out.sort(key=lambda r: r["name"])
+            return out
 
     def get(self, name: str) -> dict[str, Any] | None:
         with self._lock:
@@ -45,23 +48,21 @@ class ExportLibrary:
             if not p.exists():
                 return None
             try:
-                text = p.read_text(encoding="utf-8")
                 stat = p.stat()
-            except OSError:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
                 return None
-            try:
-                data = json.loads(text)
-            except json.JSONDecodeError:
-                data = None
-            return {"name": p.stem, "data": data, "text": text, "saved_at": stat.st_mtime}
+            return {"name": p.stem, "saved_at": stat.st_mtime, "spec": data}
 
-    def save(self, name: str, data: dict[str, Any]) -> dict[str, Any]:
+    def save(self, name: str, spec: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
+            payload = dict(spec or {})
+            payload["name"] = _safe_name(name)
             p = self._file(name)
             tmp = p.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             tmp.replace(p)
-            return {"name": p.stem, "saved_at": time.time(), "size": p.stat().st_size}
+            return {"name": p.stem, "saved_at": time.time(), "spec": payload}
 
     def delete(self, name: str) -> bool:
         with self._lock:

@@ -74,18 +74,25 @@ function renderMarkdown(text) {
 const HELP = {
   compose: {
     title: "Compose Panel",
-    body: `<p>This panel turns your intent into a model-ready prompt by combining four things:</p>
+    body: `<p>This panel sets the stage for one generation:</p>
       <ul>
+        <li><strong>Base Context</strong> — long-lived framing that rides along with every route</li>
         <li><strong>Route</strong> — which prompt strategy to use</li>
         <li><strong>User Input</strong> — the actual request</li>
-        <li><strong>Injections</strong> — optional fragments that modify behavior</li>
-        <li><strong>Generation Overrides</strong> — per-request sampling parameters</li>
       </ul>
-      <p>Hit <code>Generate</code> (or <code>Ctrl/Cmd+Enter</code>) and the engine combines these with your <em>Context State</em> and renders the trace on the right.</p>`,
+      <p>Tuning knobs (overlays, injections, sampling overrides) live on the <em>Tuning</em> tab. Hit <code>Generate</code> (or <code>Ctrl/Cmd+Enter</code>) to run and see the trace on the right.</p>`,
   },
   route: {
     title: "Route",
-    body: `<p>A <strong>route</strong> is a named prompt strategy. Each route has its own system frame, user-section composition, and default sampling.</p>
+    body: `<p>A <strong>route</strong> is a named end-to-end strategy for one kind of prompt. It bundles:</p>
+      <ul>
+        <li><strong>A composition recipe</strong> — ordered system + user sections (functions, not strings) assembled per call against the live context, request inputs, and active injections.</li>
+        <li><strong>Sampling defaults</strong> — temperature, max_tokens, etc. that fit that strategy.</li>
+        <li><strong>An output policy</strong> — how to clean and validate what comes back (strip fences, require a regex, ban substrings).</li>
+        <li><strong>An applicability predicate</strong> (optional) — lets the router auto-pick this route when the request/context fits.</li>
+      </ul>
+      <p>The point is reuse and switching: instead of one huge branchy prompt, you define <code>analyst</code>, <code>creative</code>, <code>json_extract</code>, etc. as separate routes and let the router (or the caller via <code>mode=</code>) pick one. Two callers asking different questions get different system frames, sampling, and validation — without either site knowing how the other works.</p>
+      <p><em>Mental model:</em> a route is to prompts what an HTTP endpoint handler is to requests — a named, self-contained way of handling one shape of input that shares infrastructure (context, assets, provider, history) with all the others.</p>
       <p>Available routes in this demo:</p>
       <ul>
         <li><code>default</code> — neutral, plainspoken assistant</li>
@@ -94,7 +101,7 @@ const HELP = {
         <li><code>analyst</code> — structured analysis with explicit tradeoffs</li>
         <li><code>json_extract</code> — strict JSON-only output for a known schema</li>
       </ul>
-      <p>Leave it on <code>(auto-route)</code> to let the router pick based on context overlays + predicates.</p>`,
+      <p>Leave it on <code>(auto-route)</code> to let the router pick based on context overlays + predicates. Custom routes (★) you author via <strong>+ Custom</strong> are explicit-select only.</p>`,
   },
   input: {
     title: "User Input",
@@ -130,13 +137,13 @@ const HELP = {
       <p>Turn off in production-style runs to skip the extra payload.</p>`,
   },
   state: {
-    title: "Context State",
-    body: `<p>Two layers of state feed every prompt:</p>
+    title: "Tuning",
+    body: `<p>Per-call knobs for the next generation:</p>
       <ul>
-        <li><strong>Base context</strong> — long-lived facts. Persists across generations.</li>
-        <li><strong>Overlays</strong> — short-lived facts with names + priority. Highest priority wins, expired overlays are auto-purged.</li>
-      </ul>
-      <p>Both are concatenated into the active context that builders include in the prompt.</p>`,
+        <li><strong>Overlays</strong> — short-lived facts with names + priority. Highest priority wins, expired overlays are auto-purged. Layered on top of Base Context.</li>
+        <li><strong>Injections</strong> — reusable prompt fragments that modify the active route.</li>
+        <li><strong>Generation Overrides</strong> — per-request sampling parameters (temperature, top_p, max_tokens, …).</li>
+      </ul>`,
   },
   base: {
     title: "Base Context",
@@ -159,11 +166,6 @@ const HELP = {
       <p>Each overlay has a <strong>name</strong> (replace by reusing it), a <strong>priority</strong> (higher appears first in active context), and optional expiry. Clear individually with the × or all at once.</p>
       <p>Hit <strong>✨ Suggest</strong> to ask the model for plausible overlays given the current base context. Each suggestion is a fill-in-the-blank: the model names a dimension (e.g. <em>"the maximum acceptable drive time"</em>) and you provide the value. The overlay text is then composed as <code>scenario: your value</code>.</p>`,
   },
-  recent: {
-    title: "Recent Outputs",
-    body: `<p>Bounded log of the last accepted outputs. Used by the <code>RecentOutputMemory</code> dedupe check — if a new output is too similar (Jaccard similarity over the threshold), the engine rejects it and retries.</p>
-      <p>Clear it manually after a major context change.</p>`,
-  },
   output: {
     title: "Output",
     body: `<p>The cleaned, validated final text. Pills show:</p>
@@ -173,15 +175,6 @@ const HELP = {
         <li><strong>timing</strong> — total ms (provider-reported when available)</li>
         <li><strong>tokens</strong> — prompt + completion tokens</li>
       </ul>`,
-  },
-  iterate: {
-    title: "Iterate on output",
-    body: `<p>Respond to the latest output and attach your follow-up as a high-priority overlay so the next generation accounts for it.</p>
-      <ul>
-        <li><strong>Use verbatim</strong> — store your response as-is.</li>
-        <li><strong>Compact &amp; insert</strong> — run a small compaction LLM call that condenses your follow-up into a 1-2 sentence overlay capturing the new constraint or preference. The verbatim original is kept on the overlay so you can revert or re-compact later from the overlay's card.</li>
-      </ul>
-      <p>Compaction params let you tune sampling for that helper call without touching the main generation config.</p>`,
   },
   trace: {
     title: "Debug Trace Sections",
@@ -280,12 +273,30 @@ const els = {
   overlayPriority: $("overlay-priority"),
   overlayText: $("overlay-text"),
   overlayRuntime: $("overlay-runtime"),
+  overlayTemplate: $("overlay-template"),
   addOverlay: $("add-overlay"),
   clearOverlays: $("clear-overlays"),
-  runHistory: $("run-history"),
-  clearRecent: $("clear-recent"),
+  saveResponseOverlay: $("save-response-overlay"),
   generate: $("generate-btn"),
+  promptStage: $("prompt-stage"),
+  stageReset: $("stage-reset"),
+  outputRendered: $("output-rendered"),
+  outputRaw: $("output-raw"),
   editPromptBtn: $("edit-prompt-btn"),
+  newCustomRouteBtn: $("new-custom-route-btn"),
+  editCustomRouteBtn: $("edit-custom-route-btn"),
+  deleteCustomRouteBtn: $("delete-custom-route-btn"),
+  customRouteModal: $("custom-route-modal"),
+  crName: $("cr-name"),
+  crDescription: $("cr-description"),
+  crSystem: $("cr-system"),
+  crUserTemplate: $("cr-user-template"),
+  crPriority: $("cr-priority"),
+  crOverrides: $("cr-overrides"),
+  crOutputPolicy: $("cr-output-policy"),
+  crSave: $("cr-save"),
+  crDelete: $("cr-delete"),
+  crError: $("cr-error"),
   editPromptModal: $("edit-prompt-modal"),
   editSystem: $("edit-system"),
   editApply: $("edit-prompt-apply"),
@@ -331,7 +342,32 @@ const els = {
 
 let routeDescriptions = {};
 let routeOverrides = {};
+let routePolicies = {};
+let routeIsCustom = {};
 let engineConfig = {};
+
+async function apiWithSignal(method, path, body, signal) {
+  const opts = { method, headers: { "Content-Type": "application/json" } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  if (signal) opts.signal = signal;
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    let message = text;
+    try {
+      const parsed = JSON.parse(text);
+      const detail = parsed && parsed.detail;
+      if (detail && typeof detail === "object" && detail.message) {
+        message = `${detail.error || "error"}: ${detail.message}`;
+        if (detail.hint) message += `\n${detail.hint}`;
+      } else if (typeof detail === "string") {
+        message = detail;
+      }
+    } catch { /* not JSON; fall back to raw text */ }
+    throw new Error(`${res.status} ${res.statusText}\n${message}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
 
 async function api(method, path, body) {
   const opts = { method, headers: { "Content-Type": "application/json" } };
@@ -366,6 +402,8 @@ function renderRoutes(state) {
   els.routeSelect.innerHTML = "";
   routeDescriptions = {};
   routeOverrides = {};
+  routePolicies = {};
+  routeIsCustom = {};
   const auto = document.createElement("option");
   auto.value = "";
   auto.textContent = "(auto-route)";
@@ -373,10 +411,12 @@ function renderRoutes(state) {
   for (const route of state.routes) {
     const opt = document.createElement("option");
     opt.value = route.name;
-    opt.textContent = route.name;
+    opt.textContent = route.is_custom ? `${route.name} ★` : route.name;
     els.routeSelect.appendChild(opt);
     routeDescriptions[route.name] = route.description || "";
     routeOverrides[route.name] = route.generation_overrides || {};
+    routePolicies[route.name] = route.output_policy || {};
+    routeIsCustom[route.name] = !!route.is_custom;
   }
   if (prior && [...els.routeSelect.options].some((o) => o.value === prior)) {
     els.routeSelect.value = prior;
@@ -385,8 +425,59 @@ function renderRoutes(state) {
 }
 
 function syncRouteDescription() {
-  els.routeDesc.textContent = routeDescriptions[els.routeSelect.value] || "Auto-selects based on context.";
+  const desc = routeDescriptions[els.routeSelect.value] || "";
+  const descWrap = document.getElementById("route-desc-wrap");
+  if (descWrap) {
+    if (desc) {
+      els.routeDesc.textContent = desc;
+      descWrap.hidden = false;
+    } else {
+      descWrap.hidden = true;
+    }
+  }
   applyResolvedOverrides();
+  syncCustomRouteButtons();
+  syncPolicySummary();
+}
+
+function syncPolicySummary() {
+  const fieldset = document.getElementById("route-policy-fieldset");
+  const list = document.getElementById("route-policy-list");
+  if (!fieldset || !list) return;
+  const policy = routePolicies[els.routeSelect.value] || {};
+
+  const rows = [];
+  const addRow = (label, value) => rows.push({ key: label, val: value });
+  const addList = (label, items) => {
+    for (const item of items) addRow(label, item);
+  };
+
+  if (policy.min_length != null) addRow("min length", `${policy.min_length} chars`);
+  if (policy.max_length != null) addRow("max length", `${policy.max_length} chars`);
+  if (policy.collapse_whitespace === false) addRow("collapse whitespace", "off");
+  if (policy.append_suffix) addRow("append suffix", `"${policy.append_suffix}"`);
+  if ((policy.strip_prefixes || []).length) addList("strip prefix", policy.strip_prefixes);
+  if ((policy.strip_patterns || []).length) addList("strip pattern", policy.strip_patterns);
+  if ((policy.require_patterns || []).length) addList("require pattern", policy.require_patterns);
+  if ((policy.forbidden_substrings || []).length) addList("forbidden substring", policy.forbidden_substrings);
+  if ((policy.forbidden_patterns || []).length) addList("forbidden pattern", policy.forbidden_patterns);
+
+  if (rows.length) {
+    list.innerHTML = rows.map(r =>
+      `<div class="route-policy-item"><span class="pol-key">${escapeHtml(r.key)}</span><span class="pol-val">${escapeHtml(r.val)}</span></div>`
+    ).join("");
+    fieldset.hidden = false;
+  } else {
+    fieldset.hidden = true;
+    list.innerHTML = "";
+  }
+}
+
+function syncCustomRouteButtons() {
+  const name = els.routeSelect.value;
+  const isCustom = !!routeIsCustom[name];
+  if (els.editCustomRouteBtn) els.editCustomRouteBtn.hidden = !isCustom;
+  if (els.deleteCustomRouteBtn) els.deleteCustomRouteBtn.hidden = !isCustom;
 }
 
 // Injections are exposed as exclusive groups in the GUI: at most one option
@@ -412,6 +503,7 @@ const INJECTION_GROUPS = [
 ];
 
 let injectionDetails = {};
+let injectionTextOverrides = {};
 
 function renderInjections(state) {
   const prior = {};
@@ -473,13 +565,104 @@ function renderInjections(state) {
       segmented.appendChild(makeSeg(name, name, "", tip));
     }
     header.appendChild(segmented);
+
+    // Single pencil button — shown only when an injection is active
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "ghost small inj-edit-btn";
+    editBtn.textContent = "\u270E";
+    editBtn.hidden = true;
+    editBtn.addEventListener("click", () => {
+      const active = wrapper.dataset.value;
+      if (active) toggleInjectionEditor(wrapper, active);
+    });
+    header.appendChild(editBtn);
+
     wrapper.appendChild(header);
+
+    // Container for inline editor (initially hidden)
+    const editorWrap = document.createElement("div");
+    editorWrap.className = "inj-editor-wrap";
+    editorWrap.hidden = true;
+    wrapper.appendChild(editorWrap);
 
     els.injectionGroups.appendChild(wrapper);
     const want = prior[group.id] || "";
     const keep = want && available.includes(want) ? want : "";
     setGroupValue(wrapper, keep);
   }
+}
+
+function toggleInjectionEditor(wrapper, name) {
+  const editorWrap = wrapper.querySelector(".inj-editor-wrap");
+  // If already showing this injection's editor, toggle it off
+  if (!editorWrap.hidden && editorWrap.dataset.editing === name) {
+    editorWrap.hidden = true;
+    return;
+  }
+  const detail = injectionDetails[name] || {};
+  const defaultText = detail.instructions || "";
+  const currentText = injectionTextOverrides[name] !== undefined
+    ? injectionTextOverrides[name]
+    : defaultText;
+
+  editorWrap.dataset.editing = name;
+  editorWrap.hidden = false;
+  editorWrap.innerHTML = "";
+
+  const label = document.createElement("span");
+  label.className = "inj-editor-label";
+  label.innerHTML = `<strong>${escapeHtml(name)}</strong> prompt text`;
+  editorWrap.appendChild(label);
+
+  const ta = document.createElement("textarea");
+  ta.className = "inj-editor-textarea";
+  ta.rows = 3;
+  ta.value = currentText;
+  ta.placeholder = "Injection instructions…";
+  editorWrap.appendChild(ta);
+
+  const actions = document.createElement("div");
+  actions.className = "inj-editor-actions";
+
+  const isOverridden = injectionTextOverrides[name] !== undefined;
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "ghost small";
+  resetBtn.textContent = "Reset to default";
+  resetBtn.disabled = !isOverridden;
+  const pencilBtn = wrapper.querySelector(".inj-edit-btn");
+  resetBtn.addEventListener("click", () => {
+    delete injectionTextOverrides[name];
+    ta.value = defaultText;
+    resetBtn.disabled = true;
+    if (pencilBtn) pencilBtn.classList.remove("overridden");
+    markSnapshotDirty();
+  });
+  actions.appendChild(resetBtn);
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "ghost small";
+  saveBtn.textContent = "Apply";
+  saveBtn.addEventListener("click", () => {
+    const val = ta.value.trim();
+    if (val === defaultText) {
+      delete injectionTextOverrides[name];
+      resetBtn.disabled = true;
+      if (pencilBtn) pencilBtn.classList.remove("overridden");
+    } else {
+      injectionTextOverrides[name] = val;
+      resetBtn.disabled = false;
+      if (pencilBtn) pencilBtn.classList.add("overridden");
+    }
+    markSnapshotDirty();
+    editorWrap.hidden = true;
+  });
+  actions.appendChild(saveBtn);
+
+  editorWrap.appendChild(actions);
+  ta.focus();
 }
 
 function setGroupValue(wrapper, value) {
@@ -489,6 +672,18 @@ function setGroupValue(wrapper, value) {
     seg.classList.toggle("active", seg.dataset.value === (value || ""));
     seg.setAttribute("aria-checked", seg.dataset.value === (value || "") ? "true" : "false");
   });
+  // Sync pencil button: visible only when an injection is active
+  const editBtn = wrapper.querySelector(".inj-edit-btn");
+  if (editBtn) {
+    editBtn.hidden = !value;
+    editBtn.title = value ? `Edit "${value}" prompt text` : "";
+    editBtn.classList.toggle("overridden", !!(value && injectionTextOverrides[value] !== undefined));
+  }
+  // Close editor if the active injection changed away from what's being edited
+  const editorWrap = wrapper.querySelector(".inj-editor-wrap");
+  if (editorWrap && !editorWrap.hidden && editorWrap.dataset.editing !== value) {
+    editorWrap.hidden = true;
+  }
 }
 
 function selectedInjections() {
@@ -518,9 +713,16 @@ function renderOverlays(state) {
   const openNames = new Set(
     [...els.overlayList.querySelectorAll(".overlay-card[open]")].map((c) => c.dataset.name)
   );
+  // Preserve test values — these are studio-only and not persisted server-side
+  const prevTestValues = {};
+  for (const card of els.overlayList.querySelectorAll(".overlay-card")) {
+    const tv = card.querySelector(".edit-test-value");
+    if (tv && tv.value) prevTestValues[card.dataset.name] = tv.value;
+  }
   els.overlayList.innerHTML = "";
   const overlays = state.context.overlays || {};
-  const names = Object.keys(overlays);
+  // Sort by priority descending so top card = highest priority
+  const names = Object.keys(overlays).sort((a, b) => (overlays[b].priority || 0) - (overlays[a].priority || 0));
   if (!names.length) {
     els.overlayList.innerHTML = `<small class="muted">(no overlays active)</small>`;
     return;
@@ -544,24 +746,22 @@ function renderOverlays(state) {
     const turnActions = isTurn && hasVerbatim ? `
       <div class="turn-actions">
         ${isCompacted ? `<button type="button" class="ghost small" data-act="revert" title="Restore the verbatim user response">⟲ revert to verbatim</button>` : ""}
-        <button type="button" class="ghost small" data-act="recompact" title="Run compaction again with current params">↻ re-compact</button>
         <details class="turn-verbatim-peek">
           <summary class="muted">show verbatim</summary>
           <pre class="muted">${escapeHtml((o.metadata || {}).verbatim || "")}</pre>
         </details>
       </div>` : "";
+    const templateVal = (o.metadata || {}).template || "";
     card.innerHTML = `
       <summary>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
         <span class="chevron">▸</span>
         <span class="name">${escapeHtml(name)}${isTurn ? ` <span class="turn-badge" title="iteration turn overlay">turn</span>` : ""}${runtimeBadge} <small class="muted overlay-priority-badge">·p${o.priority}</small></span>
         <span class="text">${escapeHtml(o.text)}</span>
         <button class="remove" type="button" title="remove">×</button>
       </summary>
       <div class="overlay-body">
-        <label class="overlay-edit-field">
-          <span>priority</span>
-          <input type="number" class="edit-priority" value="${o.priority}" step="1" />
-        </label>
+        <input type="hidden" class="edit-priority" value="${o.priority}" />
         <label class="overlay-edit-field">
           <span>text</span>
           <textarea class="edit-text" rows="3">${escapeHtml(o.text)}</textarea>
@@ -574,6 +774,16 @@ function renderOverlays(state) {
             <option value="required" ${runtimeMode === "required" ? "selected" : ""}>runtime — required</option>
           </select>
         </label>
+        <div class="runtime-fields" ${runtimeMode ? "" : "hidden"}>
+          <label class="overlay-edit-field" title="Wrap the runtime value in surrounding text. Use {} where the value goes.">
+            <span>template</span>
+            <input class="edit-template" type="text" placeholder="e.g. The topic is {}" value="${escapeHtml(templateVal)}" />
+          </label>
+          <label class="overlay-edit-field" title="Test value used in studio pre-generate — not persisted to the model.">
+            <span>test value <small class="muted">(studio only)</small></span>
+            <input class="edit-test-value" type="text" placeholder="value for testing in pre-generate…" />
+          </label>
+        </div>
         <div class="overlay-edit-status muted"><span class="save-state"></span></div>
         ${turnActions}
         ${o.expires_at ? `<div class="muted">expires_at: ${escapeHtml(String(o.expires_at))}</div>` : ""}
@@ -588,9 +798,18 @@ function renderOverlays(state) {
       statusEl.textContent = "unsaved…";
     };
     const runtimeEl = card.querySelector(".edit-runtime");
+    const runtimeFields = card.querySelector(".runtime-fields");
+    const templateEl = card.querySelector(".edit-template");
     priorityEl.addEventListener("input", markDirty);
     textEl.addEventListener("input", markDirty);
+    if (templateEl) {
+      templateEl.addEventListener("input", markDirty);
+      templateEl.addEventListener("change", () => saveOverlayCard(card));
+      templateEl.addEventListener("blur", () => saveOverlayCard(card));
+    }
     if (runtimeEl) runtimeEl.addEventListener("change", () => {
+      const isRuntime = runtimeEl.value === "optional" || runtimeEl.value === "required";
+      if (runtimeFields) runtimeFields.hidden = !isRuntime;
       markDirty();
       saveOverlayCard(card);
     });
@@ -604,6 +823,7 @@ function renderOverlays(state) {
       e.stopPropagation();
       overlayPendingSaves.delete(name);
       await api("DELETE", `/api/context/overlay/${encodeURIComponent(name)}`);
+      markSnapshotDirty();
       await refresh();
     });
 
@@ -616,28 +836,95 @@ function renderOverlays(state) {
         } catch (err) { alert("Revert failed: " + err.message); }
       });
     }
-    const recompactBtn = card.querySelector("[data-act='recompact']");
-    if (recompactBtn) {
-      recompactBtn.addEventListener("click", async () => {
-        recompactBtn.disabled = true;
-        recompactBtn.textContent = "compacting…";
-        try {
-          await api("POST", `/api/context/overlay/${encodeURIComponent(name)}/recompact`, {
-            user_prompt: lastTurnContext.user_prompt,
-            assistant_output: lastTurnContext.assistant_output,
-            compact_config: readCompactConfig(),
-          });
-          await refresh();
-        } catch (err) {
-          alert("Re-compact failed: " + err.message);
-          recompactBtn.disabled = false;
-          recompactBtn.textContent = "↻ re-compact";
-        }
-      });
-    }
+    // Drag-and-drop reordering — track whether mousedown started on handle
+    const handle = card.querySelector(".drag-handle");
+    let handleGrabbed = false;
+    handle.addEventListener("mousedown", () => { handleGrabbed = true; });
+    document.addEventListener("mouseup", () => { handleGrabbed = false; }, { passive: true });
+    // Prevent details toggle when clicking the drag handle
+    handle.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
+    card.draggable = true;
+    card.addEventListener("dragstart", (e) => {
+      if (!handleGrabbed) { e.preventDefault(); return; }
+      card.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", name);
+    });
+    card.addEventListener("dragend", () => {
+      handleGrabbed = false;
+      card.classList.remove("dragging");
+      els.overlayList.querySelectorAll(".overlay-card").forEach(c => c.classList.remove("drag-over"));
+    });
+    card.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const dragging = els.overlayList.querySelector(".dragging");
+      if (dragging && dragging !== card) {
+        card.classList.add("drag-over");
+      }
+    });
+    card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
+    card.addEventListener("drop", (e) => {
+      e.preventDefault();
+      card.classList.remove("drag-over");
+      const dragging = els.overlayList.querySelector(".dragging");
+      if (!dragging || dragging === card) return;
+      // Insert dragged card before this one
+      els.overlayList.insertBefore(dragging, card);
+      dragging.classList.remove("dragging");
+      recalcOverlayPriorities();
+    });
 
     els.overlayList.appendChild(card);
   }
+  // Restore test values preserved before re-render
+  for (const card of els.overlayList.querySelectorAll(".overlay-card")) {
+    const prev = prevTestValues[card.dataset.name];
+    if (prev) {
+      const tv = card.querySelector(".edit-test-value");
+      if (tv) tv.value = prev;
+    }
+  }
+}
+
+// Recalculate priorities based on DOM order (first = highest priority)
+async function recalcOverlayPriorities() {
+  const cards = [...els.overlayList.querySelectorAll(".overlay-card")];
+  const total = cards.length;
+  const promises = [];
+  for (let i = 0; i < cards.length; i++) {
+    const card = cards[i];
+    const newPriority = (total - i) * 10;
+    const prioInput = card.querySelector(".edit-priority");
+    const badge = card.querySelector(".overlay-priority-badge");
+    if (prioInput) prioInput.value = newPriority;
+    if (badge) badge.textContent = `·p${newPriority}`;
+    // Save to server
+    const name = card.dataset.name;
+    const text = card.querySelector(".edit-text")?.value ?? "";
+    let metadata = {};
+    try { metadata = JSON.parse(card.dataset.metadata || "{}"); } catch { /* ignore */ }
+    const runtimeSel = card.querySelector(".edit-runtime");
+    if (runtimeSel) {
+      const v = runtimeSel.value;
+      metadata = { ...(metadata || {}) };
+      if (v === "optional" || v === "required") metadata.runtime = v;
+      else delete metadata.runtime;
+    }
+    const templateInput = card.querySelector(".edit-template");
+    if (templateInput) {
+      metadata = { ...(metadata || {}) };
+      const tmpl = templateInput.value.trim();
+      if (tmpl) metadata.template = tmpl;
+      else delete metadata.template;
+    }
+    promises.push(
+      api("PUT", `/api/context/overlay/${encodeURIComponent(name)}`, {
+        text, priority: newPriority, expires_at: null, metadata,
+      })
+    );
+  }
+  await Promise.all(promises);
 }
 
 // Per-name map tracking in-flight saves, so critical actions can await them.
@@ -664,11 +951,21 @@ function saveOverlayCard(card) {
     if (v === "optional" || v === "required") metadata.runtime = v;
     else delete metadata.runtime;
   }
+  const templateInput = card.querySelector(".edit-template");
+  if (templateInput) {
+    metadata = { ...(metadata || {}) };
+    const tmpl = templateInput.value.trim();
+    if (tmpl) metadata.template = tmpl;
+    else delete metadata.template;
+  }
+  // Persist updated metadata back to the card's data attribute
+  card.dataset.metadata = JSON.stringify(metadata);
   const p = api("PUT", `/api/context/overlay/${encodeURIComponent(name)}`, {
     text, priority, expires_at: null, metadata,
   }).then(() => {
     card.classList.remove("dirty");
     if (statusEl) statusEl.textContent = "saved";
+    markSnapshotDirty();
     const badge = card.querySelector(".overlay-priority-badge");
     if (badge) badge.textContent = `·p${priority}`;
     const preview = card.querySelector("summary .text");
@@ -694,72 +991,6 @@ async function flushOverlayEdits() {
     saveOverlayCard(card);
   }
   await Promise.all([...overlayPendingSaves.values()]);
-}
-
-function renderRecent(state) {
-  lastRunHistory = (state.run_history || []).slice();
-  lastRecentSnapshot = (state.recent_outputs || []).slice();
-  renderRunHistory(lastRunHistory);
-}
-
-let lastRunHistory = [];
-
-function renderRunHistory(records) {
-  const host = els.runHistory;
-  host.innerHTML = "";
-  if (!records.length) {
-    host.innerHTML = `<div class="library-empty">No runs yet.</div>`;
-    return;
-  }
-  // Newest first; original index in the deque is the array position.
-  records.map((r, i) => ({ r, i })).reverse().forEach(({ r, i }) => {
-    const card = document.createElement("div");
-    card.className = "run-card" + (r.accepted ? "" : " rejected");
-    const when = new Date((r.at || 0) * 1000);
-    const promptText = ((r.request || {}).inputs || {}).input || "";
-    const route = r.route || "(auto)";
-    const injBits = ((r.request || {}).injections || []).join(", ") || "—";
-    card.innerHTML = `
-      <div class="run-head">
-        <span class="run-route">${escapeHtml(route)}</span>
-        <span class="run-meta muted">inj: ${escapeHtml(injBits)}</span>
-        <span class="spacer"></span>
-        <span class="run-time muted">${escapeHtml(when.toLocaleTimeString())}</span>
-        <button type="button" class="run-load" data-act="load" title="Load this run back into the form">↺</button>
-        <button type="button" class="run-del" data-act="del" title="Delete this run">×</button>
-      </div>
-      <div class="run-prompt" title="${escapeHtml(promptText)}">${escapeHtml(promptText)}</div>
-      <div class="run-output" title="${escapeHtml(r.text || "")}">${escapeHtml(r.text || "")}</div>
-    `;
-    card.querySelector("[data-act='load']").addEventListener("click", () => loadRun(r));
-    card.querySelector("[data-act='del']").addEventListener("click", async () => {
-      try {
-        await api("DELETE", `/api/run_history/${i}`);
-        await refresh();
-      } catch (err) { alert("Delete failed: " + err.message); }
-    });
-    host.appendChild(card);
-  });
-}
-
-function loadRun(record) {
-  const req = record.request || {};
-  const inputs = req.inputs || {};
-  if (req.mode !== undefined) {
-    els.routeSelect.value = req.mode || "";
-    syncRouteDescription();
-  }
-  if (typeof inputs.input === "string") els.inputText.value = inputs.input;
-  if (Array.isArray(req.injections)) setSelectedInjections(req.injections);
-  for (const k of Object.keys(els.cfg)) els.cfg[k].value = "";
-  for (const [k, v] of Object.entries(req.config_overrides || {})) {
-    if (els.cfg[k] && v !== null && v !== undefined) els.cfg[k].value = v;
-  }
-  // Surface the prior output too so the user sees what they're iterating on.
-  setOutputText(record.text || "", "(empty response)");
-  lastTurnContext.user_prompt = (req.inputs && req.inputs.input) || "";
-  lastTurnContext.assistant_output = record.text || "";
-  els.inputText.focus();
 }
 
 function renderConfigInputs(state) {
@@ -802,7 +1033,6 @@ async function refresh() {
   renderInjections(state);
   renderBase(state);
   renderOverlays(state);
-  renderRecent(state);
   renderConfigInputs(state);
 }
 
@@ -810,41 +1040,37 @@ async function refresh() {
 // compaction LLM the surrounding context for the user's follow-up.
 const lastTurnContext = { user_prompt: "", assistant_output: "" };
 
-function readCompactConfig() {
-  const out = {};
-  const t = $("compact-temperature");
-  const m = $("compact-max_tokens");
-  if (t && t.value !== "") out.temperature = Number(t.value);
-  if (m && m.value !== "") out.max_tokens = Number(m.value);
-  return out;
-}
-
-async function iterate(mode) {
-  const ta = $("iterate-input");
-  const text = (ta.value || "").trim();
-  if (!text) { ta.focus(); return; }
-  const verbBtn = $("iterate-verbatim");
-  const compBtn = $("iterate-compact");
-  verbBtn.disabled = compBtn.disabled = true;
-  const origLabel = mode === "compact" ? compBtn.textContent : verbBtn.textContent;
-  if (mode === "compact") compBtn.textContent = "compacting…";
+async function saveResponseAsOverlay() {
+  // Use edited raw text if the user modified it, otherwise fall back to original
+  const rawEdited = (els.outputRaw.value || "").trim();
+  const text = rawEdited || (lastTurnContext.assistant_output || "").trim();
+  if (!text) return;
+  const btn = els.saveResponseOverlay;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "saving…";
   try {
     await flushOverlayEdits();
     await api("POST", "/api/iterate", {
       user_prompt: lastTurnContext.user_prompt,
-      assistant_output: lastTurnContext.assistant_output,
+      assistant_output: text,
       user_response: text,
-      mode,
-      compact_config: mode === "compact" ? readCompactConfig() : {},
+      mode: "verbatim",
     });
-    ta.value = "";
     await refresh();
   } catch (err) {
-    alert("Iterate failed: " + err.message);
+    alert("Save failed: " + err.message);
   } finally {
-    verbBtn.disabled = compBtn.disabled = false;
-    if (mode === "compact") compBtn.textContent = origLabel;
+    btn.textContent = orig;
+    syncSaveResponseButton();
   }
+}
+
+function syncSaveResponseButton() {
+  if (!els.saveResponseOverlay) return;
+  const hasOutput = !!((lastTurnContext.assistant_output || "").trim());
+  const hasEdited = !!((els.outputRaw.value || "").trim());
+  els.saveResponseOverlay.disabled = !(hasOutput || hasEdited);
 }
 
 function readConfigOverrides() {
@@ -860,7 +1086,7 @@ function readConfigOverrides() {
 
 function setOutputText(text, placeholder) {
   const display = text && text.length ? text : (placeholder || "");
-  els.outputRaw.textContent = display;
+  els.outputRaw.value = display;
   if (text && text.length) {
     els.outputRendered.innerHTML = renderMarkdown(text);
   } else {
@@ -868,11 +1094,36 @@ function setOutputText(text, placeholder) {
   }
 }
 
+function setOutputEditable(editable) {
+  els.outputRaw.readOnly = !editable;
+}
+
 function renderOutput(result) {
   setOutputText(result.text, "(empty response)");
   els.outRoute.textContent = `route: ${result.route}`;
   els.outAccepted.textContent = result.accepted ? "accepted" : "rejected";
   els.outAccepted.className = "pill " + (result.accepted ? "ok" : "bad");
+
+  // Rejection feedback banner
+  const banner = document.getElementById("reject-banner");
+  if (!result.accepted) {
+    const t2 = result.trace || {};
+    const meta = t2.metadata || {};
+    const attempts = t2.attempts || [];
+    const reasons = attempts
+      .filter(a => !a.accepted && a.reject_reason)
+      .map((a, i) => `Attempt #${i + 1}: ${a.reject_reason}`);
+    const topReason = meta.reject_reason || (reasons.length ? reasons[reasons.length - 1].replace(/^Attempt #\d+: /, "") : "output policy validation failed");
+    const retryCount = attempts.length;
+    banner.innerHTML = `<div class="reject-title">Output rejected</div>`
+      + `<div>${escapeHtml(topReason)}</div>`
+      + (retryCount > 1 ? `<div class="reject-detail">${retryCount} attempt${retryCount > 1 ? "s" : ""} made — all failed validation. ${reasons.length ? reasons.map(escapeHtml).join("; ") : ""}</div>` : "")
+      + `<div class="reject-detail">Adjust the output policy or prompt to fix. Enable Debug Trace for full attempt details.</div>`;
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+    banner.innerHTML = "";
+  }
 
   const t = result.trace || {};
   const timing = result.timing || t.timing || {};
@@ -959,23 +1210,40 @@ function highlightPython(src) {
   return out;
 }
 
-function setExportCode(code) {
-  els.exportCode.dataset.raw = code;
-  els.exportCode.classList.add("py-hl");
-  els.exportCode.innerHTML = highlightPython(code);
+let pendingExportData = null;
+
+function setExportData(data) {
+  pendingExportData = data;
+  const text = data ? JSON.stringify(data, null, 2) : "";
+  els.exportCode.dataset.raw = text;
+  els.exportCode.classList.remove("py-hl");
+  els.exportCode.textContent = text;
+}
+
+function setExportError(msg) {
+  pendingExportData = null;
+  els.exportCode.dataset.raw = msg;
+  els.exportCode.classList.remove("py-hl");
+  els.exportCode.textContent = msg;
 }
 
 function suggestExportName() {
-  if (currentScenarioName) return currentScenarioName;
+  if (currentSnapshotName) return currentSnapshotName;
   const route = els.routeSelect.value || "";
   return route ? `${route}_export` : "export";
 }
 
-async function exportPython() {
+async function exportJson() {
   const route = els.routeSelect.value || null;
   const injections = selectedInjections();
   els.exportBtn.disabled = true;
   try {
+    const sectionOverrides = { ...(pendingSectionOverrides || {}) };
+    if (stagedSections) {
+      const sep = stagedSections.separator || "\n\n";
+      sectionOverrides.system = stagedSections.system.join(sep);
+      sectionOverrides.user = stagedSections.user.join(sep);
+    }
     const res = await fetch("/api/export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -983,26 +1251,23 @@ async function exportPython() {
         route,
         injections,
         include_overlays: true,
-        section_overrides: pendingSectionOverrides || {},
+        section_overrides: sectionOverrides,
+        injection_text_overrides: injectionTextOverrides,
       }),
     });
     if (!res.ok) {
       const detail = await res.text();
-      const msg = `# export failed (${res.status})\n${detail}`;
-      els.exportCode.dataset.raw = msg;
-      els.exportCode.textContent = msg;
+      setExportError(`// export failed (${res.status})\n${detail}`);
     } else {
-      const { code, dir } = await res.json();
-      setExportCode(code);
+      const { data, dir } = await res.json();
+      setExportData(data);
       if (dir && els.exportDir) els.exportDir.textContent = dir;
     }
     if (!els.exportName.value.trim()) els.exportName.value = suggestExportName();
     els.exportModal.hidden = false;
     refreshSavedExports();
   } catch (err) {
-    const msg = `# export failed\n${err}`;
-    els.exportCode.dataset.raw = msg;
-    els.exportCode.textContent = msg;
+    setExportError(`// export failed\n${err}`);
     els.exportModal.hidden = false;
   } finally {
     els.exportBtn.disabled = false;
@@ -1025,14 +1290,13 @@ async function copyExport() {
 }
 
 function downloadExport() {
-  const code = els.exportCode.dataset.raw || "";
-  if (!code) return;
+  if (!pendingExportData) return;
   const name = (els.exportName.value.trim() || suggestExportName()).replace(/[^A-Za-z0-9_.-]+/g, "_") || "export";
-  const blob = new Blob([code], { type: "text/x-python" });
+  const blob = new Blob([JSON.stringify(pendingExportData, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${name}.py`;
+  a.download = `${name}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -1042,14 +1306,13 @@ function downloadExport() {
 async function saveExport() {
   const name = els.exportName.value.trim();
   if (!name) { els.exportName.focus(); return; }
-  const code = els.exportCode.dataset.raw || "";
-  if (!code) return;
+  if (!pendingExportData) return;
   els.exportSave.disabled = true;
   try {
-    const scenario = (typeof captureScenarioState === "function")
-      ? captureScenarioState()
+    const snapshot = (typeof captureSnapshotState === "function")
+      ? captureSnapshotState()
       : null;
-    await api("PUT", `/api/exports/${encodeURIComponent(name)}`, { code, scenario });
+    await api("PUT", `/api/exports/${encodeURIComponent(name)}`, { data: pendingExportData, snapshot });
     const original = els.exportSave.textContent;
     els.exportSave.textContent = "Saved ✓";
     setTimeout(() => (els.exportSave.textContent = original), 1200);
@@ -1074,33 +1337,36 @@ async function refreshSavedExports() {
       const card = document.createElement("div");
       card.className = "library-item";
       const saved = new Date((row.saved_at || 0) * 1000);
-      const scenarioBtn = row.has_scenario
-        ? `<button type="button" class="ghost small" data-act="load-scenario" title="Restore the studio state captured when this export was saved">Load scenario</button>`
+      const snapshotBtn = row.has_snapshot
+        ? `<button type="button" class="ghost small" data-act="load-snapshot" title="Restore the studio state captured when this export was saved">Load snapshot</button>`
         : "";
       card.innerHTML = `
         <div class="item-head">
-          <span class="item-name">${escapeHtml(row.name)}${row.has_scenario ? ` <small class="muted">· scenario</small>` : ""}</span>
+          <span class="item-name">${escapeHtml(row.name)}${row.has_snapshot ? ` <small class="muted">· snapshot</small>` : ""}</span>
           <span class="item-date">${escapeHtml(saved.toLocaleString())}</span>
         </div>
         <div class="item-actions">
           <button type="button" class="primary small" data-act="load">Load</button>
-          ${scenarioBtn}
+          ${snapshotBtn}
           <button type="button" class="ghost small" data-act="delete">Delete</button>
         </div>`;
       card.querySelector("[data-act='load']").addEventListener("click", async () => {
         try {
           const entry = await api("GET", `/api/exports/${encodeURIComponent(row.name)}`);
-          setExportCode(entry.code || "");
+          setExportData(entry.data || null);
           els.exportName.value = row.name;
         } catch (err) { alert("Load failed: " + err.message); }
       });
-      const scEl = card.querySelector("[data-act='load-scenario']");
+      const scEl = card.querySelector("[data-act='load-snapshot']");
       if (scEl) scEl.addEventListener("click", async () => {
         try {
-          const entry = await api("GET", `/api/scenarios/${encodeURIComponent(row.name)}`);
-          await applyScenarioState(entry.state || {});
+          const entry = await api("GET", `/api/snapshots/${encodeURIComponent(row.name)}`);
+          await applySnapshotState(entry.state || {});
+          currentSnapshotName = row.name;
+          snapshotDirty = false;
+          syncSnapshotIndicator();
           els.exportModal.hidden = true;
-        } catch (err) { alert("Scenario load failed: " + err.message); }
+        } catch (err) { alert("Snapshot load failed: " + err.message); }
       });
       card.querySelector("[data-act='delete']").addEventListener("click", async () => {
         if (!confirm(`Delete export "${row.name}"?`)) return;
@@ -1119,6 +1385,7 @@ async function refreshSavedExports() {
 async function generate() {
   els.generate.disabled = true;
   setOutputText("", "Generating…");
+  setOutputEditable(false);
   try {
     await flushOverlayEdits();
     const request = {
@@ -1127,14 +1394,61 @@ async function generate() {
       injections: selectedInjections(),
       debug: els.debug.checked,
       config_overrides: readConfigOverrides(),
+      injection_text_overrides: injectionTextOverrides,
     };
     if (pendingSectionOverrides) request.section_overrides = pendingSectionOverrides;
-    const result = els.stream.checked
-      ? await generateStream(request)
-      : await api("POST", "/api/generate", request);
+    if (stagedSections) {
+      const sep = stagedSections.separator || "\n\n";
+      const slotValues = readRuntimeSlotValues();
+      const resolveSlots = (sections) => {
+        const out = [];
+        for (const text of sections) {
+          const slot = (stagedSections.runtimeSlots || {})[text];
+          if (slot) {
+            const val = (slotValues[slot.name] || "").trim();
+            if (!val && slot.mode === "optional") continue; // drop empty optional
+            if (!val && slot.mode === "required") {
+              throw new Error(`Runtime slot "${slot.name}" is required`);
+            }
+            // Apply template if set, otherwise use raw value
+            const tmpl = slot.template || "{}";
+            out.push(tmpl.replace("{}", val));
+          } else {
+            out.push(text);
+          }
+        }
+        return out;
+      };
+      const system = resolveSlots(stagedSections.system);
+      const user = resolveSlots(stagedSections.user);
+      request.section_overrides = {
+        ...(request.section_overrides || {}),
+        system: system.join(sep),
+        user: user.join(sep),
+      };
+    }
+    activateOutputTab("output");
+    if (els.stream.checked) {
+      var result = await generateStream(request);
+    } else {
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), 15_000);
+      try {
+        var result = await apiWithSignal("POST", "/api/generate", request, abort.signal);
+      } catch (err) {
+        if (err.name === "AbortError") throw new Error("Generation timed out (15 s)");
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    if (stagedSections) clearStage();
     lastTurnContext.user_prompt = els.inputText.value || "";
     lastTurnContext.assistant_output = result.text || "";
+    syncSaveResponseButton();
     renderOutput(result);
+    setOutputEditable(true);
+    els.exportBtn.hidden = false;
     await refresh();
   } catch (err) {
     setOutputText("", `ERROR: ${err.message}`);
@@ -1195,6 +1509,8 @@ function setView(mode) {
 
 els.viewRendered.addEventListener("click", () => setView("rendered"));
 els.viewRaw.addEventListener("click", () => setView("raw"));
+// Re-enable save button when user edits raw output
+els.outputRaw.addEventListener("input", syncSaveResponseButton);
 
 function syncDebugPanel() {
   document.querySelector("main.grid").classList.toggle("no-debug", !els.debug.checked);
@@ -1205,6 +1521,7 @@ syncDebugPanel();
 async function saveBase() {
   await flushOverlayEdits();
   await api("PUT", "/api/context/base", { base: els.baseText.value, fields: {} });
+  markSnapshotDirty();
   await refresh();
 }
 
@@ -1291,12 +1608,12 @@ function renderLibraryList(host, items) {
   }
 }
 
-// --- scenarios (full app-state save/load) ---------------------------
-// A scenario is everything the user can set up: base context + overlays +
-// route + injections + draft prompt + generation overrides + recent outputs.
+// --- snapshots (full app-state save/load) ---------------------------
+// A snapshot is everything the user can set up: base context + overlays +
+// route + injections + draft prompt + generation overrides.
 // Captured as an opaque blob and rehydrated on load.
 
-function captureScenarioState() {
+function captureSnapshotState() {
   const overlays = [];
   for (const card of els.overlayList.querySelectorAll(".overlay-card")) {
     const name = card.dataset.name;
@@ -1304,7 +1621,9 @@ function captureScenarioState() {
     const priority = parseInt(
       (card.querySelector(".edit-priority") || {}).value || "0", 10
     ) || 0;
-    if (name) overlays.push({ name, text, priority });
+    let metadata = {};
+    try { metadata = JSON.parse(card.dataset.metadata || "{}"); } catch { /* ignore */ }
+    if (name) overlays.push({ name, text, priority, metadata });
   }
   const cfg = {};
   for (const k of Object.keys(els.cfg)) {
@@ -1316,15 +1635,56 @@ function captureScenarioState() {
     overlays,
     route: els.routeSelect.value || "",
     injections: selectedInjections(),
+    injection_text_overrides: { ...injectionTextOverrides },
     input: els.inputText.value,
     config_overrides: cfg,
-    run_history: lastRunHistory.slice(),
   };
 }
 
-let lastRecentSnapshot = [];
-let currentScenarioName = "";
+let currentSnapshotName = "";
+let snapshotDirty = false;
 let pendingSectionOverrides = null;
+
+function syncSnapshotIndicator() {
+  const indicator = $("snapshot-indicator");
+  const nameEl = $("snapshot-name");
+  const dirtyEl = $("snapshot-dirty");
+  const saveBtn = $("snapshot-quick-save");
+  if (!indicator) return;
+  if (currentSnapshotName) {
+    nameEl.textContent = currentSnapshotName;
+    nameEl.title = currentSnapshotName;
+    indicator.hidden = false;
+    dirtyEl.hidden = !snapshotDirty;
+    saveBtn.hidden = !snapshotDirty;
+  } else {
+    indicator.hidden = true;
+  }
+}
+
+function markSnapshotDirty() {
+  if (!currentSnapshotName) return;
+  if (snapshotDirty) return;
+  snapshotDirty = true;
+  syncSnapshotIndicator();
+}
+
+async function quickSaveSnapshot() {
+  if (!currentSnapshotName) return;
+  const btn = $("snapshot-quick-save");
+  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+  try {
+    await flushOverlayEdits();
+    const state = captureSnapshotState();
+    await api("PUT", `/api/snapshots/${encodeURIComponent(currentSnapshotName)}`, { state });
+    snapshotDirty = false;
+    syncSnapshotIndicator();
+  } catch (err) {
+    alert("Save failed: " + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Save"; }
+  }
+}
 
 function updateSectionOverrideBanner() {
   const has = pendingSectionOverrides && Object.keys(pendingSectionOverrides).length > 0;
@@ -1339,6 +1699,7 @@ async function fetchResolvedPrompt() {
       mode: els.routeSelect.value || null,
       inputs: { input: els.inputText.value || "" },
       injections: selectedInjections(),
+      injection_text_overrides: injectionTextOverrides,
     }),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -1383,7 +1744,7 @@ async function resetEditPrompt() {
   }
 }
 
-async function applyScenarioState(state) {
+async function applySnapshotState(state) {
   if (!state || typeof state !== "object") return;
   await api("DELETE", "/api/context/overlays");
   await api("PUT", "/api/context/base", { base: state.base || "", fields: {} });
@@ -1393,7 +1754,7 @@ async function applyScenarioState(state) {
       text: o.text || "",
       priority: typeof o.priority === "number" ? o.priority : 0,
       expires_at: null,
-      metadata: {},
+      metadata: o.metadata || {},
     });
   }
   await refresh();
@@ -1402,20 +1763,36 @@ async function applyScenarioState(state) {
     syncRouteDescription();
   }
   if (Array.isArray(state.injections)) setSelectedInjections(state.injections);
+  // Restore injection text overrides from snapshot
+  injectionTextOverrides = { ...(state.injection_text_overrides || {}) };
   if (state.input !== undefined) els.inputText.value = state.input;
   for (const k of Object.keys(els.cfg)) els.cfg[k].value = "";
   for (const [k, v] of Object.entries(state.config_overrides || {})) {
     if (els.cfg[k]) els.cfg[k].value = v;
   }
-  if (Array.isArray(state.run_history)) {
-    try {
-      await api("PUT", "/api/run_history", { records: state.run_history });
-      await refresh();
-    } catch (err) { console.warn("run_history restore failed:", err); }
-  }
+  // Reset output view from previous runs
+  setOutputText("", "(no generation yet)");
+  setOutputEditable(false);
+  const rejectBanner = document.getElementById("reject-banner");
+  if (rejectBanner) { rejectBanner.hidden = true; rejectBanner.innerHTML = ""; }
+  els.outRoute.textContent = "route: —";
+  els.outAccepted.textContent = "—";
+  els.outAccepted.className = "pill";
+  els.outTiming.textContent = "—";
+  els.outUsage.textContent = "—";
+  els.exportBtn.hidden = true;
+  lastTurnContext.user_prompt = "";
+  lastTurnContext.assistant_output = "";
+  syncSaveResponseButton();
+  setView("rendered");
+  // Clear debug trace
+  if (els.traceSystem) els.traceSystem.textContent = "";
+  if (els.traceUser) els.traceUser.textContent = "";
+  if (els.traceActive) els.traceActive.textContent = "";
+  if (els.traceAttempts) els.traceAttempts.innerHTML = "";
 }
 
-function openScenariosDialog() {
+function openSnapshotsDialog() {
   const node = document.createElement("div");
   node.className = "dialog-form";
   node.innerHTML = `
@@ -1425,17 +1802,17 @@ function openScenariosDialog() {
     <div class="dialog-actions">
       <button type="button" class="primary" data-act="save">Save</button>
     </div>
-    <div class="subhead" style="margin-top:14px"><span>Saved scenarios</span></div>
+    <div class="subhead" style="margin-top:14px"><span>Saved snapshots</span></div>
     <div class="library-list" data-role="list"><div class="library-empty">Loading…</div></div>
   `;
-  openModal("Scenarios", node);
+  openModal("Snapshots", node);
   const title = node.querySelector("#dlg-scn-title");
   title.focus();
   const list = node.querySelector("[data-role='list']");
   const refreshList = async () => {
     try {
-      const res = await api("GET", "/api/scenarios");
-      renderScenarioList(list, res.scenarios || []);
+      const res = await api("GET", "/api/snapshots");
+      renderSnapshotList(list, res.snapshots || []);
     } catch (err) {
       list.innerHTML = `<div class="library-empty">Failed to load: ${escapeHtml(err.message)}</div>`;
     }
@@ -1445,9 +1822,11 @@ function openScenariosDialog() {
     if (!name) { title.focus(); return; }
     try {
       await flushOverlayEdits();
-      const state = captureScenarioState();
-      await api("PUT", `/api/scenarios/${encodeURIComponent(name)}`, { state });
-      currentScenarioName = name;
+      const state = captureSnapshotState();
+      await api("PUT", `/api/snapshots/${encodeURIComponent(name)}`, { state });
+      currentSnapshotName = name;
+      snapshotDirty = false;
+      syncSnapshotIndicator();
       title.value = "";
       await refreshList();
     } catch (err) { alert("Save failed: " + err.message); }
@@ -1457,10 +1836,10 @@ function openScenariosDialog() {
   refreshList();
 }
 
-function renderScenarioList(host, items) {
+function renderSnapshotList(host, items) {
   host.innerHTML = "";
   if (!items.length) {
-    host.innerHTML = `<div class="library-empty">No saved scenarios yet.</div>`;
+    host.innerHTML = `<div class="library-empty">No saved snapshots yet.</div>`;
     return;
   }
   for (const item of items) {
@@ -1478,19 +1857,21 @@ function renderScenarioList(host, items) {
       </div>`;
     card.querySelector("[data-act='load']").addEventListener("click", async () => {
       try {
-        const row = await api("GET", `/api/scenarios/${encodeURIComponent(item.name)}`);
-        await applyScenarioState(row.state || {});
-        currentScenarioName = item.name;
+        const row = await api("GET", `/api/snapshots/${encodeURIComponent(item.name)}`);
+        await applySnapshotState(row.state || {});
+        currentSnapshotName = item.name;
+        snapshotDirty = false;
+        syncSnapshotIndicator();
         closeModal();
       } catch (err) { alert("Load failed: " + err.message); }
     });
     card.querySelector("[data-act='delete']").addEventListener("click", async () => {
-      if (!confirm(`Delete scenario "${item.name}"?`)) return;
+      if (!confirm(`Delete snapshot "${item.name}"?`)) return;
       try {
-        await api("DELETE", `/api/scenarios/${encodeURIComponent(item.name)}`);
+        await api("DELETE", `/api/snapshots/${encodeURIComponent(item.name)}`);
         card.remove();
         if (!host.querySelector(".library-item")) {
-          host.innerHTML = `<div class="library-empty">No saved scenarios yet.</div>`;
+          host.innerHTML = `<div class="library-empty">No saved snapshots yet.</div>`;
         }
       } catch (err) { alert("Delete failed: " + err.message); }
     });
@@ -1501,13 +1882,22 @@ function renderScenarioList(host, items) {
 async function addOverlay() {
   const name = els.overlayName.value.trim();
   if (!name) return alert("overlay needs a name");
-  const text = els.overlayText.value.trim();
-  if (!text) return alert("overlay needs text");
-  const priority = parseInt(els.overlayPriority.value || "0", 10) || 0;
   const runtimeMode = els.overlayRuntime ? els.overlayRuntime.value : "";
-  const metadata = (runtimeMode === "optional" || runtimeMode === "required")
-    ? { runtime: runtimeMode }
-    : {};
+  const isRuntime = runtimeMode === "optional" || runtimeMode === "required";
+  const text = els.overlayText.value.trim();
+  if (!text && !isRuntime) return alert("overlay needs text");
+  // Auto-calculate priority: new overlay gets highest priority (top of list)
+  const existingCards = els.overlayList.querySelectorAll(".overlay-card");
+  const maxPriority = [...existingCards].reduce((max, c) => {
+    const p = parseInt(c.querySelector(".edit-priority")?.value || "0", 10);
+    return Math.max(max, p);
+  }, 0);
+  const priority = maxPriority + 10;
+  const metadata = isRuntime ? { runtime: runtimeMode } : {};
+  if (isRuntime && els.overlayTemplate) {
+    const tmpl = els.overlayTemplate.value.trim();
+    if (tmpl) metadata.template = tmpl;
+  }
   await flushOverlayEdits();
   await api("PUT", `/api/context/overlay/${encodeURIComponent(name)}`, {
     text, priority, expires_at: null, metadata,
@@ -1515,6 +1905,8 @@ async function addOverlay() {
   els.overlayName.value = "";
   els.overlayText.value = "";
   if (els.overlayRuntime) els.overlayRuntime.value = "";
+  if (els.overlayTemplate) { els.overlayTemplate.value = ""; els.overlayTemplate.hidden = true; }
+  markSnapshotDirty();
   await refresh();
 }
 
@@ -1522,6 +1914,7 @@ async function clearOverlays() {
   // No point flushing — we're about to wipe them all.
   overlayPendingSaves.clear();
   await api("DELETE", "/api/context/overlays");
+  markSnapshotDirty();
   await refresh();
 }
 
@@ -1624,11 +2017,6 @@ function renderSuggestions(list, raw) {
   }
 }
 
-async function clearRecent() {
-  await api("DELETE", "/api/recent");
-  await refresh();
-}
-
 // --- modal & example wiring ----------------------------------------
 const modal = $("modal");
 const modalTitle = $("modal-title");
@@ -1669,7 +2057,108 @@ modal.addEventListener("click", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !modal.hidden) closeModal();
+  if (!aboutModal.hidden) {
+    if (e.key === "Escape") closeAbout();
+    if (e.key === "ArrowRight" && aboutIdx < aboutSlides.length - 1) goToSlide(aboutIdx + 1);
+    if (e.key === "ArrowLeft" && aboutIdx > 0) goToSlide(aboutIdx - 1);
+  }
 });
+
+// ── About / Tour slideshow ──────────────────────────────────────
+const aboutModal = document.getElementById("about-modal");
+const aboutSlides = aboutModal.querySelectorAll(".about-slide");
+const aboutDiagram = aboutModal.querySelector(".slide-diagram");
+const aboutDiagramEls = aboutDiagram.querySelectorAll("[data-step]");
+const aboutDots = aboutModal.querySelector(".about-dots");
+const aboutPrev = document.getElementById("about-prev");
+const aboutNext = document.getElementById("about-next");
+const tourBlocks = aboutModal.querySelectorAll(".tour-block, .tour-block-divider");
+const tourEmpty = aboutModal.querySelector(".tour-prompt-empty");
+const tourScroll = aboutModal.querySelector(".tour-prompt-scroll");
+let aboutIdx = 0;
+let prevTourStep = -1;
+
+// Slide index → which diagram step to highlight up to
+// 0 = overview (all), 1 = base+overlays, 2 = route, 3 = injections,
+// 4 = generation/output, 5 = export, 6 = ensemble
+const slideToStep = [0, 1, 2, 3, 4, 5, 6];
+
+// Build dot indicators
+for (let i = 0; i < aboutSlides.length; i++) {
+  const dot = document.createElement("button");
+  dot.className = "about-dot" + (i === 0 ? " active" : "");
+  dot.type = "button";
+  dot.addEventListener("click", () => goToSlide(i));
+  aboutDots.appendChild(dot);
+}
+
+function updateDiagram(step) {
+  aboutDiagram.classList.toggle("step-all", step === 0);
+  for (const el of aboutDiagramEls) {
+    const s = parseInt(el.dataset.step, 10);
+    el.classList.toggle("lit", step > 0 && s <= step);
+    el.classList.toggle("lit-active", step > 0 && s === step);
+  }
+}
+
+function updateTourPrompt(step) {
+  const advancing = step > prevTourStep;
+  // Show/hide empty state
+  if (tourEmpty) tourEmpty.hidden = step >= 1;
+  // Show/hide blocks based on their data-show-at threshold
+  for (const block of tourBlocks) {
+    const showAt = parseInt(block.dataset.showAt, 10);
+    const shouldShow = step >= showAt;
+    const wasVisible = block.classList.contains("visible");
+    block.classList.toggle("visible", shouldShow);
+    // Flash newly appearing blocks
+    if (shouldShow && !wasVisible && advancing) {
+      block.classList.remove("just-added");
+      void block.offsetWidth; // reflow to restart animation
+      block.classList.add("just-added");
+    }
+    if (!shouldShow) {
+      block.classList.remove("just-added");
+    }
+  }
+  // Auto-scroll to bottom when new blocks appear
+  if (advancing && tourScroll) {
+    requestAnimationFrame(() => {
+      tourScroll.scrollTop = tourScroll.scrollHeight;
+    });
+  }
+  prevTourStep = step;
+}
+
+function goToSlide(idx) {
+  aboutSlides[aboutIdx].classList.remove("active");
+  aboutDots.children[aboutIdx].classList.remove("active");
+  aboutIdx = idx;
+  aboutSlides[aboutIdx].classList.add("active");
+  aboutDots.children[aboutIdx].classList.add("active");
+  aboutPrev.disabled = aboutIdx === 0;
+  aboutNext.disabled = aboutIdx === aboutSlides.length - 1;
+  const step = slideToStep[aboutIdx] ?? 4;
+  updateDiagram(step);
+  updateTourPrompt(step);
+}
+
+aboutPrev.addEventListener("click", () => { if (aboutIdx > 0) goToSlide(aboutIdx - 1); });
+aboutNext.addEventListener("click", () => { if (aboutIdx < aboutSlides.length - 1) goToSlide(aboutIdx + 1); });
+
+function openAbout() {
+  prevTourStep = -1;
+  goToSlide(0);
+  aboutModal.hidden = false;
+}
+function closeAbout() {
+  aboutModal.hidden = true;
+}
+
+aboutModal.addEventListener("click", (e) => {
+  if (e.target.hasAttribute("data-close-about")) closeAbout();
+});
+document.getElementById("about-btn").addEventListener("click", openAbout);
 
 function openExamplePicker() {
   const node = document.createElement("div");
@@ -1697,7 +2186,7 @@ function openExamplePicker() {
     });
     node.appendChild(card);
   }
-  openModal("Load Example Scenario", node);
+  openModal("Load Example Snapshot", node);
 }
 
 async function applyExample(ex) {
@@ -1717,6 +2206,7 @@ async function applyExample(ex) {
     syncRouteDescription();
     els.inputText.value = ex.input;
     setSelectedInjections(ex.injections);
+    injectionTextOverrides = {};
     for (const k of Object.keys(els.cfg)) {
       if (els.cfg[k]) els.cfg[k].value = "";
     }
@@ -1729,16 +2219,207 @@ async function applyExample(ex) {
     alert("Failed to load example: " + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = "Load Example Scenario";
+    btn.textContent = "View Examples";
+    currentSnapshotName = "";
+    snapshotDirty = false;
+    syncSnapshotIndicator();
   }
 }
 
 $("example-btn").addEventListener("click", openExamplePicker);
-$("scenarios-btn").addEventListener("click", openScenariosDialog);
-$("iterate-verbatim").addEventListener("click", () => iterate("verbatim"));
-$("iterate-compact").addEventListener("click", () => iterate("compact"));
+$("snapshots-btn").addEventListener("click", openSnapshotsDialog);
+$("snapshot-quick-save").addEventListener("click", quickSaveSnapshot);
+els.saveResponseOverlay.addEventListener("click", saveResponseAsOverlay);
 
+// Dirty-tracking: mark snapshot dirty when user changes key inputs
+for (const el of [els.baseText, els.inputText]) {
+  el.addEventListener("input", markSnapshotDirty);
+}
+els.routeSelect.addEventListener("change", markSnapshotDirty);
+for (const el of Object.values(els.cfg)) {
+  el.addEventListener("input", markSnapshotDirty);
+}
+
+// --- pre-generate staging ------------------------------------------
+// Pre-generate resolves the prompt into per-section cards the user can
+// drag to reorder. Clicking Generate while staged sends the reordered
+// concatenation via `section_overrides` (one-shot, not persisted).
+let stagedSections = null;   // { system: string[], user: string[], separator: string }
+
+function activateOutputTab(name) {
+  document.querySelectorAll(".output-tab").forEach((t) => {
+    t.setAttribute("aria-selected", t.dataset.outputTab === name ? "true" : "false");
+  });
+  document.querySelectorAll(".output-panel-body").forEach((p) => {
+    p.hidden = p.dataset.outputTab !== name;
+  });
+}
+
+function clearStage() {
+  stagedSections = null;
+  const badge = $("stage-tab-badge");
+  if (badge) badge.hidden = true;
+  // Empty-root hint shown when the stage tab has no staged sections.
+  const emptyRoot = document.querySelector(".stage-empty-root");
+  if (emptyRoot) emptyRoot.hidden = false;
+  document.querySelectorAll(".stage-group").forEach((g) => (g.style.display = "none"));
+}
+
+function renderStage() {
+  if (!els.promptStage || !stagedSections) return;
+  const emptyRoot = document.querySelector(".stage-empty-root");
+  if (emptyRoot) emptyRoot.hidden = true;
+  document.querySelectorAll(".stage-group").forEach((g) => (g.style.display = ""));
+  const badge = $("stage-tab-badge");
+  if (badge) badge.hidden = false;
+
+  const slots = stagedSections.runtimeSlots || {};
+
+  for (const group of ["system", "user"]) {
+    const list = els.promptStage.querySelector(`[data-list='${group}']`);
+    const empty = els.promptStage.querySelector(`[data-empty='${group}']`);
+    if (!list || !empty) continue;
+    list.innerHTML = "";
+    const items = stagedSections[group] || [];
+    empty.hidden = items.length > 0;
+    items.forEach((text, idx) => {
+      const card = document.createElement("div");
+      card.draggable = true;
+      card.dataset.group = group;
+      card.dataset.index = String(idx);
+
+      const slot = slots[text];
+      if (slot) {
+        // Runtime slot — render with an input field
+        card.className = "stage-card stage-slot";
+        card.dataset.slotName = slot.name;
+        card.dataset.slotMode = slot.mode;
+        const modeLabel = slot.mode === "required" ? "required" : "optional";
+        // Pre-fill from overlay card's test value if available
+        const overlayCard = els.overlayList.querySelector(`.overlay-card[data-name="${slot.name}"]`);
+        const testVal = overlayCard ? (overlayCard.querySelector(".edit-test-value") || {}).value || "" : "";
+        card.innerHTML =
+          `<span class="handle">⋮⋮</span>` +
+          `<span class="stage-slot-body">` +
+            `<span class="stage-slot-header">` +
+              `<span class="stage-slot-name">{${escapeHtml(slot.name)}}</span>` +
+              `<span class="stage-slot-mode ${slot.mode}">${modeLabel}</span>` +
+            `</span>` +
+            `<input class="stage-slot-input" type="text" placeholder="${modeLabel} runtime value…" value="${escapeHtml(testVal)}" />` +
+          `</span>`;
+      } else {
+        // Regular section — plain text card
+        card.className = "stage-card";
+        card.innerHTML = `<span class="handle">⋮⋮</span><span class="body"></span>`;
+        card.querySelector(".body").textContent = text;
+      }
+      list.appendChild(card);
+    });
+  }
+  wireStageDrag();
+}
+
+function readRuntimeSlotValues() {
+  const values = {};
+  if (!els.promptStage) return values;
+  for (const card of els.promptStage.querySelectorAll(".stage-slot")) {
+    const name = card.dataset.slotName;
+    const input = card.querySelector(".stage-slot-input");
+    if (name && input) values[name] = input.value;
+  }
+  return values;
+}
+
+function wireStageDrag() {
+  const cards = els.promptStage.querySelectorAll(".stage-card");
+  let draggedEl = null;
+  cards.forEach((card) => {
+    card.addEventListener("dragstart", (e) => {
+      draggedEl = card;
+      card.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", "");
+    });
+    card.addEventListener("dragend", () => {
+      card.classList.remove("dragging");
+      cards.forEach((c) => c.classList.remove("drop-before", "drop-after"));
+      draggedEl = null;
+    });
+    card.addEventListener("dragover", (e) => {
+      if (!draggedEl) return;
+      if (draggedEl.dataset.group !== card.dataset.group) return; // only reorder within same group
+      if (draggedEl === card) return;
+      e.preventDefault();
+      const rect = card.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      card.classList.toggle("drop-before", before);
+      card.classList.toggle("drop-after", !before);
+    });
+    card.addEventListener("dragleave", () => {
+      card.classList.remove("drop-before", "drop-after");
+    });
+    card.addEventListener("drop", (e) => {
+      if (!draggedEl || draggedEl === card) return;
+      if (draggedEl.dataset.group !== card.dataset.group) return;
+      e.preventDefault();
+      const group = card.dataset.group;
+      const arr = stagedSections[group];
+      const from = parseInt(draggedEl.dataset.index, 10);
+      let to = parseInt(card.dataset.index, 10);
+      const [item] = arr.splice(from, 1);
+      if (card.classList.contains("drop-after")) to = to + (from < to ? 0 : 1);
+      else to = to + (from < to ? -1 : 0);
+      arr.splice(to, 0, item);
+      renderStage();
+    });
+  });
+}
+
+async function preGenerate() {
+  const btn = $("pregenerate-btn");
+  btn.disabled = true;
+  try {
+    await flushOverlayEdits();
+    const body = {
+      mode: els.routeSelect.value || null,
+      inputs: { input: els.inputText.value },
+      injections: selectedInjections(),
+      section_overrides: pendingSectionOverrides || {},
+      injection_text_overrides: injectionTextOverrides,
+    };
+    const res = await api("POST", "/api/prompt/resolve", body);
+    // Build a lookup of runtime slot info keyed by placeholder pattern
+    const runtimeSlotMap = {};
+    for (const slot of res.runtime_slots || []) {
+      runtimeSlotMap[`{${slot.name}}`] = slot;
+    }
+    stagedSections = {
+      system: Array.isArray(res.system_sections) ? [...res.system_sections] : [],
+      user: Array.isArray(res.user_sections) ? [...res.user_sections] : [],
+      separator: res.separator || "\n\n",
+      runtimeSlots: runtimeSlotMap,
+    };
+    renderStage();
+    activateOutputTab("stage");
+    // Reveal generation controls after pre-generate
+    els.stream.closest("label").hidden = false;
+    els.debug.closest("label").hidden = false;
+    document.querySelector(".gen-controls-sep").hidden = false;
+  } catch (err) {
+    alert("Pre-generate failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("pregenerate-btn").addEventListener("click", preGenerate);
 els.generate.addEventListener("click", generate);
+if (els.stageReset) els.stageReset.addEventListener("click", clearStage);
+document.querySelectorAll(".output-tab").forEach((t) => {
+  t.addEventListener("click", () => activateOutputTab(t.dataset.outputTab));
+});
+// Initial state: no staged sections -> show hint in pre-generate tab.
+document.querySelectorAll(".stage-group").forEach((g) => (g.style.display = "none"));
 els.editPromptBtn.addEventListener("click", openEditPrompt);
 els.editApply.addEventListener("click", applyEditPrompt);
 els.editClear.addEventListener("click", () => { clearSectionOverride(); closeEditPrompt(); });
@@ -1747,7 +2428,7 @@ els.editPromptModal.querySelectorAll("[data-close-edit-prompt]").forEach((el) =>
   el.addEventListener("click", closeEditPrompt)
 );
 els.clearSectionOverride.addEventListener("click", (e) => { e.preventDefault(); clearSectionOverride(); });
-els.exportBtn.addEventListener("click", exportPython);
+els.exportBtn.addEventListener("click", exportJson);
 els.exportCopy.addEventListener("click", copyExport);
 els.exportSave.addEventListener("click", saveExport);
 els.exportDownload.addEventListener("click", downloadExport);
@@ -1759,12 +2440,21 @@ els.saveBase.addEventListener("click", saveBase);
 $("save-base-as").addEventListener("click", openSaveAsDialog);
 $("load-base").addEventListener("click", openLoadDialog);
 els.addOverlay.addEventListener("click", addOverlay);
+if (els.overlayRuntime) {
+  els.overlayRuntime.addEventListener("change", () => {
+    const isRuntime = els.overlayRuntime.value === "optional" || els.overlayRuntime.value === "required";
+    els.overlayTemplate.hidden = !isRuntime;
+    if (!isRuntime) els.overlayTemplate.value = "";
+  });
+}
 els.clearOverlays.addEventListener("click", clearOverlays);
-els.clearRecent.addEventListener("click", clearRecent);
 $("suggest-overlays").addEventListener("click", suggestOverlays);
 els.routeSelect.addEventListener("change", syncRouteDescription);
 els.inputText.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") generate();
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+    if (stagedSections) generate();
+    else preGenerate();
+  }
 });
 
 // --- tab switching --------------------------------------------------
@@ -1793,6 +2483,161 @@ document.querySelectorAll(".tabs .tab").forEach((tab) => {
     }
   });
 });
+
+// --- custom routes --------------------------------------------------
+
+let editingCustomRoute = null;
+
+function openCustomRouteModal(spec) {
+  editingCustomRoute = spec ? spec.name : null;
+  const title = document.getElementById("custom-route-title");
+  if (title) title.textContent = spec ? `Edit custom route: ${spec.name}` : "New custom route";
+  els.crName.value = spec?.name || "";
+  els.crName.disabled = !!spec;
+  els.crDescription.value = spec?.description || "";
+  els.crSystem.value = spec?.system || "";
+  els.crUserTemplate.value = spec?.user_template || "{input}";
+  els.crPriority.value = spec?.priority ?? 0;
+  els.crOverrides.value = spec?.generation_overrides && Object.keys(spec.generation_overrides).length
+    ? JSON.stringify(spec.generation_overrides) : "";
+  populatePolicyEditor(spec?.output_policy || {});
+  els.crError.hidden = true;
+  els.crError.textContent = "";
+  els.crDelete.hidden = !spec;
+  els.customRouteModal.hidden = false;
+  setTimeout(() => (spec ? els.crSystem : els.crName).focus(), 0);
+}
+
+function closeCustomRouteModal() {
+  els.customRouteModal.hidden = true;
+  editingCustomRoute = null;
+}
+
+function showCustomRouteError(msg) {
+  els.crError.textContent = msg;
+  els.crError.hidden = false;
+}
+
+function parseJsonField(text, label) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return {};
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    throw new Error("must be a JSON object");
+  } catch (e) {
+    throw new Error(`${label}: ${e.message}`);
+  }
+}
+
+// --- interactive policy editor helpers --------------------------------
+
+function populatePolicyEditor(policy) {
+  const p = policy || {};
+  $("pol-min-length").value = p.min_length != null ? p.min_length : "";
+  $("pol-max-length").value = p.max_length != null ? p.max_length : "";
+  $("pol-collapse-ws").checked = p.collapse_whitespace !== false; // default true
+  $("pol-append-suffix").value = p.append_suffix || "";
+  $("pol-strip-prefixes").value = (p.strip_prefixes || []).join("\n");
+  $("pol-strip-patterns").value = (p.strip_patterns || []).join("\n");
+  $("pol-require-patterns").value = (p.require_patterns || []).join("\n");
+  $("pol-forbidden-subs").value = (p.forbidden_substrings || []).join("\n");
+  $("pol-forbidden-pats").value = (p.forbidden_patterns || []).join("\n");
+}
+
+function readPolicyEditor() {
+  const out = {};
+  const minLen = $("pol-min-length").value.trim();
+  const maxLen = $("pol-max-length").value.trim();
+  if (minLen !== "") out.min_length = parseInt(minLen, 10);
+  if (maxLen !== "") out.max_length = parseInt(maxLen, 10);
+  if (!$("pol-collapse-ws").checked) out.collapse_whitespace = false;
+  const suffix = $("pol-append-suffix").value.trim();
+  if (suffix) out.append_suffix = suffix;
+  const lines = (id) => $(id).value.split("\n").map(s => s.trim()).filter(Boolean);
+  const stripPrefixes = lines("pol-strip-prefixes");
+  const stripPatterns = lines("pol-strip-patterns");
+  const requirePatterns = lines("pol-require-patterns");
+  const forbiddenSubs = lines("pol-forbidden-subs");
+  const forbiddenPats = lines("pol-forbidden-pats");
+  if (stripPrefixes.length) out.strip_prefixes = stripPrefixes;
+  if (stripPatterns.length) out.strip_patterns = stripPatterns;
+  if (requirePatterns.length) out.require_patterns = requirePatterns;
+  if (forbiddenSubs.length) out.forbidden_substrings = forbiddenSubs;
+  if (forbiddenPats.length) out.forbidden_patterns = forbiddenPats;
+  return out;
+}
+
+async function saveCustomRoute() {
+  const name = (els.crName.value || "").trim();
+  if (!name) { showCustomRouteError("name required"); return; }
+  let overrides;
+  try {
+    overrides = parseJsonField(els.crOverrides.value, "sampling overrides");
+  } catch (e) {
+    showCustomRouteError(e.message);
+    return;
+  }
+  const policy = readPolicyEditor();
+  const body = {
+    description: els.crDescription.value || "",
+    system: els.crSystem.value || "",
+    user_template: els.crUserTemplate.value || "{input}",
+    priority: parseInt(els.crPriority.value || "0", 10) || 0,
+    generation_overrides: overrides,
+    output_policy: policy,
+  };
+  try {
+    await api("PUT", `/api/routes/custom/${encodeURIComponent(name)}`, body);
+  } catch (e) {
+    showCustomRouteError(e.message);
+    return;
+  }
+  closeCustomRouteModal();
+  const state = await api("GET", "/api/state");
+  renderRoutes(state);
+  els.routeSelect.value = name;
+  syncRouteDescription();
+}
+
+async function deleteCustomRoute() {
+  const name = editingCustomRoute || els.routeSelect.value;
+  if (!name || !routeIsCustom[name]) return;
+  if (!confirm(`Delete custom route "${name}"?`)) return;
+  try {
+    await api("DELETE", `/api/routes/custom/${encodeURIComponent(name)}`);
+  } catch (e) {
+    showCustomRouteError(e.message);
+    return;
+  }
+  closeCustomRouteModal();
+  const state = await api("GET", "/api/state");
+  renderRoutes(state);
+  els.routeSelect.value = "";
+  syncRouteDescription();
+}
+
+async function openEditSelectedCustomRoute() {
+  const name = els.routeSelect.value;
+  if (!name || !routeIsCustom[name]) return;
+  try {
+    const row = await api("GET", `/api/routes/custom/${encodeURIComponent(name)}`);
+    openCustomRouteModal(row.spec);
+  } catch (e) {
+    alert(`Failed to load route: ${e.message}`);
+  }
+}
+
+if (els.newCustomRouteBtn) els.newCustomRouteBtn.addEventListener("click", () => openCustomRouteModal(null));
+if (els.editCustomRouteBtn) els.editCustomRouteBtn.addEventListener("click", openEditSelectedCustomRoute);
+if (els.deleteCustomRouteBtn) els.deleteCustomRouteBtn.addEventListener("click", deleteCustomRoute);
+if (els.crSave) els.crSave.addEventListener("click", saveCustomRoute);
+if (els.crDelete) els.crDelete.addEventListener("click", deleteCustomRoute);
+if (els.customRouteModal) {
+  els.customRouteModal.querySelectorAll("[data-close-custom-route]").forEach((el) =>
+    el.addEventListener("click", closeCustomRouteModal)
+  );
+}
 
 refresh().catch((err) => {
   document.body.insertAdjacentHTML("afterbegin", `<div style="background:#5b1c1c;color:#fff;padding:10px">Failed to load state: ${err.message}</div>`);

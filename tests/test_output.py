@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from promptlibretto import OutputPolicy, OutputProcessor, RecentOutputMemory
+from promptlibretto import OutputPolicy, OutputProcessor
 from promptlibretto.output.processor import ProcessingContext
 
 
-def _ctx(recent=None):
-    return ProcessingContext(route="r", user_prompt="u", recent=recent)
+def _ctx():
+    return ProcessingContext(route="r", user_prompt="u")
 
 
 def test_strip_prefix_removes_leading_fence():
@@ -40,15 +40,6 @@ def test_max_length_truncates_on_clean():
     proc = OutputProcessor()
     policy = OutputPolicy(max_length=5)
     assert proc.clean("abcdefghij", _ctx(), policy) == "abcde"
-
-
-def test_dedupe_against_recent():
-    recent = RecentOutputMemory(capacity=4)
-    recent.add("the quick brown fox")
-    proc = OutputProcessor()
-    policy = OutputPolicy(dedupe_against_recent=True, dedupe_similarity_threshold=0.5)
-    assert proc.validate("the quick brown fox", _ctx(recent), policy).ok is False
-    assert proc.validate("totally different output", _ctx(recent), policy).ok is True
 
 
 def test_collapse_whitespace_preserves_newlines():

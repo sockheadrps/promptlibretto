@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from typing import Protocol, Sequence, TypeVar, Iterable, Mapping
+from typing import Protocol, Sequence, TypeVar
 
 T = TypeVar("T")
 
@@ -10,7 +10,6 @@ class RandomSource(Protocol):
     def float(self) -> float: ...
     def choice(self, items: Sequence[T]) -> T: ...
     def sample(self, items: Sequence[T], count: int) -> list[T]: ...
-    def weighted(self, items: Sequence[tuple[T, float]]) -> T: ...
 
 
 class _BaseRandom:
@@ -31,16 +30,6 @@ class _BaseRandom:
             self._rng.shuffle(pool)
             return pool
         return self._rng.sample(pool, count)
-
-    def weighted(self, items: Sequence[tuple[T, float]]) -> T:
-        if not items:
-            raise ValueError("weighted() called on empty sequence")
-        values = [v for v, _ in items]
-        weights = [max(0.0, float(w)) for _, w in items]
-        total = sum(weights)
-        if total <= 0:
-            return self._rng.choice(values)
-        return self._rng.choices(values, weights=weights, k=1)[0]
 
 
 class DefaultRandom(_BaseRandom):

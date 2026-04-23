@@ -10,7 +10,15 @@ from ..random_source import RandomSource
 
 @dataclass
 class GenerationRequest:
-    """Request entering the engine."""
+    """Request entering the engine.
+
+    `section_overrides` is an escape hatch: when keys `"system"` or `"user"`
+    are present, the corresponding side of the built `PromptPackage` is
+    REPLACED wholesale. This bypasses normal context injection, asset
+    interpolation, and the route's section pipeline for the overridden side
+    only — use it for tests or one-off manual prompts, not for routine
+    composition.
+    """
 
     mode: Optional[str] = None
     inputs: Mapping[str, Any] = field(default_factory=dict)

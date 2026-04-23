@@ -57,7 +57,7 @@ def test_engine_accepts_list_of_promptroutes():
         PromptRoute(name="x", builder=CompositeBuilder(name="x", user_sections=(section("X"),))),
         PromptRoute(name="y", builder=CompositeBuilder(name="y", user_sections=(section("Y"),))),
     ]
-    engine = PromptEngine(router=routes)
+    engine = PromptEngine(routes=routes)
     assert [r.name for r in engine.router.routes()] == ["x", "y"]
 
 

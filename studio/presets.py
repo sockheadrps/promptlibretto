@@ -14,41 +14,41 @@ from promptlibretto.builders.builder import BuildContext
 def build_asset_registry() -> PromptAssetRegistry:
     reg = PromptAssetRegistry()
 
-    reg.add_frame(
-        "core",
+    reg.add(
+        "frame.core",
         "You are a careful, helpful assistant. Respond clearly and directly. "
         "Do not fabricate facts. If a request is ambiguous, ask one focused question.",
     )
-    reg.add_frame(
-        "creative",
+    reg.add(
+        "frame.creative",
         "You are an inventive collaborator. Lean into vivid, specific language. "
         "Surprise the reader without losing clarity.",
     )
-    reg.add_frame(
-        "analyst",
+    reg.add(
+        "frame.analyst",
         "You are a precise analyst. Prefer structure, evidence, and named tradeoffs. "
         "Distinguish facts from inferences.",
     )
 
-    reg.add_rule("brevity", "Be concise. No filler, no apologies, no preamble.")
-    reg.add_rule("format_markdown", "Use markdown when it aids scanning, but never gratuitously.")
-    reg.add_rule("no_meta", "Do not narrate what you are about to do — just do it.")
+    reg.add("rule.brevity", "Be concise. No filler, no apologies, no preamble.")
+    reg.add("rule.format_markdown", "Use markdown when it aids scanning, but never gratuitously.")
+    reg.add("rule.no_meta", "Do not narrate what you are about to do — just do it.")
 
-    reg.add_persona("plain", "Voice: clear, plainspoken, no jargon.")
-    reg.add_persona("expert", "Voice: domain expert, but explain unfamiliar terms inline.")
-    reg.add_persona("editor", "Voice: a sharp editor — every sentence must earn its place.")
+    reg.add("persona.plain", "Voice: clear, plainspoken, no jargon.")
+    reg.add("persona.expert", "Voice: domain expert, but explain unfamiliar terms inline.")
+    reg.add("persona.editor", "Voice: a sharp editor — every sentence must earn its place.")
 
-    reg.add_ending("standard", "Begin your response now.")
-    reg.add_ending("structured", "Respond using the requested structure exactly.")
+    reg.add("ending.standard", "Begin your response now.")
+    reg.add("ending.structured", "Respond using the requested structure exactly.")
 
-    reg.add_examples(
+    reg.add_pool(
         "concise_answers",
         [
             "Q: What is entropy in 1 sentence?\nA: Entropy is a measure of how many microscopic configurations correspond to the same macroscopic state.",
             "Q: Why does ice float?\nA: Ice has lower density than liquid water because hydrogen bonding holds it in a more open lattice.",
         ],
     )
-    reg.add_nudges(
+    reg.add_pool(
         "creative_lift",
         [
             "Lead with a concrete image, not an abstraction.",
@@ -99,27 +99,9 @@ def build_asset_registry() -> PromptAssetRegistry:
     return reg
 
 
-def _frame(name: str):
+def _asset(name: str):
     def fn(ctx: BuildContext) -> str:
-        return ctx.assets.frame(name)
-    return fn
-
-
-def _rule(name: str):
-    def fn(ctx: BuildContext) -> str:
-        return ctx.assets.rule(name)
-    return fn
-
-
-def _persona(name: str):
-    def fn(ctx: BuildContext) -> str:
-        return ctx.assets.persona(name)
-    return fn
-
-
-def _ending(name: str):
-    def fn(ctx: BuildContext) -> str:
-        return ctx.assets.ending(name)
+        return ctx.assets.get(name)
     return fn
 
 
@@ -134,7 +116,7 @@ def _user_input(field: str = "input", label: str = "Request"):
 
 def _example_pool(pool: str, count: int = 1, label: str = "Examples"):
     def fn(ctx: BuildContext) -> str:
-        picks = ctx.assets.pick_examples(pool, count)
+        picks = ctx.assets.pick(pool, count)
         if not picks:
             return ""
         return f"{label}:\n" + "\n\n".join(picks)
@@ -143,7 +125,7 @@ def _example_pool(pool: str, count: int = 1, label: str = "Examples"):
 
 def _nudge_pool(pool: str):
     def fn(ctx: BuildContext) -> str:
-        nudge = ctx.assets.pick_nudge(pool)
+        nudge = ctx.assets.pick_one(pool)
         return f"Style nudge: {nudge}" if nudge else ""
     return fn
 
@@ -187,27 +169,6 @@ def _pending_user_input_section():
     return fn
 
 
-def _turn_user_prompt():
-    def fn(ctx: BuildContext) -> str:
-        text = str(ctx.request.inputs.get("user_prompt") or "").strip()
-        return f"Original user prompt:\n{text}" if text else ""
-    return fn
-
-
-def _turn_assistant_output():
-    def fn(ctx: BuildContext) -> str:
-        text = str(ctx.request.inputs.get("assistant_output") or "").strip()
-        return f"Assistant output:\n{text}" if text else ""
-    return fn
-
-
-def _turn_user_response():
-    def fn(ctx: BuildContext) -> str:
-        text = str(ctx.request.inputs.get("user_response") or "").strip()
-        return f"User follow-up:\n{text}" if text else ""
-    return fn
-
-
 def _existing_overlays_section():
     def fn(ctx: BuildContext) -> str:
         existing = ctx.request.inputs.get("existing") or []
@@ -242,13 +203,13 @@ def build_router(_assets: PromptAssetRegistry) -> PromptRouter:
             builder=CompositeBuilder(
                 name="default",
                 system_sections=(
-                    _frame("core"),
-                    _rule("no_meta"),
-                    _persona("plain"),
+                    _asset("frame.core"),
+                    _asset("rule.no_meta"),
+                    _asset("persona.plain"),
                 ),
                 user_sections=(
                     _user_input(),
-                    _ending("standard"),
+                    _asset("ending.standard"),
                 ),
             ),
         )
@@ -261,14 +222,14 @@ def build_router(_assets: PromptAssetRegistry) -> PromptRouter:
             builder=CompositeBuilder(
                 name="concise",
                 system_sections=(
-                    _frame("core"),
-                    _rule("brevity"),
-                    _persona("editor"),
+                    _asset("frame.core"),
+                    _asset("rule.brevity"),
+                    _asset("persona.editor"),
                 ),
                 user_sections=(
                     _example_pool("concise_answers", count=2),
                     _user_input(label="Question"),
-                    _ending("standard"),
+                    _asset("ending.standard"),
                 ),
                 generation_overrides={"temperature": 0.5, "max_tokens": 220},
             ),
@@ -282,13 +243,13 @@ def build_router(_assets: PromptAssetRegistry) -> PromptRouter:
             builder=CompositeBuilder(
                 name="creative",
                 system_sections=(
-                    _frame("creative"),
-                    _persona("expert"),
+                    _asset("frame.creative"),
+                    _asset("persona.expert"),
                 ),
                 user_sections=(
                     _nudge_pool("creative_lift"),
                     _user_input(label="Brief"),
-                    _ending("standard"),
+                    _asset("ending.standard"),
                 ),
                 generation_overrides={"temperature": 0.95, "max_tokens": 500},
             ),
@@ -302,9 +263,9 @@ def build_router(_assets: PromptAssetRegistry) -> PromptRouter:
             builder=CompositeBuilder(
                 name="analyst",
                 system_sections=(
-                    _frame("analyst"),
-                    _rule("format_markdown"),
-                    _rule("no_meta"),
+                    _asset("frame.analyst"),
+                    _asset("rule.format_markdown"),
+                    _asset("rule.no_meta"),
                 ),
                 user_sections=(
                     _user_input(label="Topic"),
@@ -312,7 +273,7 @@ def build_router(_assets: PromptAssetRegistry) -> PromptRouter:
                         "Structure your response with these sections: "
                         "**Summary**, **Key facts**, **Tradeoffs**, **Open questions**."
                     ),
-                    _ending("structured"),
+                    _asset("ending.structured"),
                 ),
                 generation_overrides={"temperature": 0.6, "max_tokens": 700},
             ),
@@ -326,7 +287,7 @@ def build_router(_assets: PromptAssetRegistry) -> PromptRouter:
             builder=CompositeBuilder(
                 name="suggest_overlays",
                 system_sections=(
-                    _frame("analyst"),
+                    _asset("frame.analyst"),
                     section(
                         "You suggest short-lived CONTEXT OVERLAYS that a user could "
                         "attach on top of the given base context to steer responses. "
@@ -354,39 +315,12 @@ def build_router(_assets: PromptAssetRegistry) -> PromptRouter:
 
     router.register(
         PromptRoute(
-            name="compact_turn",
-            description="Densify a user follow-up into a 1-2 sentence overlay.",
-            builder=CompositeBuilder(
-                name="compact_turn",
-                system_sections=(
-                    section(
-                        "You compress an iteration turn into a SHORT overlay (1-2 sentences) "
-                        "that captures the new constraint, preference, correction, or emphasis "
-                        "the user just revealed. Do NOT restate the original prompt or output. "
-                        "Do NOT add new information. Write in third person, present tense, as a "
-                        "standing instruction the model can apply on the next turn. Output ONLY "
-                        "the overlay text — no preamble, no quotes, no markdown."
-                    ),
-                ),
-                user_sections=(
-                    _turn_user_prompt(),
-                    _turn_assistant_output(),
-                    _turn_user_response(),
-                    section("Write the overlay text now."),
-                ),
-                generation_overrides={"temperature": 0.4, "max_tokens": 160},
-            ),
-        )
-    )
-
-    router.register(
-        PromptRoute(
             name="json_extract",
             description="Extract structured JSON from a freeform input.",
             builder=CompositeBuilder(
                 name="json_extract",
                 system_sections=(
-                    _frame("analyst"),
+                    _asset("frame.analyst"),
                     section(
                         "Output strictly minified JSON with no surrounding text. "
                         "If a field is unknown, use null."

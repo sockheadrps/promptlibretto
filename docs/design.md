@@ -104,11 +104,10 @@ Suggested interface:
 interface ContextStore {
   getBase(): string;
   setBase(value: string): void;
-  renderTemplate(template: string, values: Record<string, unknown>): string;
-  getActive(now?: number): string;
   setOverlay(name: string, overlay: ContextOverlay): void;
   clearOverlay(name: string): void;
-  getState(): ContextSnapshot;
+  getState(now?: number): ContextSnapshot;  // pure read, does not mutate
+  prune(now?: number): string[];              // evicts expired overlays, returns names
 }
 
 type ContextOverlay = {
@@ -148,77 +147,45 @@ Orchestration (when to compact, what params to use) stays in the caller.
 
 ## Template Slots
 
-Templates should allow explicit slots such as:
+Templates allow explicit slots such as:
 
 ```txt
-The task concerns {subject}.{focus_sentence}{constraint_sentence}
+The task concerns {subject}.
 ```
 
-The slot contract:
+Slot substitution happens at exactly one place: the section callable.
+Sections receive a `BuildContext` and call `str.format_map` against
+`request.inputs` to fill slots. Exported engines store templated sections
+as `{"template": "Q:\n{input}"}` — the loader compiles them back to
+section callables that do the `format_map` at build time.
 
-- Slots are named.
-- Slot values come from structured state.
-- Rendering is deterministic.
-- Missing fields do not silently erase important context.
-- The renderer can append missing details if a template lacks newer slots.
-
-Appending matters when a long-lived user-authored template predates newer context fields. The renderer detects that a field wasn't represented and appends it safely.
-
-Example:
-
-```ts
-type TemplateRenderOptions = {
-  appendMissingFields?: boolean;
-  normalizeWhitespace?: boolean;
-};
-
-type TemplateField = {
-  key: string;
-  value: string;
-  aliases?: string[];
-  fallbackSentence?: (value: string) => string;
-};
-```
-
-## Template Inference
-
-A reusable template can be inferred from a rendered prompt by replacing known current values with slots. Useful when a user edits the rendered text directly and the engine needs to recover slots for future updates.
-
-Process:
-
-1. Start with rendered text.
-2. Compare against known current field values.
-3. Replace exact matches with slot tokens.
-4. Store the inferred template.
-
-Only replace values that are known and unambiguous.
+There is no separate template-renderer object, no field aliasing
+machinery, no whitespace normaliser. If you want any of that, it's a
+helper function in your own section callable. Keep the substitution
+surface small and obvious.
 
 ## 3. Prompt Assets
 
 Domain-editable text blocks and option pools used by builders. They live outside the runtime service layer.
 
-Asset categories:
+`PromptAssetRegistry` exposes three primitives:
 
-- Framing lines
-- Shared rules
-- Specialized instructions
-- Example pools
-- Persona or style descriptors
-- Nudge pools
-- Prompt endings
-- Injection templates
-- Fallback prompts
+- `assets: Record<string, string>` — single named strings (anything: framings, rules, personas, endings, fallback prompts).
+- `pools: Record<string, string[]>` — sampleable lists (examples, nudges).
+- `injectors: Record<string, InjectionTemplate>` — stackable instruction blocks with optional generation/output overrides.
+
+Categories like `frame.*`, `rule.*`, `persona.*` are naming conventions
+you choose, not enforced types. The earlier 7-pool taxonomy
+(`frames`/`rules`/`personas`/`endings`/`examples`/`nudges`/`injectors`)
+collapsed to one flat dict because nothing structural distinguished a
+"frame" string from a "rule" string.
 
 Prompt text belongs in prompt modules, not in orchestration code.
 
-Suggested structure:
-
 ```ts
 type PromptAssets = {
-  frames: Record<string, string>;
-  rules: Record<string, string>;
-  examples: Record<string, string[]>;
-  nudges: Record<string, string[]>;
+  assets: Record<string, string>;
+  pools: Record<string, string[]>;
   injectors: Record<string, InjectionTemplate>;
 };
 ```
@@ -445,38 +412,6 @@ type ValidationResult = {
 };
 ```
 
-## Recent Output Memory
-
-A small recent-output memory reduces repetition. Comparison options:
-
-- Exact normalized text
-- Token overlap
-- Phrase overlap
-- Shared special tokens
-- Similarity score
-
-Bounded and context-aware. Clear on major context changes; preserve across minor overlays to avoid loops.
-
-## Run History
-
-Separate from recent-output memory. Recent-output memory detects repetition
-(Jaccard over text). Run history lets UIs and callers *replay* past runs by
-reloading the exact request shape that produced an output.
-
-Each record captures:
-
-- The `GenerationRequest` as sent (mode, inputs, injections, config overrides)
-- The cleaned output text
-- Whether it was accepted
-- The route that handled it
-- A timestamp
-- Optional metadata
-
-Bounded and separate. Two primitives each doing one thing beats a single
-struct with a growing optional-field bag. A caller wanting chat-style
-history reads run history; a caller wanting dedup uses recent-output
-memory; neither depends on the other.
-
 ## Streaming
 
 Some providers can emit tokens incrementally. The engine exposes this via
@@ -617,7 +552,6 @@ prompt-engine/
     generationConfig.ts
   context/
     ContextStore.ts
-    TemplateRenderer.ts
     OverlayStore.ts
   assets/
     PromptAssetRegistry.ts
@@ -635,7 +569,6 @@ prompt-engine/
     MockProviderAdapter.ts
   output/
     OutputProcessor.ts
-    RecentOutputMemory.ts
   random/
     RandomSource.ts
 ```

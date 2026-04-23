@@ -1,10 +1,9 @@
-"""JSON-backed library of full app-state scenarios.
+"""JSON-backed library of full app-state snapshots.
 
-A scenario is the complete editable surface of the test bench at a moment in
+A snapshot is the complete editable surface of the test bench at a moment in
 time: base context, overlays, route selection, injection picks, the user's
-draft prompt, generation overrides, and the recent-output ring. Saving and
-reloading these lets users keep working setups across sessions and share
-reproductions.
+draft prompt, and generation overrides. Saving and reloading these lets users
+keep working setups across sessions and share reproductions.
 
 Stored opaquely as a JSON blob per name so the schema can evolve without
 touching this module.
@@ -18,21 +17,25 @@ from threading import Lock
 from typing import Any
 
 
-class ScenarioLibrary:
-    def __init__(self, path: Path):
+class SnapshotLibrary:
+    def __init__(self, path: Path, *, legacy_path: Path | None = None):
         self.path = path
         self._lock = Lock()
         self._entries: dict[str, dict[str, Any]] = {}
-        self._load()
+        self._load(legacy_path)
 
-    def _load(self) -> None:
-        if not self.path.exists():
+    def _load(self, legacy_path: Path | None) -> None:
+        source = self.path if self.path.exists() else legacy_path
+        if not source or not source.exists():
             return
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = json.loads(source.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return
-        rows = data.get("scenarios", []) if isinstance(data, dict) else []
+        if isinstance(data, dict):
+            rows = data.get("snapshots") or data.get("scenarios") or []
+        else:
+            rows = []
         for row in rows:
             name = str(row.get("name") or "").strip()
             if not name:
@@ -42,10 +45,12 @@ class ScenarioLibrary:
                 "state": row.get("state") or {},
                 "saved_at": float(row.get("saved_at") or time.time()),
             }
+        if source is not self.path and self._entries:
+            self._persist()
 
     def _persist(self) -> None:
         payload = {
-            "scenarios": sorted(
+            "snapshots": sorted(
                 self._entries.values(), key=lambda r: r["saved_at"], reverse=True
             )
         }

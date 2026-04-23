@@ -14,8 +14,6 @@ from promptlibretto import (
     PromptEngine,
     PromptRoute,
     PromptRouter,
-    RecentOutputMemory,
-    RunHistory,
     section,
 )
 from promptlibretto.providers.base import ProviderRequest
@@ -29,8 +27,6 @@ def make_engine(
     default_route: str = "default",
     base: str = "",
     middlewares: Optional[list] = None,
-    recent: Optional[RecentOutputMemory] = None,
-    history: Optional[RunHistory] = None,
 ) -> PromptEngine:
     cfg = config or GenerationConfig(provider="mock", model="m", max_tokens=64)
     store = ContextStore(base=base)
@@ -53,8 +49,6 @@ def make_engine(
         router=router,
         provider=provider,
         output_processor=OutputProcessor(),
-        recent_memory=recent,
-        run_history=history,
         middlewares=middlewares,
     )
 

@@ -151,6 +151,7 @@ class OllamaProvider(ProviderAdapter):
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         text = "".join(buffer)
         data = final_data or {}
+        timings = data.get("timings") if isinstance(data.get("timings"), dict) else {}
         yield ProviderStreamChunk(
             text="",
             done=True,
@@ -160,8 +161,14 @@ class OllamaProvider(ProviderAdapter):
                 timing=ProviderTiming(
                     total_ms=_ns_to_ms(data.get("total_duration")) or elapsed_ms,
                     load_ms=_ns_to_ms(data.get("load_duration")),
-                    prompt_eval_ms=_ns_to_ms(data.get("prompt_eval_duration")),
-                    eval_ms=_ns_to_ms(data.get("eval_duration")),
+                    prompt_eval_ms=(
+                        _ns_to_ms(data.get("prompt_eval_duration"))
+                        or timings.get("prompt_ms")
+                    ),
+                    eval_ms=(
+                        _ns_to_ms(data.get("eval_duration"))
+                        or timings.get("predicted_ms")
+                    ),
                 ),
                 raw=data,
             ),
@@ -229,6 +236,17 @@ class OllamaProvider(ProviderAdapter):
                 completion_tokens=completion,
                 total_tokens=_safe_sum(prompt, completion),
             )
+        # llama.cpp-server SSE: counts under `timings.prompt_n` / `timings.predicted_n`
+        timings = data.get("timings")
+        if isinstance(timings, dict):
+            prompt = timings.get("prompt_n")
+            completion = timings.get("predicted_n")
+            if prompt is not None or completion is not None:
+                return ProviderUsage(
+                    prompt_tokens=prompt,
+                    completion_tokens=completion,
+                    total_tokens=_safe_sum(prompt, completion),
+                )
         return ProviderUsage()
 
 
@@ -248,10 +266,15 @@ def _safe_sum(a: Optional[int], b: Optional[int]) -> Optional[int]:
 
 
 def _has_usage(data: dict) -> bool:
-    return (
+    if (
         isinstance(data.get("usage"), dict)
         or data.get("prompt_eval_count") is not None
         or data.get("eval_count") is not None
         or data.get("tokens_evaluated") is not None
         or data.get("tokens_predicted") is not None
+    ):
+        return True
+    timings = data.get("timings")
+    return isinstance(timings, dict) and (
+        timings.get("prompt_n") is not None or timings.get("predicted_n") is not None
     )

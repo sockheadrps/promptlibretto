@@ -19,7 +19,6 @@ class ProviderRequest:
     top_p: Optional[float] = None
     top_k: Optional[int] = None
     repeat_penalty: Optional[float] = None
-    stream: bool = False
     timeout_ms: int = 60_000
 
 

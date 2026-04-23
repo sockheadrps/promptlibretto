@@ -1,10 +1,9 @@
 from .config import GenerationConfig
 from .random_source import RandomSource, DefaultRandom, SeededRandom
-from .context.overlay import ContextOverlay, ContextSnapshot, make_turn_overlay
-from .context.template import TemplateRenderer, TemplateField, TemplateRenderOptions
+from .context.overlay import ContextOverlay, ContextSnapshot, make_turn_overlay, make_runtime_overlay
 from .context.store import ContextStore
 from .assets.registry import PromptAssetRegistry, InjectionTemplate, PromptInjection
-from .routing.route import PromptRoute
+from .routing.route import CUSTOM_ROUTE_KIND, PromptRoute, RouteSpec
 from .routing.router import PromptRouter
 from .builders.builder import PromptPackage, GenerationRequest
 from .builders.composite import CompositeBuilder, section, join_sections
@@ -19,12 +18,10 @@ from .providers.base import (
 from .providers.ollama import OllamaProvider
 from .providers.mock import MockProvider
 from .output.processor import OutputProcessor, ValidationResult, OutputPolicy
-from .output.memory import RecentOutputMemory
-from .output.history import RunHistory, RunRecord
 from .runtime.trace import GenerationTrace, GenerationAttempt
 from .runtime.engine import PromptEngine, GenerationResult, GenerationChunk
 from .runtime.middleware import apply_before, apply_after
-from .export import export_python
+from .serialize import export_json, load_engine
 
 __all__ = [
     "GenerationConfig",
@@ -34,15 +31,15 @@ __all__ = [
     "ContextOverlay",
     "ContextSnapshot",
     "make_turn_overlay",
-    "TemplateRenderer",
-    "TemplateField",
-    "TemplateRenderOptions",
+    "make_runtime_overlay",
     "ContextStore",
     "PromptAssetRegistry",
     "InjectionTemplate",
     "PromptInjection",
     "PromptRoute",
     "PromptRouter",
+    "RouteSpec",
+    "CUSTOM_ROUTE_KIND",
     "PromptPackage",
     "GenerationRequest",
     "CompositeBuilder",
@@ -59,9 +56,6 @@ __all__ = [
     "OutputProcessor",
     "ValidationResult",
     "OutputPolicy",
-    "RecentOutputMemory",
-    "RunHistory",
-    "RunRecord",
     "GenerationTrace",
     "GenerationAttempt",
     "PromptEngine",
@@ -69,5 +63,6 @@ __all__ = [
     "GenerationChunk",
     "apply_before",
     "apply_after",
-    "export_python",
+    "export_json",
+    "load_engine",
 ]
