@@ -1,0 +1,977 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>promptlibretto studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-brand">
+      <h1>promptlibretto</h1>
+      <nav class="header-page-nav">
+        <span class="header-page-link active">Studio</span>
+        <a href="/ensemble" class="header-page-link">Ensemble</a>
+      </nav>
+      <button id="snapshots-btn" type="button" class="header-nav-btn">Load Snapshot</button>
+      <span id="snapshot-indicator" class="snapshot-indicator" hidden>
+        <span id="snapshot-name" class="snapshot-name"></span>
+        <span id="snapshot-dirty" class="snapshot-dirty" hidden>unsaved</span>
+        <button id="snapshot-quick-save" type="button" class="snapshot-save-btn" hidden title="Save changes to this snapshot">Save</button>
+      </span>
+    </div>
+    <div class="header-meta">
+      <button id="about-btn" type="button" class="header-nav-btn">About</button>
+      <button id="example-btn" type="button" class="header-nav-btn header-nav-accent">View Examples</button>
+      <span class="header-nav-sep"></span>
+      <span id="meta-provider" class="meta-chip">provider: …</span>
+      <span id="meta-model" class="meta-chip">model: …</span>
+      <span id="meta-url" class="meta-chip">url: …</span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- LEFT: composition + state as tabs -->
+    <section class="panel controls-panel">
+      <nav class="tabs" role="tablist">
+        <div class="tab active" role="tab" tabindex="0" data-tab="compose" aria-selected="true">
+          <span class="tab-label">Compose</span>
+          <button class="help" type="button" data-help="compose">?</button>
+        </div>
+        <div class="tab" role="tab" tabindex="0" data-tab="state" aria-selected="false">
+          <span class="tab-label">Tuning</span>
+          <button class="help" type="button" data-help="state">?</button>
+        </div>
+      </nav>
+
+      <div class="tab-panel" data-tab="compose" role="tabpanel">
+        <label class="field">
+          <span class="field-label">Base Context <button class="help" type="button" data-help="base">?</button></span>
+          <textarea id="base-text" rows="4" placeholder="Long-lived facts and framing — sets the stage for every route…"></textarea>
+          <div class="base-actions">
+            <button id="save-base" type="button" class="ghost-action">Save Base</button>
+            <button id="save-base-as" type="button" class="ghost-action">Save As…</button>
+            <button id="load-base" type="button" class="ghost-action">Load…</button>
+          </div>
+        </label>
+
+        <div class="field">
+          <span class="field-label">Route <button class="help" type="button" data-help="route">?</button></span>
+          <div class="route-controls">
+            <select id="route-select"></select>
+            <button id="edit-prompt-btn" type="button" class="ghost-action small" title="Edit the resolved prompt for the next run (not persisted)">Edit prompt</button>
+            <button id="new-custom-route-btn" type="button" class="ghost-action small" title="Author a saveable custom route">+ Custom</button>
+            <button id="edit-custom-route-btn" type="button" class="ghost-action small" hidden title="Edit this custom route">Edit route</button>
+            <button id="delete-custom-route-btn" type="button" class="ghost-action small" hidden title="Delete this custom route">Delete</button>
+          </div>
+          <div id="route-desc-wrap" class="route-detail" hidden>
+            <span class="route-detail-label">Description</span>
+            <span id="route-desc" class="route-detail-value"></span>
+          </div>
+          <fieldset id="route-policy-fieldset" class="route-policy-fieldset" hidden>
+            <legend class="field-label">Output Policy</legend>
+            <div id="route-policy-list" class="route-policy-list"></div>
+          </fieldset>
+          <small class="muted">Base context and User Input below are still used — the route decides how to weave them in.</small>
+          <small id="section-override-banner" class="muted" hidden style="color:var(--warn)">
+            ⚠ Custom prompt active for next run — <a href="#" id="clear-section-override">clear</a>
+          </small>
+        </div>
+
+        <div class="field">
+          <span class="field-label">User Input <button class="help" type="button" data-help="input">?</button></span>
+          <!-- Container for dynamic inputs based on route schema -->
+          <div id="input-container">
+            <!-- Default generic input -->
+            <div id="input-group-default">
+              <textarea id="input-text" rows="6" placeholder="Type the request, question, brief, or source text…"></textarea>
+            </div>
+            <!-- Specialized input groups will be dynamically generated here by JS -->
+            <!-- Example for a Q&A route -->
+            <div id="input-group-qa" class="input-group-special" hidden>
+                <label><span>Question</span><input id="qa-question" type="text" placeholder="Question asked" /></label>
+                <label><span>Asker</span><input id="qa-asker" type="text" placeholder="Who asked (e.g., username)" /></label>
+                <label><span>Answer</span><input id="qa-answer" type="text" placeholder="Correct answer" /></label>
+                <label><span>Tone</span>
+                  <select id="qa-tone">
+                      <option value="normal">Normal</option>
+                      <option value="roast">Roast</option>
+                      <option value="nice">Nice</option>
+                  </select>
+                </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-tab="state" role="tabpanel" hidden>
+        <div class="subhead">
+          <span>Overlays</span>
+          <button class="help" type="button" data-help="overlays">?</button>
+          <span class="spacer"></span>
+          <input id="suggest-count" type="number" min="1" max="20" step="1" value="5" class="inline-num" title="how many overlays to suggest" />
+          <button id="suggest-overlays" type="button" class="ghost-action small" title="Ask the model to suggest overlays based on the current base context">✨ Suggest</button>
+        </div>
+        <div id="overlay-suggestions" class="overlay-suggestions" hidden></div>
+        <div id="overlay-list" class="overlay-list"></div>
+        <div class="overlay-form">
+          <input id="overlay-name" placeholder="overlay name" />
+          <input id="overlay-priority" type="number" placeholder="priority" value="10" hidden />
+          <textarea id="overlay-text" rows="2" placeholder="overlay text…"></textarea>
+          <select id="overlay-runtime" title="In an exported run() wrapper, runtime slots become function arguments. Required raises ValueError if empty.">
+            <option value="">fixed (set at export time)</option>
+            <option value="optional">runtime — optional</option>
+            <option value="required">runtime — required</option>
+          </select>
+          <input id="overlay-template" placeholder="template, e.g. The category is {name} being discussed" hidden title="Wrap the runtime value in surrounding text. Use {name} where the value should be inserted." />
+          <div class="actions">
+            <button id="add-overlay" type="button">Add / Replace</button>
+            <button id="clear-overlays" type="button" class="ghost">Clear All</button>
+          </div>
+        </div>
+
+        <fieldset class="field">
+          <legend class="field-label">Injections <button class="help" type="button" data-help="injections">?</button></legend>
+          <div id="injection-groups" class="injection-groups">
+             <!-- This will be populated by JS with checkboxes for active injections -->
+          </div>
+           <div class="actions">
+                <button id="new-injection-btn" type="button" class="ghost-action small">+ New Injection</button>
+                <button id="manage-injections-btn" type="button" class="ghost-action small">Manage</button>
+            </div>
+          <small class="muted">Active injections modify the selected route. Create reusable prompt fragments, examples, or config overrides.</small>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend class="field-label">Personas & Nudges <button class="help" type="button" data-help="personas">?</button></legend>
+          <div id="persona-list" class="overlay-list" style="max-height: 150px; overflow-y: auto;">
+            <!-- Personas would be dynamically added here -->
+          </div>
+          <div class="persona-form">
+            <input id="persona-text" placeholder="Persona, e.g., 'You just tuned in…'" />
+            <textarea id="persona-nudges" rows="2" placeholder="Compatible nudges (one per line)"></textarea>
+            <div class="actions">
+              <button id="add-persona" type="button">Add / Update Persona</button>
+            </div>
+          </div>
+        </fieldset>
+        
+        <fieldset class="field">
+            <legend class="field-label">Few-shot Example Pools <button class="help" type="button" data-help="examples">?</button></legend>
+            <div class="example-pool-controls">
+                <select id="example-pool-select">
+                    <option value="normal">NORMAL_EXAMPLES</option>
+                    <option value="positive">POSITIVE_EXAMPLES</option>
+                    <option value="negative">NEGATIVE_EXAMPLES</option>
+                    <option value="qa_roast_tone">QA_ROAST_TONE</option>
+                    <option value="qa_roast_answer">QA_ROAST_ANSWER</option>
+                    <option value="qa_nice_tone">QA_NICE_TONE</option>
+                    <option value="qa_nice_answer">QA_NICE_ANSWER</option>
+                </select>
+            </div>
+            <textarea id="example-pool-text" rows="5" placeholder="Examples (one per line)"></textarea>
+            <div class="actions">
+                <button id="load-examples" type="button" class="ghost-action">Load</button>
+                <button id="save-examples" type="button">Save to Pool</button>
+            </div>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend class="field-label">Generation Overrides <button class="help" type="button" data-help="overrides">?</button></legend>
+          <div class="grid-2">
+            <label><span>temperature</span><input id="cfg-temperature" type="number" step="0.05" min="0" max="2" /></label>
+            <label><span>top_p</span><input id="cfg-top_p" type="number" step="0.05" min="0" max="1" /></label>
+            <label><span>top_k</span><input id="cfg-top_k" type="number" step="1" min="0" /></label>
+            <label><span>max_tokens</span><input id="cfg-max_tokens" type="number" step="16" min="16" /></label>
+            <label><span>repeat_penalty</span><input id="cfg-repeat_penalty" type="number" step="0.05" min="0" /></label>
+            <label><span>retries</span><input id="cfg-retries" type="number" step="1" min="0" max="5" /></label>
+            <label><span>max_prompt_chars</span><input id="cfg-max_prompt_chars" type="number" step="100" min="0" placeholder="off" title="cap the outgoing prompt; drops lowest-priority overlays until it fits" /></label>
+          </div>
+        </fieldset>
+      </div>
+    </section>
+
+    <!-- RIGHT: output -->
+    <section class="panel output-panel">
+      <header class="panel-header">
+        <div class="panel-header-row">
+          <span class="section-title">Output</span>
+          <button class="help" type="button" data-help="output">?</button>
+          <span class="spacer"></span>
+          <div class="gen-controls">
+            <label class="switch" title="stream tokens as they arrive" hidden>
+              <input id="stream-toggle" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+              <span class="switch-label">stream</span>
+            </label>
+            <label class="switch" title="toggle debug trace" hidden>
+              <input id="debug-toggle" type="checkbox" checked />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+              <span class="switch-label">debug</span>
+            </label>
+            <span class="gen-controls-sep" hidden></span>
+            <button id="export-btn" type="button" class="action-btn action-btn--secondary" title="Export the current route + context as JSON" hidden>Export JSON</button>
+            <button id="pregenerate-btn" type="button" class="action-btn action-btn--secondary" title="Resolve the prompt into draggable sections for review">Pre-generate</button>
+            <button id="generate-btn" type="button" class="action-btn action-btn--primary" title="Send the prompt to the model">Generate</button>
+          </div>
+        </div>
+      </header>
+      <nav class="output-tabs" role="tablist">
+        <div class="output-tab" data-output-tab="output" role="tab" aria-selected="true">Output</div>
+        <div class="output-tab" data-output-tab="stage" role="tab" aria-selected="false">Pre-generate <span id="stage-tab-badge" class="muted" hidden>· staged</span></div>
+      </nav>
+      <div class="output-panels">
+        <div class="output-panel-body" data-output-tab="output">
+          <div class="output-meta">
+            <span id="out-route" class="pill">route: —</span>
+            <span id="out-accepted" class="pill">—</span>
+            <span id="out-timing" class="pill">—</span>
+            <span id="out-usage" class="pill">—</span>
+            <span class="spacer"></span>
+            <div class="view-toggle" role="group" aria-label="Output view">
+              <button id="view-rendered" type="button" class="toggle active">rendered</button>
+              <button id="view-raw" type="button" class="toggle">raw</button>
+            </div>
+          </div>
+          <div id="reject-banner" class="reject-banner" hidden></div>
+          <div id="output-rendered" class="output-text markdown">(no generation yet)</div>
+          <textarea id="output-raw" class="output-text output-raw-edit" hidden readonly>(no generation yet)</textarea>
+        </div>
+        <div class="output-panel-body" data-output-tab="stage" hidden>
+          <div id="prompt-stage" class="prompt-stage">
+            <div class="stage-banner">
+              <span class="muted">Drag sections to reorder. Click <em>Generate</em> to send this exact order.</span>
+              <span class="spacer"></span>
+              <button id="stage-reset" type="button" class="ghost small" title="Discard ordering and go back to the live prompt">Reset</button>
+            </div>
+            <div class="stage-empty-root muted" hidden>Click <strong>Pre-generate</strong> to resolve the current prompt into draggable sections.</div>
+            <div class="stage-group" data-group="system">
+              <h4>System</h4>
+              <div class="stage-list" data-list="system"></div>
+              <div class="stage-empty muted" data-empty="system">(no system sections)</div>
+            </div>
+            <div class="stage-group" data-group="user">
+              <h4>User</h4>
+              <div class="stage-list" data-list="user"></div>
+              <div class="stage-empty muted" data-empty="user">(no user sections)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="iterate-strip">
+        <button id="save-response-overlay" type="button" class="ghost-action" disabled title="Save the latest model output as a reusable overlay">Save response as overlay</button>
+      </div>
+    </section>
+
+    <!-- FAR RIGHT: debug trace -->
+    <section class="panel debug-panel">
+      <header class="panel-header">
+        <span class="section-title">Debug Trace</span>
+        <button class="help" type="button" data-help="trace">?</button>
+      </header>
+      <div class="debug-body">
+        <h4>System Prompt</h4>
+        <pre id="trace-system" class="trace"></pre>
+        <h4>User Prompt</h4>
+        <pre id="trace-user" class="trace"></pre>
+        <h4>Active Context</h4>
+        <pre id="trace-active" class="trace"></pre>
+        <h4>Attempts</h4>
+        <pre id="trace-attempts" class="trace"></pre>
+        <h4>Usage &amp; Timing</h4>
+        <pre id="trace-usage" class="trace"></pre>
+        <h4>Resolved Config</h4>
+        <pre id="trace-config" class="trace"></pre>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modals -->
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header>
+        <h3 id="modal-title">Help</h3>
+        <button class="modal-close" type="button" data-close aria-label="Close">×</button>
+      </header>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="edit-prompt-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-edit-prompt></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="edit-prompt-title">
+      <header>
+        <h3 id="edit-prompt-title">Edit system prompt (next run only)</h3>
+        <button class="modal-close" type="button" data-close-edit-prompt aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="muted">Replaces the route's built system prompt for the next generation only. The user prompt still comes from your input + the route's user_sections. Nothing is written back to the route.</p>
+        <label class="field">
+          <span class="field-label">System prompt</span>
+          <textarea id="edit-system" rows="14" placeholder="(empty — no system prompt)"></textarea>
+        </label>
+        <div class="actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+          <button id="edit-prompt-reset" type="button" class="ghost-action">Reload from route</button>
+          <button id="edit-prompt-clear" type="button" class="ghost-action">Clear override</button>
+          <button id="edit-prompt-apply" type="button" class="primary-action">Use for next run</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="custom-route-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-custom-route></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="custom-route-title">
+      <header>
+        <h3 id="custom-route-title">Custom route</h3>
+        <button class="modal-close" type="button" data-close-custom-route aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="muted">Saveable, editable route. Custom routes are explicit-select only. Use <code>{input}</code> to inject the default user request; other <code>{name}</code> placeholders pull from runtime schema fields.</p>
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input id="cr-name" type="text" placeholder="my_route" />
+        </label>
+        <label class="field">
+          <span class="field-label">Description</span>
+          <input id="cr-description" type="text" placeholder="What this route is for" />
+        </label>
+        <fieldset class="field">
+          <legend class="field-label">Runtime Schema <small>(name: type(val1,val2) — one per line)</small></legend>
+          <textarea id="cr-schema" rows="3" placeholder="e.g.,&#10;question: required&#10;tone: optional(roast, nice)"></textarea>
+        </fieldset>
+        <label class="field">
+          <span class="field-label">System prompt</span>
+          <textarea id="cr-system" rows="6" placeholder="(optional)"></textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">User template</span>
+          <textarea id="cr-user-template" rows="6" placeholder="{input}"></textarea>
+        </label>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+          <label class="field"><span class="field-label">Priority</span><input id="cr-priority" type="number" step="1" value="0" /></label>
+          <label class="field"><span class="field-label">Sampling overrides (JSON)</span><input id="cr-overrides" type="text" placeholder='{"temperature":0.4}' /></label>
+        </div>
+        <fieldset class="field policy-editor" id="cr-policy-editor">
+          <legend class="field-label">Output Policy</legend>
+          <div class="policy-row">
+            <label>
+              <span class="policy-label">Min length</span>
+              <input id="pol-min-length" type="number" min="0" placeholder="—" />
+            </label>
+            <label>
+              <span class="policy-label">Max length</span>
+              <input id="pol-max-length" type="number" min="0" placeholder="—" />
+            </label>
+          </div>
+          <div class="policy-row">
+            <label class="policy-check">
+              <input id="pol-collapse-ws" type="checkbox" />
+              <span class="policy-label">Collapse whitespace</span>
+            </label>
+          </div>
+          <label class="policy-field">
+            <span class="policy-label">Append suffix</span>
+            <input id="pol-append-suffix" type="text" placeholder="—" />
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Strip prefixes <small class="muted">(one per line)</small></span>
+            <textarea id="pol-strip-prefixes" rows="2" placeholder="e.g.&#10;Sure, here is"></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Strip patterns <small class="muted">(regex, one per line)</small></span>
+            <textarea id="pol-strip-patterns" rows="2" placeholder="e.g.&#10;```[\s\S]*?```"></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Required patterns <small class="muted">(regex, one per line — output must match all)</small></span>
+            <textarea id="pol-require-patterns" rows="2" placeholder="e.g.&#10;^\d+\."></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Forbidden substrings <small class="muted">(one per line)</small></span>
+            <textarea id="pol-forbidden-subs" rows="2" placeholder='e.g.&#10;username:&#10;"'></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Forbidden patterns <small class="muted">(regex, one per line)</small></span>
+            <textarea id="pol-forbidden-pats" rows="2" placeholder="e.g.&#10;(?i)as an ai"></textarea>
+          </label>
+        </fieldset>
+        <input id="cr-output-policy" type="hidden" />
+        <small id="cr-error" class="muted" style="color:var(--warn)" hidden></small>
+        <div class="actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+          <button id="cr-delete" type="button" class="ghost-action" hidden>Delete</button>
+          <button data-close-custom-route type="button" class="ghost-action">Cancel</button>
+          <button id="cr-save" type="button" class="primary-action">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="injection-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-injection></div>
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <header>
+        <h3 id="injection-title">Injection Editor</h3>
+        <button class="modal-close" type="button" data-close-injection>×</button>
+      </header>
+      <div class="modal-body">
+        <label class="field"><span>Name</span><input id="inj-name" type="text" placeholder="e.g., positive_reaction_examples"></label>
+        <label class="field"><span>System Prompt Addon</span><textarea id="inj-system" rows="4" placeholder="Text to add to the system prompt..."></textarea></label>
+        <label class="field"><span>User Prompt Addon</span><textarea id="inj-user" rows="4" placeholder="Text to add to the user prompt..."></textarea></label>
+        <label class="field"><span>Sampling Overrides (JSON)</span><input id="inj-overrides" type="text" placeholder='{"temperature": 0.8}'></label>
+        <div class="actions">
+          <button id="inj-delete" type="button" class="ghost-action" style="margin-right:auto" hidden>Delete</button>
+          <button id="inj-save" type="button" class="primary-action">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="export-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-export></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
+      <header>
+        <h3 id="export-modal-title">Export as JSON</h3>
+        <button class="modal-close" type="button" data-close-export aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="muted">Load with <code>promptlibretto.load_engine("name.json")</code>. Copy, download <code>.json</code>, or save by name to <code id="export-dir">./promptlibretto_exports/</code> (the directory where you launched the studio). Override with <code>PROMPTLIBRETTO_EXPORT_DIR</code>.</p>
+        <pre id="export-code" class="trace" style="max-height:50vh;overflow:auto"></pre>
+        <div class="actions" style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+          <input id="export-name" placeholder="export name (e.g. analyst_v1)" style="flex:1;min-width:180px" />
+          <button id="export-save" type="button" class="ghost-action">Save to disk</button>
+          <button id="export-download" type="button" class="ghost-action">Download</button>
+          <span class="spacer"></span>
+          <button id="export-copy" type="button" class="primary-action">Copy</button>
+        </div>
+        <div class="subhead" style="margin-top:12px"><span>Saved exports</span></div>
+        <div id="export-saved-list" class="run-history"></div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="about-modal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-about></div>
+      <div class="modal-card modal-card--tour" role="dialog" aria-modal="true" aria-labelledby="about-title">
+        <header>
+          <h3 id="about-title">How promptlibretto works</h3>
+          <button class="modal-close" type="button" data-close-about aria-label="Close">×</button>
+        </header>
+        <div class="modal-body about-slideshow">
+          <div class="slide-diagram">
+            <span class="sd-box sd-base" data-step="1">Base Context</span>
+            <span class="sd-plus" data-step="1">+</span>
+            <span class="sd-box sd-route" data-step="1">Route</span>
+            <span class="sd-plus" data-step="2">+</span>
+            <span class="sd-box sd-overlay" data-step="2">Overlays</span>
+            <span class="sd-plus" data-step="3">+</span>
+            <span class="sd-box sd-inj" data-step="3">Injections</span>
+            <span class="sd-arrow" data-step="4">→</span>
+            <span class="sd-box sd-out" data-step="4">Final Prompt</span>
+            <span class="sd-sep" data-step="5"></span>
+            <span class="sd-box sd-secondary" data-step="5">Pre-Generate</span>
+            <span class="sd-box sd-secondary" data-step="5">Export</span>
+            <span class="sd-box sd-secondary" data-step="6">Ensemble</span>
+          </div>
+  
+          <div class="about-columns">
+            <!-- Left: slide text -->
+            <div class="about-content">
+              <div class="about-slide active" data-slide="0">
+                <h4>The Big Picture</h4>
+                <p>promptlibretto assembles prompts from composable pieces — like a musical score built from parts.</p>
+                <p>Instead of one monolithic prompt string, you define <strong>routes</strong>, <strong>context layers</strong>, and <strong>injections</strong> that snap together at generation time.</p>
+                <p>Once you've tuned and tested a configuration in the studio, <strong>export</strong> it as JSON. In your project, a single call loads the full prompt pipeline — context, route, injections, sampling, and output policy — ready to run:</p>
+                <pre class="about-code">from promptlibretto import load_engine
+  
+  eng = load_engine("analyst_v2.json")
+  result = eng.run(input="How do I get my first 10 paying users?")</pre>
+                <p>Step through to see each piece add to the prompt on the right →</p>
+              </div>
+  
+              <div class="about-slide" data-slide="1">
+                <h4>Base Context &amp; Route</h4>
+                <p><strong>Base Context</strong> is your long-lived framing — persona, constraints, stable facts. It appears in every prompt.</p>
+                <p>A <strong>route</strong> is a named strategy for one kind of prompt. It bundles a composition recipe, sampling defaults, and an output policy. A route can define a <strong>runtime schema</strong> to create structured inputs.</p>
+              </div>
+  
+              <div class="about-slide" data-slide="2">
+                <h4>Overlays</h4>
+                <p><strong>Overlays</strong> are temporary layers stacked on top of the base context — transient facts, signals, or emphasis. Each has a name and priority (higher = appears first). Some are fixed, others are filled at runtime via templates.</p>
+              </div>
+  
+              <div class="about-slide" data-slide="3">
+                <h4>Injections</h4>
+                <p><strong>Injections</strong> are reusable fragments that <em>modify</em> the active route — adding instruction text, few-shot examples, and overriding sampling or output policy. Use them to represent conditional logic or stylistic variants.</p>
+              </div>
+  
+              <div class="about-slide" data-slide="4">
+                <h4>Generation &amp; Output</h4>
+                <p>When you hit <strong>Generate</strong>, the engine assembles all the active layers, sends the final prompt to the model, and validates the response. Enable <strong>Debug Trace</strong> to inspect the exact prompts and attempts.</p>
+              </div>
+  
+              <div class="about-slide" data-slide="5">
+                <h4>Pre-Generate &amp; Export</h4>
+                <p><strong>Pre-Generate</strong> previews assembled sections before sending. <strong>Export</strong> saves the entire configuration as JSON, loadable with <code>promptlibretto.load_engine()</code>. Runtime overlays and schema fields become function arguments.</p>
+              </div>
+  
+              <div class="about-slide" data-slide="6">
+                <h4>Ensemble</h4>
+                <p>The <strong>Ensemble</strong> page fans out the same input across multiple saved exports, each running independently with its own route, context, and config. Compare results side-by-side to find the best model for the job.</p>
+              </div>
+            </div>
+  
+            <!-- Right: progressive prompt preview -->
+            <div class="tour-prompt">
+              <div class="tour-prompt-title">Prompt Preview</div>
+              <div class="tour-prompt-scroll">
+                <div class="tour-block-divider" data-show-at="1">── system prompt ──</div>
+                <div class="tour-block" data-show-at="1"><div class="tour-block-label sd-route">route · system frame</div><div class="tour-block-text">You are a precise analyst. Prefer structure, evidence, and named tradeoffs.</div></div>
+                <div class="tour-block-divider" data-show-at="1">── user prompt ──</div>
+                <div class="tour-block" data-show-at="1"><div class="tour-block-label sd-base">base context</div><div class="tour-block-text">You are a thinking partner for a solo founder. Generate a range of concrete options, not pep talks.</div></div>
+                <div class="tour-block" data-show-at="2"><div class="tour-block-label sd-overlay">overlay · constraints</div><div class="tour-block-text">Monthly burn must stay under $300. Founder is solo and cannot hire or delegate.</div></div>
+                <div class="tour-block" data-show-at="2"><div class="tour-block-label sd-overlay">overlay · industry <span class="tour-runtime-tag">runtime</span></div><div class="tour-block-text"><span class="tour-template-hint">template: The user's industry is {}</span>→ The user's industry is SaaS</div></div>
+                <div class="tour-block" data-show-at="3"><div class="tour-block-label sd-inj">injection · tighten</div><div class="tour-block-text">Compress aggressively. Aim for the shortest answer that is still complete.</div></div>
+                <div class="tour-block" data-show-at="1"><div class="tour-block-label sd-route">route · user input</div><div class="tour-block-text">How do I get my first 10 paying users?</div></div>
+                <div class="tour-block-divider" data-show-at="4">── output ──</div>
+                <div class="tour-block tour-block--output" data-show-at="4"><div class="tour-block-label sd-out">model response</div><div class="tour-block-text">**Acquire** 5 users by manually onboarding high-value targets. **Convert** via immediate payment after setup.</div></div>
+                <div class="tour-prompt-empty" data-hide-at="1">Step through the slides to watch the prompt build up layer by layer.</div>
+              </div>
+            </div>
+          </div>
+  
+          <div class="about-nav">
+            <button id="about-prev" type="button" class="ghost" disabled>← Prev</button>
+            <div class="about-dots"></div>
+            <button id="about-next" type="button" class="ghost">Next →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
+
+
+document.addEventListener('DOMContentLoaded', () => {
+  // --- STATE MANAGEMENT ---
+  let state = {
+    baseContext: '',
+    selectedRoute: 'auto-route',
+    overlays: [], // { name, text, priority, runtime, template }
+    activeInjections: new Set(),
+    generationOverrides: {},
+    userInput: {}, // Will hold values from dynamic inputs
+    // Data loaded from backend
+    routes: [],
+    injections: [],
+    personas: [],
+    examplePools: {},
+  };
+
+  // --- DOM ELEMENT REFERENCES ---
+  const $ = (selector) => document.querySelector(selector);
+  const $$ = (selector) => document.querySelectorAll(selector);
+
+  // Tabs
+  const composeTab = $('[data-tab="compose"]');
+  const tuningTab = $('[data-tab="state"]');
+  const composePanel = $('.tab-panel[data-tab="compose"]');
+  const tuningPanel = $('.tab-panel[data-tab="state"]');
+  const outputTab = $('[data-output-tab="output"]');
+  const stageTab = $('[data-output-tab="stage"]');
+  const outputPanel = $('.output-panel-body[data-output-tab="output"]');
+  const stagePanel = $('.output-panel-body[data-output-tab="stage"]');
+
+  // Main Controls
+  const baseText = $('#base-text');
+  const routeSelect = $('#route-select');
+  const generateBtn = $('#generate-btn');
+  const exportBtn = $('#export-btn');
+  
+  // Input Container
+  const inputContainer = $('#input-container');
+  const defaultInputGroup = $('#input-group-default');
+  const defaultInputText = $('#input-text');
+
+  // Modals
+  const customRouteModal = $('#custom-route-modal');
+  const injectionModal = $('#injection-modal');
+  const aboutModal = $('#about-modal');
+
+  // --- DUMMY API CALLS ---
+  const api = {
+    // GET requests to fetch initial data
+    getRoutes: () => fetch('/api/dummy/routes').then(res => res.json()),
+    getInjections: () => fetch('/api/dummy/injections').then(res => res.json()),
+    getPersonas: () => fetch('/api/dummy/personas').then(res => res.json()),
+    getExamplePools: () => fetch('/api/dummy/example-pools').then(res => res.json()),
+    
+    // POST requests to create/update data
+    saveRoute: (routeData) => fetch('/api/dummy/routes', { method: 'POST', body: JSON.stringify(routeData) }),
+    saveInjection: (injData) => fetch('/api/dummy/injections', { method: 'POST', body: JSON.stringify(injData) }),
+    savePersona: (personaData) => fetch('/api/dummy/personas', { method: 'POST', body: JSON.stringify(personaData) }),
+    saveExamplePool: (poolData) => fetch('/api/dummy/example-pools', { method: 'POST', body: JSON.stringify(poolData) }),
+    
+    // Main generation and export calls
+    generate: (requestPayload) => fetch('/api/dummy/generate', { method: 'POST', body: JSON.stringify(requestPayload) }).then(res => res.json()),
+    export: (exportPayload) => fetch('/api/dummy/export', { method: 'POST', body: JSON.stringify(exportPayload) }).then(res => res.json()),
+  };
+  
+  // --- INITIALIZATION ---
+  const initializeApp = async () => {
+    // Mocking API responses since we don't have a backend
+    mockApiResponses();
+
+    // Fetch all initial data in parallel
+    const [routes, injections, personas, examplePools] = await Promise.all([
+      api.getRoutes(),
+      api.getInjections(),
+      api.getPersonas(),
+      api.getExamplePools(),
+    ]);
+
+    state.routes = routes;
+    state.injections = injections;
+    state.personas = personas;
+    state.examplePools = examplePools;
+
+    // Populate UI with fetched data
+    populateRouteSelect();
+    renderInjections();
+    renderPersonas();
+    
+    // Set up event listeners
+    setupEventListeners();
+
+    console.log('Prompt Studio Initialized with state:', state);
+  };
+
+  // --- UI RENDERING & UPDATES ---
+
+  const populateRouteSelect = () => {
+    routeSelect.innerHTML = '<option value="auto-route">auto-route</option>';
+    state.routes.forEach(route => {
+      const option = document.createElement('option');
+      option.value = route.name;
+      option.textContent = route.name;
+      routeSelect.appendChild(option);
+    });
+  };
+
+  const renderInjections = () => {
+    const container = $('#injection-groups');
+    container.innerHTML = '';
+    state.injections.forEach(inj => {
+        const label = document.createElement('label');
+        label.className = 'switch';
+        label.innerHTML = `
+            <input type="checkbox" data-injection-name="${inj.name}" />
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-label">${inj.name}</span>
+        `;
+        container.appendChild(label);
+    });
+  };
+  
+  const renderPersonas = () => {
+      const list = $('#persona-list');
+      list.innerHTML = '';
+      state.personas.forEach(p => {
+          const div = document.createElement('div');
+          div.className = 'overlay-item'; // Reusing style
+          div.textContent = p.persona;
+          div.onclick = () => {
+              $('#persona-text').value = p.persona;
+              $('#persona-nudges').value = p.nudges.join('\n');
+          };
+          list.appendChild(div);
+      });
+  };
+
+  const updateRouteUI = () => {
+    const routeName = routeSelect.value;
+    const route = state.routes.find(r => r.name === routeName);
+
+    // Hide all special input groups
+    $$('.input-group-special').forEach(el => el.hidden = true);
+    defaultInputGroup.hidden = false;
+    
+    if (!route || !route.schema) {
+      $('#route-desc').textContent = route ? route.description : 'Automatically select the best route.';
+      return;
+    }
+
+    $('#route-desc').textContent = route.description;
+
+    // Show special input group for this route
+    let inputGroup = $(`#input-group-${route.name}`);
+    if (!inputGroup) {
+      inputGroup = document.createElement('div');
+      inputGroup.id = `input-group-${route.name}`;
+      inputGroup.className = 'input-group-special';
+      
+      route.schema.forEach(field => {
+        const label = document.createElement('label');
+        const span = document.createElement('span');
+        span.textContent = field.name;
+        label.appendChild(span);
+        
+        if (field.type === 'select' && field.options) {
+            const select = document.createElement('select');
+            select.dataset.key = field.name;
+            field.options.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt;
+                option.textContent = opt;
+                select.appendChild(option);
+            });
+            label.appendChild(select);
+        } else {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.placeholder = field.name;
+            input.dataset.key = field.name; // To identify which part of state this maps to
+            label.appendChild(input);
+        }
+        inputGroup.appendChild(label);
+      });
+      inputContainer.appendChild(inputGroup);
+    }
+    
+    defaultInputGroup.hidden = true;
+    inputGroup.hidden = false;
+  };
+  
+  // --- EVENT LISTENERS ---
+  const setupEventListeners = () => {
+    // Tab controls
+    composeTab.addEventListener('click', () => {
+      composeTab.classList.add('active');
+      tuningTab.classList.remove('active');
+      composePanel.hidden = false;
+      tuningPanel.hidden = true;
+    });
+    tuningTab.addEventListener('click', () => {
+      tuningTab.classList.add('active');
+      composeTab.classList.remove('active');
+      tuningPanel.hidden = false;
+      composePanel.hidden = true;
+    });
+    outputTab.addEventListener('click', () => {
+        outputTab.classList.add('active');
+        stageTab.classList.remove('active');
+        outputPanel.hidden = false;
+        stagePanel.hidden = true;
+    });
+    stageTab.addEventListener('click', () => {
+        stageTab.classList.add('active');
+        outputTab.classList.remove('active');
+        stagePanel.hidden = false;
+        outputPanel.hidden = true;
+    });
+
+    // Main controls
+    routeSelect.addEventListener('change', updateRouteUI);
+    generateBtn.addEventListener('click', handleGenerate);
+
+    // Modal Triggers
+    $('#new-custom-route-btn').addEventListener('click', () => customRouteModal.hidden = false);
+    $('[data-close-custom-route]').addEventListener('click', () => customRouteModal.hidden = true);
+    $('#new-injection-btn').addEventListener('click', () => injectionModal.hidden = false);
+    $('[data-close-injection]').addEventListener('click', () => injectionModal.hidden = true);
+    $('#about-btn').addEventListener('click', () => aboutModal.hidden = false);
+    $('[data-close-about]').addEventListener('click', () => aboutModal.hidden = true);
+    
+    // State change listeners
+    baseText.addEventListener('input', (e) => state.baseContext = e.target.value);
+    $('#injection-groups').addEventListener('change', (e) => {
+        if (e.target.type === 'checkbox') {
+            const name = e.target.dataset.injectionName;
+            if (e.target.checked) {
+                state.activeInjections.add(name);
+            } else {
+                state.activeInjections.delete(name);
+            }
+        }
+    });
+
+    // Persona Management
+    $('#add-persona').addEventListener('click', async () => {
+        const persona = {
+            persona: $('#persona-text').value,
+            nudges: $('#persona-nudges').value.split('\n').filter(n => n.trim() !== '')
+        };
+        if (!persona.persona) return alert('Persona text cannot be empty.');
+
+        await api.savePersona(persona);
+        state.personas = await api.getPersonas(); // Re-fetch
+        renderPersonas();
+        alert('Persona saved!');
+    });
+
+    // Example Pool Management
+    $('#load-examples').addEventListener('click', () => {
+        const poolName = $('#example-pool-select').value;
+        const examples = state.examplePools[poolName] || [];
+        $('#example-pool-text').value = examples.join('\n');
+    });
+
+    $('#save-examples').addEventListener('click', async () => {
+        const poolName = $('#example-pool-select').value;
+        const examples = $('#example-pool-text').value.split('\n').filter(e => e.trim() !== '');
+        
+        await api.saveExamplePool({ poolName, examples });
+        state.examplePools[poolName] = examples;
+        alert(`Example pool '${poolName}' saved!`);
+    });
+  };
+  
+  // --- ACTION HANDLERS ---
+  const handleGenerate = async () => {
+    // 1. Collect all user inputs
+    const userInput = {};
+    const routeName = routeSelect.value;
+    const route = state.routes.find(r => r.name === routeName);
+
+    if (route && route.schema) {
+        $$(`#input-group-${routeName} [data-key]`).forEach(input => {
+            userInput[input.dataset.key] = input.value;
+        });
+    } else {
+        userInput.input = defaultInputText.value;
+    }
+
+    // 2. Assemble the request payload
+    const requestPayload = {
+      base_context: state.baseContext,
+      route: routeName,
+      injections: Array.from(state.activeInjections),
+      // overlays would be collected here
+      user_input: userInput,
+      // generation_overrides would be collected here
+    };
+
+    // 3. Show request in debug trace
+    $('#trace-system').textContent = '...sending...';
+    $('#trace-user').textContent = JSON.stringify(requestPayload, null, 2);
+    $('#output-rendered').textContent = 'Generating...';
+    
+    // 4. Call the API
+    const result = await api.generate(requestPayload);
+    
+    // 5. Display the result
+    $('#output-rendered').textContent = result.output;
+    $('#trace-system').textContent = result.debug.final_system_prompt;
+    $('#trace-user').textContent = result.debug.final_user_prompt;
+    $('#trace-usage').textContent = `Tokens: ${result.usage.total_tokens}, Time: ${result.usage.total_time}s`;
+    
+    console.log('Generation successful:', result);
+  };
+  
+  // --- MOCKING (for demonstration without a backend) ---
+  const mockApiResponses = () => {
+      // Intercept fetch calls to provide dummy data
+      const originalFetch = window.fetch;
+      window.fetch = (url, options) => {
+          console.log(`Intercepted fetch for: ${url}`);
+          
+          if (url === '/api/dummy/routes') {
+              return Promise.resolve(new Response(JSON.stringify([
+                  { name: 'general_chat', description: 'A standard chat message.' },
+                  { name: 'qa_reaction', description: 'React to a question.', schema: [
+                      { name: 'question', type: 'text', required: true },
+                      { name: 'asker', type: 'text', required: true },
+                      { name: 'answer', type: 'text', required: true },
+                      { name: 'tone', type: 'select', options: ['normal', 'roast', 'nice'] }
+                  ]}
+              ])));
+          }
+
+          if (url === '/api/dummy/injections') {
+              return Promise.resolve(new Response(JSON.stringify([
+                  { name: 'positive_opinion', system_addon: 'Your opinion is very positive.' },
+                  { name: 'negative_opinion', system_addon: 'Your opinion is very negative.' },
+                  { name: 'use_short_words', system_addon: 'Use only 1-5 words.' },
+              ])));
+          }
+
+          if (url === '/api/dummy/personas') {
+              return Promise.resolve(new Response(JSON.stringify([
+                  { persona: 'You just tuned in 10 seconds ago.', nudges: ['Ask a question.', 'Sound confused.'] },
+                  { persona: 'You are a lurker who never types.', nudges: ['Be chill.', 'Use internet slang.'] }
+              ])));
+          }
+
+          if (url === '/api/dummy/example-pools') {
+              return Promise.resolve(new Response(JSON.stringify({
+                  normal: ['lmao', 'pog', 'bruh', 'yooo'],
+                  positive: ['lets gooo', 'W stream', 'love this']
+              })));
+          }
+          
+          if (url === '/api/dummy/generate') {
+              const body = JSON.parse(options.body);
+              return Promise.resolve(new Response(JSON.stringify({
+                  output: `This is a dummy response for route: ${body.route}. The user asked about: ${JSON.stringify(body.user_input)}`,
+                  debug: {
+                      final_system_prompt: `[SYSTEM PROMPT]\nBase: ${body.base_context}\nInjections: ${body.injections.join(', ')}`,
+                      final_user_prompt: `[USER PROMPT]\n${JSON.stringify(body.user_input, null, 2)}`
+                  },
+                  usage: { total_tokens: 42, total_time: 0.5 }
+              })));
+          }
+          
+          // For save operations, just return a success response
+          if (options && options.method === 'POST') {
+              return Promise.resolve(new Response(JSON.stringify({ success: true })));
+          }
+
+          // Fallback to original fetch for other requests (e.g., stylesheets)
+          return originalFetch(url, options);
+      };
+  };
+
+  // --- START THE APP ---
+  initializeApp();
+});
+
+
+
+
+body { font-family: 'Outfit', sans-serif; background: #f0f2f5; color: #333; margin: 0; }
+main.grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; padding: 1rem; }
+.panel { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.controls-panel, .output-panel, .debug-panel { display: flex; flex-direction: column; }
+.panel-header, .field, .subhead { padding: 0.5rem 1rem; }
+.field { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+.field-label { font-weight: 600; font-size: 0.9em; }
+textarea, input, select { width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box; }
+.modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; }
+.modal-card { background: #fff; padding: 2rem; border-radius: 8px; max-width: 600px; width: 90%; }
+.hidden { display: none !important; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1rem; }
+button, .action-btn { padding: 8px 16px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; }
+.action-btn--primary { background-color: #007bff; color: white; }
+.ghost-action { background: none; border: 1px solid #ccc; }
+.tab.active { border-bottom: 2px solid #007bff; }
+.tabs { display: flex; border-bottom: 1px solid #ccc; }
+.tab { padding: 0.5rem 1rem; cursor: pointer; }
+.output-text { white-space: pre-wrap; padding: 1rem; font-family: 'JetBrains Mono', monospace; }
+.trace { white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; background: #fafafa; padding: 1rem; border-radius: 4px; font-size: 0.8em; }
+.input-group-special { display: flex; flex-direction: column; gap: 1rem; border: 1px solid #eee; padding: 1rem; border-radius: 4px;}
+
+
+
+
+
+
+
+
