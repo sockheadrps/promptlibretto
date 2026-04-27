@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "promptlibretto"
-version = "0.4.0"
-description = "Composable prompt-construction library with named routes, context overlays, injections, streaming, middleware, and output validation."
+version = "0.5.0"
+description = "Registry-based prompt model: sections of items, an assembly order, runtime modes, and a browser studio that exports the same JSON the library loads."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -40,10 +40,6 @@ promptlibretto-studio = "studio.run:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["promptlibretto", "studio"]
-exclude = [
-    "studio/base_library.json",
-    "studio/scenario_library.json",
-]
 
 [tool.hatch.build.targets.sdist]
 include = [
