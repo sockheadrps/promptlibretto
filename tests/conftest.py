@@ -1,63 +1,110 @@
 from __future__ import annotations
 
-from typing import Callable, Optional
-
 import pytest
 
-from promptlibretto import (
-    CompositeBuilder,
-    ContextStore,
-    GenerationConfig,
-    MockProvider,
-    OutputProcessor,
-    PromptAssetRegistry,
-    PromptEngine,
-    PromptRoute,
-    PromptRouter,
-    section,
-)
-from promptlibretto.providers.base import ProviderRequest
+from promptlibretto import Engine, MockProvider, Registry
 
 
-def make_engine(
-    *,
-    responder: Optional[Callable[[ProviderRequest], str]] = None,
-    config: Optional[GenerationConfig] = None,
-    routes: Optional[list[PromptRoute]] = None,
-    default_route: str = "default",
-    base: str = "",
-    middlewares: Optional[list] = None,
-) -> PromptEngine:
-    cfg = config or GenerationConfig(provider="mock", model="m", max_tokens=64)
-    store = ContextStore(base=base)
-    assets = PromptAssetRegistry()
-    router = PromptRouter(default_route=default_route)
-    if routes:
-        router.register_many(routes)
-    else:
-        builder = CompositeBuilder(
-            name="default",
-            system_sections=(section("You are a test bot."),),
-            user_sections=(section(lambda ctx: ctx.request.inputs.get("input", "")),),
-        )
-        router.register(PromptRoute(name="default", builder=builder))
-    provider = MockProvider(responder=responder, latency_ms=0.0)
-    return PromptEngine(
-        config=cfg,
-        context_store=store,
-        asset_registry=assets,
-        router=router,
-        provider=provider,
-        output_processor=OutputProcessor(),
-        middlewares=middlewares,
-    )
+_TWITCH_REGISTRY = {
+    "registry": {
+        "version": 22,
+        "title": "Twitch Chatter",
+        "assembly_order": [
+            "output_prompt_directions",
+            "base_context.text",
+            "persona.context",
+            "sentiment.context",
+            "sentiment.nudges",
+            "sentiment.scale",
+            "examples.normal_examples",
+            "sentiment.examples",
+            "prompt_endings.examples",
+        ],
+        "base_context": {
+            "required": True,
+            "template_vars": ["location"],
+            "items": [
+                {
+                    "name": "stream_context",
+                    "text": "Streamer is at {location}.",
+                }
+            ],
+        },
+        "personas": {
+            "required": True,
+            "items": [
+                {
+                    "id": "the_lurker",
+                    "context": "You usually never speak.",
+                    "base_directives": ["Be brief.", "Be shy."],
+                },
+                {
+                    "id": "the_hype_man",
+                    "context": "You're the streamer's biggest fan.",
+                    "base_directives": ["Exaggerate.", "High energy."],
+                },
+            ],
+        },
+        "sentiment": {
+            "required": True,
+            "items": [
+                {
+                    "id": "positive",
+                    "context": "Your opinion is positive:",
+                    "nudges": ["React with excitement.", "Sound impressed."],
+                    "examples": ["lets gooo", "huge W"],
+                },
+                {
+                    "id": "negative",
+                    "context": "Your opinion is negative:",
+                    "nudges": ["Be sarcastic.", "Sound bored."],
+                    "examples": ["yikes", "L"],
+                },
+            ],
+        },
+        "static_injections": {"required": False, "items": []},
+        "runtime_injections": {
+            "required": False,
+            "template_vars": ["raider"],
+            "items": [
+                {
+                    "id": "raid",
+                    "text": "IMPORTANT: {raider} just raided!",
+                    "include_sections": ["personas"],
+                }
+            ],
+        },
+        "output_prompt_directions": {
+            "required": True,
+            "items": [
+                {"name": "rules_chat", "text": "Rules: short message."},
+            ],
+        },
+        "examples": {
+            "required": False,
+            "items": [
+                {
+                    "name": "normal_examples",
+                    "pre_context": "Here are example phrases:",
+                    "items": ["lmao", "W", "pog", "bruh"],
+                }
+            ],
+        },
+        "prompt_endings": {
+            "required": True,
+            "items": [
+                {"name": "prompt_endings", "items": ["Your message:", "You type:"]},
+            ],
+        },
+    }
+}
 
 
 @pytest.fixture
-def engine() -> PromptEngine:
-    return make_engine()
+def twitch_registry() -> Registry:
+    return Registry.from_dict(_TWITCH_REGISTRY)
 
 
 @pytest.fixture
-def make_engine_fn():
-    return make_engine
+def twitch_engine(twitch_registry: Registry) -> Engine:
+    return Engine(twitch_registry, provider=MockProvider(latency_ms=0.0))

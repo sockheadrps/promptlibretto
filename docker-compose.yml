@@ -1,0 +1,32 @@
+services:
+  promptlibretto:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: promptlibretto
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      # Browser-direct LLM: the user's browser calls their own Ollama, so
+      # the server doesn't need OLLAMA_URL. Snapshots live in localStorage,
+      # so there's no server-side state to persist.
+      #
+      # Set PROMPT_ENGINE_MOCK=1 to make /api/registry/generate use the
+      # MockProvider (useful for demos / smoke tests).
+      # - PROMPT_ENGINE_MOCK=1
+      # Or point the server-side generate route at a real Ollama:
+      # - OLLAMA_URL=http://host.docker.internal:11434
+      # - OLLAMA_CHAT_PATH=/api/chat
+    networks:
+      - npm_network
+      - default
+
+networks:
+  npm_network:
+    external: true
+    name: nginx-proxy-network
+  default:
+    driver: bridge

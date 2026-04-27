@@ -1,300 +1,193 @@
 # promptlibretto studio
 
-A browser-based prompt designer for the `promptlibretto` library. Tune
-your routes, base context, overlays, and injections against a live model,
-then **Export as JSON** to drop the exact configuration into your app.
+A browser-based registry editor for the `promptlibretto` library. Pick
+sections, set runtime modes, hydrate prompts, generate against your own
+local LLM, and export the whole setup as portable JSON.
 
-![Studio overview](assets/screenshots/generatedoutput.png)
-
-New here? Click **About** in the studio header for a guided tour of how
-base context, route, overlays, and injections compose into the final
-prompt.
-
-## End-to-end in five steps
-
-**1.** Install the studio and a model provider (Ollama shown — any provider works):
+## Run it
 
 ```bash
 pip install "promptlibretto[studio,ollama]"
+promptlibretto-studio --port 8000
 ```
 
-**2.** From your project root, launch the studio. Saves land in
-`./promptlibretto_exports/` by default — `PROMPTLIBRETTO_EXPORT_DIR=.`
-drops them in CWD instead:
+Open <http://localhost:8000>. The studio renders one card per registry
+section (`personas`, `sentiment`, `examples`, etc.), each with the same
+controls.
 
-```bash
-PROMPTLIBRETTO_EXPORT_DIR=. promptlibretto-studio
-```
+## Browser-direct LLM
 
-**3.** In the browser: pick a route, edit the base context, add overlays.
-For each overlay you want filled at call time, set its **runtime**
-dropdown to *optional* or *required*. Generate, iterate, inspect the
-debug trace until you're happy.
+The studio resolves prompts client-side and calls **your own** local
+Ollama from the browser. The studio process never touches the model.
+Configure the connection from the header chip — base URL, chat path,
+shape (Ollama / OpenAI-compatible), and the model name. Settings live
+in `localStorage`.
 
-**4.** Click **Export as JSON** → type a name (e.g. `my_assistant`) →
-**Save to disk**. You now have `./my_assistant.json` next to your app
-code.
+If you'd rather have the server make the LLM call (for headless tools,
+Notebooks, etc.), use the registry HTTP API below.
 
-**5.** In your app, depend on the library at runtime (no `[studio]` extra
-needed) and load the JSON:
+## The two tabs
 
-```bash
-pip install "promptlibretto[ollama]"
-```
+### Compose
 
-```python
-import asyncio
-from promptlibretto import load_engine
+The primary surface. For each section:
 
-engine, run = load_engine("my_assistant.json")
+- **Selection control** — `<select>` for required sections, checkboxes
+  for optional ones.
+- **Random toggle** — *Pick a random item at run time*. Re-rolls on
+  every Pre-generate / Generate. Disabled for `base_context`.
+- **Sentiment slider** *(sentiment only)* — drives the
+  `sentiment.scale` token. Has its own *Random at run time* checkbox.
+- **`+` button** — opens a collapsible, schema-strict form to add a new
+  item. Forms reflect each section's expected fields
+  (`{id, context, base_directives[]}` for personas,
+  `{name, items[]}` for pool sections, …).
+- **Inline editor** — pre-filled with the selected item's values; edits
+  write back through to the in-memory registry.
+- **Template vars** — labeled inputs for each declared variable. The
+  `+ var` button on each section adds a new `{var}` placeholder; the
+  `×` next to a var removes it.
 
-async def main():
-    result = await run(
-        "what should I cook tonight?",
-        location="kitchen",            # required runtime slot
-        focus="quick weeknight meal",  # optional runtime slot
-        dietary="vegetarian",          # ad-hoc priority-10 overlay
-    )
-    print(result.text)
+The Compose tab also has the **Registry** strip at the top:
 
-asyncio.run(main())
-```
+- **Import JSON…** — paste a registry to load.
+- **Export Model JSON** — copies the canonical registry, with all your
+  current selections, modes, sliders, and generation overrides baked
+  in. Drop it into your app and `load_registry()` it back.
+- **Hydrate → User Input** — pre-fills the engine's input field with
+  the assembled prompt. Useful if you have an external integration
+  watching that field.
 
-`load_engine()` reconstructs a `PromptEngine` with the exact config, base
-context, fixed overlays, and resolved route sections you tuned, and
-returns a `run()` closure that handles runtime slots. No codegen, no
-generated module.
+### Tuning
 
-## While you iterate
+- **Generation Overrides** — temperature, top_p, top_k, max_tokens,
+  repeat_penalty, retries, max_prompt_chars. Hover any field name for a
+  tooltip explaining what it does. Empty fields fall through to library
+  defaults.
+- The `examples`, `prompt_endings`, and injection sections also live
+  here (as opposed to Compose) since they're "tuning" choices rather
+  than primary content.
 
-- **Edit prompt** (next to the route selector) overrides the resolved
-  system/user text for the next run(s) without touching the route — the
-  override sticks until you clear it, and is never written back.
-  `GenerationRequest.section_overrides={"system": "..."}` is the
-  library-level equivalent.
-- Follow-ups become overlays; overlays persist across runs.
-- **Load scenario** on any saved export restores the exact studio state
-  that produced it. Edit, re-export over the same file.
+## Output panel
 
-![Export modal](assets/screenshots/export.png)
+Three sub-tabs:
 
-## Runtime slots
+- **Output** — the generated text (rendered or raw view).
+- **Pre-generate** — the assembled prompt, exactly as it'll be sent.
+  Pre-generate before Generate to inspect.
 
-Each overlay card has a **runtime** dropdown:
+Above the Output text:
 
-- **fixed** — overlay text is baked into the export.
-- **runtime — optional** — becomes a keyword arg on `run()`; applied
-  only if a non-empty value is passed.
-- **runtime — required** — becomes a required keyword arg; `run()`
-  raises `ValueError` if the caller passes an empty string.
-- Any **other** kwarg on `run()` becomes a priority-10 overlay for that
-  one call.
+- **`model: <name>`** — the LLM the request will go to.
+- **`✓ ok` / `✗ empty` / `✗ error`** — accepted indicator after a run.
+- **`<n>ms`** — total round-trip.
+- **`<n> tok · <n> chars`** — completion tokens (when the provider
+  returns them) and the response char count.
 
-Runtime overlay text can include `{}` as a placeholder for the caller's
-value. For example, setting a runtime overlay to
-`"Your mood is: {}. Respond with that emotional influence."` and calling
-`run(..., mood="hype")` substitutes `hype` inline. Without `{}` the
-caller's raw value is inserted as its own section.
+## Debug Trace
 
-![Tuning tab](assets/screenshots/tuning_tab.png)
+Far-right pane. Filled fresh on every Generate:
 
-Runtime-tagged overlays are skipped during studio generation unless the
-overlay card's **Test value** field is set — test values are filled in
-only for studio previews and never persist into the export. `run()`
-clears any prior runtime / extra-kwarg overlays at entry so calls don't
-leak state into one another.
+- **Hydrated Prompt** — the exact string sent to the LLM.
+- **Response** — what came back.
+- **Active State** — JSON snapshot of selections / array_modes /
+  section_random / sliders / template_vars at click time. Drop it into
+  `Engine.run(state=...)` to reproduce.
+- **Usage & Timing** — total ms + provider-reported usage.
+- **Resolved Config** — base URL, chat path, model, shape, generation
+  overrides.
 
-## What the exported JSON looks like
+## Snapshots
 
-```jsonc
+The header **Snapshots** button opens a modal:
+
+- Save the current panel state (registry + selections + modes + slider
+  + template-vars + generation overrides) under a name.
+- Load any saved snapshot back. Restoring rebuilds the panels and
+  re-applies your selections.
+- Delete or **Export** any snapshot to JSON.
+
+Storage is `localStorage` (`pl-registry-snapshots-v1`). Snapshots
+persist across reloads but stay on the device.
+
+## Registry HTTP API
+
+The studio also mounts these endpoints for headless use:
+
+| Endpoint                      | Purpose                                              |
+| ----------------------------- | ---------------------------------------------------- |
+| `POST /api/registry/load`     | Parse + canonicalize a registry JSON.                |
+| `POST /api/registry/hydrate`  | Build the prompt for a given registry + state.       |
+| `POST /api/registry/generate` | Hydrate + LLM + output policy. Returns text + usage. |
+| `GET  /health`                | Liveness check.                                      |
+
+Request body for `hydrate` / `generate`:
+
+```json
 {
-  "version": 1,
-  "config": { "model": "llama3", "temperature": 0.7 },
-  "context_store": "Durable framing for every call.",
-  "route": {
-    "name": "default",
-    "system_sections": ["You are X.", "Output only Y."],
-    "user_sections": [
-      { "template": "Request:\n{input}" },
-      "Begin your response now."
-    ],
-    "generation_overrides": {},
-    "output_policy": {}
+  "registry": { "registry": { ... } },
+  "state": {
+    "selections": {...},
+    "array_modes": {...},
+    "section_random": {...},
+    "sliders": {...},
+    "slider_random": {...},
+    "template_vars": {...}
   },
-  "overlays": [
-    { "name": "fixed_note", "text": "...", "priority": 10 },
-    { "name": "location",   "priority": 20, "runtime": "required" },
-    { "name": "focus",      "priority": 15, "runtime": "optional" }
-  ]
+  "route": "optional-route-name",
+  "seed": 42
 }
 ```
 
-User-input positions survive as `{"template": "Q:\n{input}"}` entries
-that the loader compiles back to callables. Runtime-slot overlays appear
-inline in `user_sections` so the JSON self-documents where caller
-values land.
+Server-side generation uses `OllamaProvider` by default. Set
+`PROMPT_ENGINE_MOCK=1` to use `MockProvider` instead, or
+`OLLAMA_URL` / `OLLAMA_CHAT_PATH` to point at a different host.
 
-## Running
+## Docker
 
 ```bash
-pip install "promptlibretto[studio]"
-promptlibretto-studio                         # defaults to Ollama at localhost:8080
-PROMPT_ENGINE_MOCK=1 promptlibretto-studio    # no model required; echoes prompts
+docker compose up -d
 ```
 
-Env vars: `HOST`, `PORT`, `OLLAMA_URL`, `OLLAMA_MODEL`, `PROMPT_ENGINE_MOCK`,
-`PROMPTLIBRETTO_DATA_DIR` (defaults to `~/.promptlibretto/studio`; holds
-scenarios and the base-context library),
-`PROMPTLIBRETTO_EXPORT_DIR` (defaults to `./promptlibretto_exports/`;
-holds saved `.json` exports — kept in CWD so they sit next to your project).
+The container exposes port 8000 and runs the studio with browser-direct
+LLM by default. There's no server-side state — snapshots live in the
+user's browser. Override env vars in `docker-compose.yml` to enable
+mock-mode or a server-side Ollama target.
 
-## Wiring
+## CLI
 
-```
-┌────────────── browser (static/app.js) ──────────────┐
-│ config · context · routes · injections · runs       │
-└───────────────────────┬─────────────────────────────┘
-                        │ fetch()
-                        ▼
-┌────────────── FastAPI (main.py) ────────────────────┐
-│ /api/state · /api/generate · /api/context/*         │
-│ /api/config · /api/iterate · /api/scenarios         │
-│ /api/export · /api/prompt/resolve                   │
-└───────────────────────┬─────────────────────────────┘
-                        │ engine calls
-                        ▼
-┌────────────── PromptEngine (library) ───────────────┐
-│ ContextStore · PromptAssetRegistry · PromptRouter   │
-│ Provider · OutputProcessor · Middleware             │
-└─────────────────────────────────────────────────────┘
+```bash
+promptlibretto-studio [--host HOST] [--port PORT]
 ```
 
-One engine is built in `lifespan()` and attached to `app.state`. Handlers
-pull it via `_engine()` and call engine methods — they don't build
-prompts themselves. The server holds a few extra stores for app concerns
-the library doesn't own.
+`--host` defaults to `127.0.0.1` (or `$HOST`); `--port` defaults to
+`8000` (or `$PORT`).
 
-## Stores
+## Server-side environment variables
 
-| Store               | Owner     | Purpose                                                  |
-| ------------------- | --------- | -------------------------------------------------------- |
-| `ContextStore`      | library   | Base text + overlays used to build prompts.              |
-| `BaseLibrary`       | server    | Named, saveable base-context texts.                      |
-| `SnapshotLibrary`   | server    | Full app-state snapshots (scenarios: base + overlays + config). |
-| `ExportLibrary`     | server    | Named `.json` exports saved for `load_engine()`.         |
-| `CustomRouteLibrary`| server    | User-defined `RouteSpec`s.                               |
-| `LatencyLogger`     | server    | Middleware-populated ring buffer of run timings.         |
+These only affect the optional `/api/registry/generate` endpoint. The
+studio's main flow (the browser calling Ollama directly) ignores them.
 
-Server-side libraries are JSON-backed caches with atomic tmp-file
-writes and a lock.
+| Variable             | Default                  | Effect                                           |
+| -------------------- | ------------------------ | ------------------------------------------------ |
+| `PROMPT_ENGINE_MOCK` | `0`                      | `1` / `true` / `yes` — server uses `MockProvider`. |
+| `OLLAMA_URL`         | `http://localhost:11434` | Base URL the server-side `OllamaProvider` hits.  |
+| `OLLAMA_CHAT_PATH`   | `/api/chat`              | Endpoint path. Auto-detects payload shape from `/v1/`. |
+| `HOST`               | `127.0.0.1`              | Studio bind host (overridden by `--host`).       |
+| `PORT`               | `8000`                   | Studio bind port (overridden by `--port`).       |
 
-## API shape
+## Editing fragments
 
-- `GET /api/state` dumps config, routes, overlays, and injections in one
-  payload. The frontend re-renders from this on every meaningful change.
-- `POST /api/generate` / `POST /api/generate/stream` run
-  `engine.generate_once` or `engine.generate_stream`. Both accept an
-  optional `section_overrides` body (`{"system": "...", "user": "..."}`)
-  that bypasses the builder for one call.
-- `POST /api/export` serialises the current route + context via
-  `promptlibretto.export_json`.
-- `GET /api/exports`, `PUT/GET/DELETE /api/exports/{name}` manage saved
-  `.json` exports on disk.
-- `POST /api/prompt/resolve` runs the builder without calling the
-  provider — used by the **Edit prompt** modal to prefill the resolved
-  system/user text.
-- `PUT /api/context/*`, `PUT /api/config` mutate the engine in place.
-- `POST /api/iterate` writes a compacted user follow-up back as a
-  `turn_N` overlay via `make_turn_overlay()`.
+`base_context` items support **conditional fragments** — short pieces
+of text gated by a template variable. Add them in the inline editor's
+*Conditional fragments* row:
 
-Library exceptions (`ValueError`, `KeyError`) surface as 400s rather
-than bubbling 500s.
+| if | text |
+| --- | --- |
+| (always) | You're watching a streamer. |
+| `location` | Currently at `{location}`. |
+| `sublocation` | Specifically: `{sublocation}`. |
 
-## Panels
-
-**Compose tab.** Route selector, user input, injection checkboxes,
-generation overrides. **Edit prompt** sits next to the route selector —
-opens a modal to override the resolved system / user text for the next
-run(s); the override sticks until cleared.
-
-![Compose tab](assets/screenshots/compose-tab.png)
-
-![Edit prompt modal](assets/screenshots/edit-route-prompt.png)
-
-**Tuning tab.** Base text at the top, named overlays below with
-priority, runtime mode, and optional template. "Suggest" asks the
-model to propose overlays against the current base.
-
-![Tuning tab](assets/screenshots/tuning_tab.png)
-
-**Pre-Generate tab.** Resolves the current prompt into draggable
-per-section cards before sending — reorder sections, fill runtime-slot
-test values, inspect the fully assembled system/user prompts.
-
-![Pre-Generate](assets/screenshots/pregenerate.png)
-
-**Debug trace panel.** System prompt, user prompt, active context, every
-attempt, and the resolved config — live-updated per run.
-
-![Debug trace](assets/screenshots/debug-trace-1.png)
-
-![Debug trace continued](assets/screenshots/debug-trace-2.png)
-
-## Why imperative presets
-
-The router and asset registry are built imperatively in
-`presets.py` with `reg.add(...)`, `reg.add_pool(...)`, `reg.add_injector(...)`,
-`PromptRoute(builder=CompositeBuilder(...))`. Sections are callables,
-overrides and output policy are passed through, and builders close over
-assets — that expressive surface is already Python, so a YAML schema
-would lose expressiveness or reinvent it. Swap `presets.py` for your own
-and keep the rest.
-
-## Middleware
-
-`LatencyLogger` in `middleware.py` times each generation
-and keeps the last 50 records in a deque, attached at engine construction.
-`GET /api/latency` exposes them. Same pattern works for logging, caching,
-redaction — any cross-cutting concern that shouldn't touch prompt
-construction.
-
-## Ensemble
-
-The **Ensemble** page (header nav → *Ensemble*) fans one prompt across
-multiple saved exports in parallel and displays their outputs
-side-by-side — useful for comparing tuned models or voting across
-variants.
-
-- **Shared Directive** — the single user prompt sent to every selected
-  export.
-- **Context Overrides** — optional extra context text layered on top of
-  each export's baked-in context for this one run; the underlying
-  exports are never mutated.
-- **Generation Options** — per-run overrides for model params applied
-  to every selected export.
-
-![Ensemble](assets/screenshots/ensamble-example.png)
-
-Each selected export loads through `load_engine()` and runs
-independently, so the ensemble surface is just orchestration on top of
-the same library entry point your app uses.
-
-## Scenarios
-
-Scenarios snapshot the whole app so you can come back to a setup.
-They're opaque JSON blobs captured and applied by the browser
-(`captureScenarioState` / `applyScenarioState` in `app.js`); the server
-just persists them by name. Saving an export also writes a scenario
-under the same name, so **Load scenario** on a saved export restores the
-exact state that produced it.
-
-## Files
-
-- `main.py` — FastAPI app, lifespan, endpoints.
-- `presets.py` — example routes, named assets, pools, injectors.
-- `middleware.py` — `LatencyLogger`.
-- `base_library.py` — named base-context store.
-- `snapshot_library.py` — full-state snapshots (scenarios).
-- `export_library.py` — named `.json` export store.
-- `custom_route_library.py` — user-defined `RouteSpec`s.
-- `static/index.html` / `app.js` / `style.css` — single-page UI.
+A fragment with `if location` only renders when the `location`
+template-var has a value at runtime. So an unfilled `{sublocation}`
+doesn't leave a broken sentence in the output.

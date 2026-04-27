@@ -1,618 +1,230 @@
 # Design
 
-A reusable architecture for building prompts from modular state, templates, rules, examples, and runtime overlays. Domain, UI, model provider, and output type are left to the caller.
+A reusable architecture for building prompts from modular state,
+templates, and runtime modes. Domain text, model provider, and output
+shape are left to the caller.
 
-Prompt generation is a deterministic pipeline with controlled stochastic choices. The library separates what is known, what is temporarily true, how prompts are assembled, how model parameters are chosen, and how outputs are cleaned or rejected.
+Prompt generation is a deterministic pipeline with controlled stochastic
+choices. The library separates *what is known* (registry sections),
+*what's chosen for this call* (selections + runtime modes), *how the
+prompt is assembled* (assembly_order tokens), and *how outputs are
+cleaned and validated* (output policy).
 
 ## Goals
 
-- Build prompts from composable parts instead of one large hardcoded string.
-- Keep domain text editable without burying it in service logic.
-- Support reusable context templates with slots.
-- Allow temporary runtime facts to override or augment base context.
-- Route requests to specialized prompt builders based on active state.
-- Preserve variety through controlled random choices.
-- Capture prompt text, model parameters, token usage, latency, and output for debugging.
-- Keep provider-specific API calls behind an adapter.
-- Validate and normalize model output after generation.
+- Build prompts from composable parts rather than one large hardcoded
+  string or a deep tree of decorators.
+- Keep the JSON the editor produces *literally* the JSON the runtime
+  loads — no codegen, no schema drift.
+- Make conditional text behave: an unfilled template variable should
+  drop the surrounding sentence, not leave a `{var}` in the output.
+- Make randomness visible and reproducible: every random pick (which
+  item, which entries from an array, which slider value) is per-field,
+  controllable, and deterministic when seeded.
 
-## Non-Goals
+## One abstraction, repeated
 
-- The engine should not know the application domain.
-- The engine should not require a specific model provider.
-- The engine should not assume the output is conversational.
-- The engine should not force all use cases into a single prompt format.
+A **section** is `{ required: bool, template_vars: [str], items: [obj] }`.
+That shape covers everything that used to be five different concepts:
 
-## Conceptual Model
+| Old concept            | Now                                             |
+| ---------------------- | ----------------------------------------------- |
+| Routes                 | optional top-level `routes` map (overrides)     |
+| Overlays               | sections + `template_vars` + fragments          |
+| Injections (stacked)   | `static_injections`, `runtime_injections`       |
+| Persona presets        | `personas` section, items have `id, context`    |
+| Few-shot pools         | `examples` section, items have `items[]`        |
 
-Six layers:
+The studio renders one card per section with the same affordances
+(`+ Add` form, runtime-mode dropdown, value editor) regardless of which
+section it is.
 
-1. Configuration
-2. Context State
-3. Prompt Assets
-4. Prompt Builders
-5. Generation Runtime
-6. Output Processing
+## The token language
 
-## 1. Configuration
+`assembly_order` is a list of tokens. Three forms:
 
-Stable operating boundaries for generation.
+- `section` — bare. Renders the selected item's primary text field
+  (`text` for most sections, `context` for `personas` / `sentiment`).
+  Multi-select sections render each chosen item.
+- `section.field` — dotted. Renders that field of the selected item.
+  When the item doesn't have the field but does have an `items[]` array,
+  the resolver falls back to the array (so `prompt_endings.<anything>`
+  Just Works for pool-shaped sections).
+- `section[expr]` — bracket. Evaluates `expr` recursively, then looks up
+  an item in `section` whose `name`/`id` matches the result. Useful for
+  cross-section indirection like `examples[sentiment.example_pool]`.
 
-Examples:
+Singular aliases (`persona` → `personas`, `injections` → `static_injections`,
+`ending` → `prompt_endings`) read naturally inside an `assembly_order`.
 
-- Provider endpoint
-- Model name
-- Temperature
-- Sampling parameters
-- Max generated tokens
-- Retry count
-- Timeout
-- Output length limits
-- Cache sizes
-- Debug parameter locking
+## Glue rules
 
-Configuration is declarative and injectable. A prompt builder doesn't need to know where a model is hosted or how HTTP calls are made.
+- Consecutive same-section tokens join with `\n`.
+- Different sections join with `\n\n`.
+- Adjacent list tokens that share the same `pre_context` heading merge
+  into one bulleted list — so a sentiment-specific examples list and a
+  generic examples pool produce one heading + one combined bullet list.
+- `prompt_endings` is structurally trailing: it never absorbs into the
+  preceding merged block.
 
-Suggested shape:
+## Per-array runtime modes
 
-```ts
-type GenerationConfig = {
-  provider: string;
-  model: string;
-  temperature: number;
-  topP?: number;
-  topK?: number;
-  maxTokens: number;
-  repeatPenalty?: number;
-  timeoutMs: number;
-  retries: number;
-  lockParams?: boolean;
-};
-```
+Any array field on a selected item (`nudges`, `examples`, pool `items`,
+`base_directives`) supports four modes:
 
-## 2. Context State
+- `all` — render every entry.
+- `none` — skip entirely. The token drops out of the assembly.
+- `index:N` — render only the Nth entry.
+- `random:K` — pick K fresh random entries every hydrate. Seedable.
 
-Facts and transient conditions that influence prompt construction. Split into durable base state and temporary overlays.
+Modes attach to `(section, field)` not `(item, field)` — when you switch
+items, the section's modes still apply to the new selection.
 
-Base state:
+A bullet list is rendered when `pre_context` is present *or* when there
+are 2+ entries. A single entry without `pre_context` renders as a plain
+line, so `random:1` on `sentiment.nudges` produces a single sentence
+instead of `- one item`.
 
-- Long-lived facts
-- User-authored base prompt
-- Template slots
-- Persisted settings
-- Profile or entity metadata
+## Conditional fragments
 
-Overlay state:
+`base_context` items (and any other section that wants them) can carry
+a `fragments` array beside `text`:
 
-- Temporary event context
-- Short-lived reaction or emphasis
-- Mode-specific overrides
-- Expiring instructions
-- Recently observed input
-
-The effective context is produced by resolving these layers in order:
-
-1. Load or construct base context.
-2. Apply mode-specific base substitutions.
-3. Expire stale overlays.
-4. Append or replace with active overlays.
-5. Return the final active context for routing.
-
-Suggested interface:
-
-```ts
-interface ContextStore {
-  getBase(): string;
-  setBase(value: string): void;
-  setOverlay(name: string, overlay: ContextOverlay): void;
-  clearOverlay(name: string): void;
-  getState(now?: number): ContextSnapshot;  // pure read, does not mutate
-  prune(now?: number): string[];              // evicts expired overlays, returns names
-}
-
-type ContextOverlay = {
-  text: string;
-  priority: number;
-  expiresAt?: number;
-  metadata?: Record<string, unknown>;
-};
-```
-
-## Iteration Turn Overlays
-
-Iteration loops are overlays, not a separate chat-history primitive. A
-**turn overlay** is an ordinary overlay whose metadata carries the user's
-verbatim follow-up plus an optional compacted form:
-
-```
-metadata: {
-  kind: "turn",
-  verbatim: "actually please make it shorter",
-  compacted: "Prefer concise output."   // optional
+```json
+{
+  "name": "scene",
+  "text": "You're watching a streamer.",
+  "fragments": [
+    { "if_var": "location",    "text": "Currently at {location}." },
+    { "if_var": "sublocation", "text": "Specifically: {sublocation}." }
+  ]
 }
 ```
 
-The overlay's active `text` is the compacted form when present, otherwise
-the verbatim. Compaction runs through a named route (e.g. `compact_turn`)
-on the same engine surface — no special code path. Preserving the verbatim
-in metadata lets the caller:
+Each fragment renders with `{var}` substitution. If `if_var` is set and
+the template-var has no value at runtime, the fragment is dropped — so
+an unfilled `{sublocation}` doesn't leave a broken sentence behind.
 
-- Revert to verbatim (swap `text` ↔ `metadata.verbatim`)
-- Re-compact (re-run the compaction route against `metadata.verbatim`)
-- Audit what the user actually said versus what was shown to the model
+## Selections vs evaluation
 
-`make_turn_overlay(verbatim, compacted=None, priority=25)` is the
-recommended constructor so the `kind: "turn"` contract is uniform.
-Orchestration (when to compact, what params to use) stays in the caller.
+The studio tracks two related but distinct things:
 
-## Template Slots
+- **Selections** — what the user picked in the UI (dropdown values,
+  checked boxes). Stable; doesn't move under you.
+- **Evaluated state** — what hydrate actually uses. Folds in
+  `section_random` toggles (re-roll the item) and `slider_random`
+  toggles (re-roll the slider).
 
-Templates allow explicit slots such as:
+`Engine.hydrate()` and `Engine.run()` both go through evaluation. The
+inline editor reads only selections so what you see is what you set.
 
-```txt
-The task concerns {subject}.
-```
+## Runtime injections
 
-Slot substitution happens at exactly one place: the section callable.
-Sections receive a `BuildContext` and call `str.format_map` against
-`request.inputs` to fill slots. Exported engines store templated sections
-as `{"template": "Q:\n{input}"}` — the loader compiles them back to
-section callables that do the `format_map` at build time.
+Items in `runtime_injections` are special: each carries an
+`include_sections[]` whitelist. When at least one injection is enabled
+(checked in the studio), the assembled prompt is **filtered** to only
+the sections in the union of those whitelists, plus the injection's own
+text appended at the end.
 
-There is no separate template-renderer object, no field aliasing
-machinery, no whitespace normaliser. If you want any of that, it's a
-helper function in your own section callable. Keep the substitution
-surface small and obvious.
+Use case: a "raid" injection blanks out base context, sentiment,
+examples, etc., and substitutes one tight reaction prompt — without
+needing a separate route.
 
-## 3. Prompt Assets
+## Output policy
 
-Domain-editable text blocks and option pools used by builders. They live outside the runtime service layer.
+`OutputPolicy` is unchanged from the previous library: `min_length`,
+`max_length`, `strip_prefixes`, `strip_patterns`, `forbidden_substrings`,
+`forbidden_patterns`, `require_patterns`, `append_suffix`,
+`collapse_whitespace`. Lives at the registry top level and on each
+optional route. `Engine.run()` cleans + validates the model response and
+retries up to `generation.retries` times when validation fails.
 
-`PromptAssetRegistry` exposes three primitives:
+### Merge semantics
 
-- `assets: Record<string, string>` — single named strings (anything: framings, rules, personas, endings, fallback prompts).
-- `pools: Record<string, string[]>` — sampleable lists (examples, nudges).
-- `injectors: Record<string, InjectionTemplate>` — stackable instruction blocks with optional generation/output overrides.
+Policy and config merge in the same way: route layers on top of
+registry. The asymmetry lives in `OutputPolicy.merged_with`:
 
-Categories like `frame.*`, `rule.*`, `persona.*` are naming conventions
-you choose, not enforced types. The earlier 7-pool taxonomy
-(`frames`/`rules`/`personas`/`endings`/`examples`/`nudges`/`injectors`)
-collapsed to one flat dict because nothing structural distinguished a
-"frame" string from a "rule" string.
+- **Sequence fields** (`strip_prefixes`, `strip_patterns`,
+  `forbidden_substrings`, `forbidden_patterns`, `require_patterns`) are
+  **additive** — the route's rules extend the registry's, they don't
+  replace them. So a registry-level `forbidden_substrings: ['"']` plus a
+  route-level `forbidden_substrings: ['username:']` together forbid
+  both.
+- **Scalar fields** (`max_length`, `min_length`, `append_suffix`,
+  `collapse_whitespace`) **replace**. Set them on a route to tighten or
+  loosen base behavior.
 
-Prompt text belongs in prompt modules, not in orchestration code.
+`GenerationConfig.merged_with` is straight key-by-key replace; setting
+`temperature` on a route just overrides it.
 
-```ts
-type PromptAssets = {
-  assets: Record<string, string>;
-  pools: Record<string, string[]>;
-  injectors: Record<string, InjectionTemplate>;
-};
-```
+This way a registry can declare cross-cutting "always strip these
+prefixes" rules once, and a route can pile on its own without needing
+to recopy them.
 
-## 4. Prompt Builders
+## Optional routes
 
-Builders convert active context plus request state into model-ready messages. A builder is thin:
+A registry can declare named **routes** that override `assembly_order`
+(and optionally `generation` / `output_policy`):
 
-- Pick from configured asset pools.
-- Format slots.
-- Join sections.
-- Return a prompt package.
-
-It does not:
-
-- Call the model.
-- Mutate long-lived state.
-- Perform HTTP requests.
-- Know provider-specific payload details.
-
-Suggested output:
-
-```ts
-type PromptPackage = {
-  route: string;
-  system?: string;
-  user: string;
-  metadata?: Record<string, unknown>;
-  generationOverrides?: Partial<GenerationConfig>;
-};
-```
-
-## Prompt Routing
-
-Before building a prompt, the engine chooses a route.
-
-Routing can use:
-
-- Active overlays
-- Request type
-- Priority
-- Random chance
-- Explicit caller mode
-- Feature flags
-- Current context markers
-
-Route selection is explicit and inspectable. When two prompt contexts are active, precedence is a clear rule rather than incidental `if` order.
-
-Example:
-
-```ts
-type PromptRoute = {
-  name: string;
-  priority: number;
-  applies: (state: ContextSnapshot, request: GenerationRequest) => boolean;
-  build: PromptBuilder;
-};
-```
-
-## Prompt Injections
-
-A small optional prompt module that augments a base prompt.
-
-Examples:
-
-- A time-limited event occurred.
-- A choice or result is active.
-- An external signal changed sentiment.
-- A relevant profile fact may be included.
-- A tool result should be referenced.
-
-Injection modules return instruction text and optional examples.
-
-```ts
-type PromptInjection = {
-  instructions: string;
-  examples?: string[];
-  generationOverrides?: Partial<GenerationConfig>;
-  outputPolicy?: Partial<OutputPolicy>;
-};
-```
-
-Injections can be probabilistic, but probabilities belong in the module configuration so behavior is testable.
-
-## Controlled Randomness
-
-Randomness is useful for variety when scoped.
-
-Use it for:
-
-- Picking examples
-- Picking style/persona fragments
-- Picking prompt endings
-- Occasionally selecting alternate prompt routes
-- Slightly varying temperature or token budget
-
-Avoid randomness for:
-
-- Core facts
-- Safety constraints
-- Required output schema
-- Provider selection
-- Persistence behavior
-
-The engine accepts a random source so tests can seed it.
-
-```ts
-interface RandomSource {
-  float(): number;
-  choice<T>(items: T[]): T;
-  sample<T>(items: T[], count: number): T[];
-  weighted<T>(items: Array<{ value: T; weight: number }>): T;
+```json
+"routes": {
+  "raid": { "assembly_order": [...] },
+  "short": { "assembly_order": [...], "generation": { "max_tokens": 64 } }
 }
 ```
 
-## 5. Generation Runtime
-
-The runtime owns the generation lifecycle.
-
-Responsibilities:
-
-- Resolve active context.
-- Select route.
-- Build prompt package.
-- Apply config and builder overrides.
-- Call provider adapter.
-- Record prompt and metrics.
-- Retry if output fails validation.
-- Return normalized result and diagnostics.
-
-Suggested pipeline:
-
-```txt
-request
-  -> context_store.getActive()
-  -> router.select()
-  -> builder.build()
-  -> config_resolver.merge()
-  -> provider.generate()
-  -> output_processor.clean()
-  -> validator.accept_or_retry()
-  -> result
-```
-
-## Provider Adapter
-
-Provider-specific details stay behind an adapter. The engine uses a normalized generation request:
-
-```ts
-type ProviderRequest = {
-  model: string;
-  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
-  temperature: number;
-  maxTokens: number;
-  topP?: number;
-  topK?: number;
-  repeatPenalty?: number;
-  stream?: boolean;
-};
-```
-
-And a normalized response:
-
-```ts
-type ProviderResponse = {
-  text: string;
-  usage?: {
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
-  };
-  timing?: {
-    totalMs?: number;
-    loadMs?: number;
-    promptEvalMs?: number;
-    evalMs?: number;
-  };
-  raw?: unknown;
-};
-```
-
-Local models, hosted APIs, and mock providers all fit without changing prompt logic.
-
-## Debug Parameter Locking
-
-Normal usage may jitter parameters for natural variety. Debug mode needs exact repeatability. Lock mode:
-
-- No temperature jitter.
-- No token budget jitter.
-- Seeded random source if available.
-- Capture exact system prompt.
-- Capture exact user prompt.
-- Capture chosen route and injections.
-
-Single-step testing matches normal structure while staying inspectable.
-
-## 6. Output Processing
-
-Code-driven, not left entirely to the model. Common steps:
-
-- Trim whitespace.
-- Remove labels or prefixes.
-- Strip forbidden symbols.
-- Remove echoed input.
-- Enforce max length.
-- Validate required schema.
-- Deduplicate against recent outputs.
-- Append deterministic tokens or markup.
-- Reject and retry if invalid.
-
-Prompt rules guide the model. Output processors enforce the contract.
-
-Suggested interface:
-
-```ts
-type OutputProcessor = {
-  clean(text: string, ctx: ProcessingContext): string;
-  validate(text: string, ctx: ProcessingContext): ValidationResult;
-};
-
-type ValidationResult = {
-  ok: boolean;
-  reason?: string;
-};
-```
-
-## Streaming
-
-Some providers can emit tokens incrementally. The engine exposes this via
-`generate_stream(request)`, an async iterator of chunks:
-
-- Intermediate chunks carry a `delta` string.
-- The terminal chunk has `done=True` and a fully populated `GenerationResult`
-  so downstream callers pick up `accepted`, `route`, and an optional trace
-  without a second round.
-
-Providers declare support by implementing `stream()` alongside `generate()`.
-A helper `supports_streaming(provider)` lets the engine refuse the request
-cleanly when the adapter is non-streaming.
-
-Streaming runs the output processor exactly once on the aggregated buffer.
-Retries are skipped because replaying a stream mid-output is more
-surprising than useful — callers that need retry semantics fall back to
-`generate_once` when the terminal result is rejected. Both paths share a
-single pipeline: one buffer is cleaned, validated, recorded to run history,
-and passed through middleware.
-
-## Middleware
-
-Logging, metrics, caching, rate-limiting, and redaction don't belong inside
-builders or providers. The engine exposes a middleware hook around the
-generation path:
-
-```
-Middleware:
-  before(request) -> request | None
-  after(request, result) -> result | None
-```
-
-Either method may be sync or async. Returning `None` means pass-through.
-Middleware runs in registration order on the way in and reverse order on
-the way out, so outer wraps inner. Both `generate_once` and
-`generate_stream` use the same hooks.
-
-Middleware does NOT intercept provider calls, add retry semantics, or
-mutate prompt construction — those concerns live in the builder, output
-processor, and route config. Keeping middleware narrow preserves the
-invariant that all generation goes through one code path: schedulers,
-stepper debuggers, and middleware all see the same `GenerationResult`.
-
-## Prompt-Size Budget
-
-Accumulating overlays (iteration turns, user preferences, transient facts)
-can grow the built prompt past what the model or the surrounding app
-tolerates. `GenerationConfig` supports an optional `max_prompt_chars`
-budget (or per-route via `generation_overrides`). When set, the engine:
-
-1. Builds the prompt package normally.
-2. If `len(system) + len(user)` exceeds the budget, drops the
-   lowest-priority overlay from the snapshot and rebuilds.
-3. Repeats until the prompt fits or no overlays remain.
-
-Priority doubles as importance: higher applies first and drops last. Ties
-break on overlay name for determinism.
-
-Character count, not token count — provider-agnostic, no tokenizer
-dependency. Conservative relative to token budgets (tokens are usually 3–4
-chars each).
-
-The debug trace reports budget state under `metadata.budget`:
-`{budget_chars, final_chars, dropped, over_budget}`. If the prompt is
-still over budget after exhausting overlays, `over_budget=True` flags it
-rather than erroring — the engine never drops user-authored base context.
-
-## Programmatic Additions
-
-Some output features are better handled after generation:
-
-- Appending structured tokens
-- Expanding one generated marker into repeated markers
-- Selecting one item from a manifest
-- Enforcing allowed asset names
-- Removing unsupported model-invented tokens
-
-The pattern:
-
-1. Let the model decide natural language content.
-2. Let code enforce structured affordances.
-3. Keep generated text and programmatic additions separately inspectable.
-
-## Metrics and Inspection
-
-Every generation can return a debug envelope:
-
-```ts
-type GenerationTrace = {
-  route: string;
-  activeContext: string;
-  systemPrompt?: string;
-  userPrompt: string;
-  injections: string[];
-  config: GenerationConfig;
-  outputRaw: string;
-  outputFinal: string;
-  attempts: Array<{
-    raw: string;
-    cleaned: string;
-    accepted: boolean;
-    rejectReason?: string;
-  }>;
-  usage?: ProviderResponse["usage"];
-  timing?: ProviderResponse["timing"];
-};
-```
-
-A one-step debug UI uses the same context resolution, route selection, builders, model parameters, and post-processing as normal generation. The scheduler is paused and the output isn't emitted downstream; everything else is identical.
-
-## Scheduler Versus Stepper
-
-Generation is separate from scheduling.
-
-The scheduler decides when to call the engine repeatedly.
-The stepper calls the same engine once.
-
-Both use the same path:
-
-```txt
-generateOnce(request) -> GenerationResult
-```
-
-Then:
-
-- Scheduler loops over `generateOnce`.
-- Debug stepper invokes `generateOnce` manually.
-- Tests invoke `generateOnce` with seeded state.
-
-Debug behavior stays aligned with production.
-
-## Suggested Library Modules
-
-```txt
-prompt-engine/
-  config/
-    generationConfig.ts
-  context/
-    ContextStore.ts
-    OverlayStore.ts
-  assets/
-    PromptAssetRegistry.ts
-  routing/
-    PromptRouter.ts
-    PromptRoute.ts
-  builders/
-    CompositeBuilder.ts
-  runtime/
-    PromptEngine.ts
-    GenerationTrace.ts
-  providers/
-    ProviderAdapter.ts
-    LocalProviderAdapter.ts
-    MockProviderAdapter.ts
-  output/
-    OutputProcessor.ts
-  random/
-    RandomSource.ts
-```
-
-## Minimal Public API
-
-```ts
-const engine = new PromptEngine({
-  config,
-  contextStore,
-  assetRegistry,
-  router,
-  provider,
-  outputProcessor,
-  random,
-});
-
-const result = await engine.generateOnce({
-  mode: "default",
-  inputs: { subject: "..." },
-  debug: true,
-});
-```
-
-Result:
-
-```ts
-type GenerationResult = {
-  text: string;
-  accepted: boolean;
-  trace?: GenerationTrace;
-};
-```
-
-## Design Principles
-
-- Treat context as structured state before it becomes prose.
-- Treat prompt text as assets, not service code.
-- Use builders as small composition functions.
-- Use routing to make prompt mode selection explicit.
-- Use overlays for temporary truth.
-- Use code to enforce hard output constraints.
-- Use probabilistic modules for variety, but make them testable.
-- Keep provider APIs behind adapters.
-- Make every generation inspectable.
-- Ensure manual debug stepping and automated scheduling call the same generation path.
-
+`Engine.run(state, route="raid")` picks one. With no routes, the
+top-level fields are the only path. Routes are optional structural
+sugar — the same effect can be achieved by swapping which registry you
+load.
+
+## Item metadata fields
+
+Two fields appear on items in canonical exports but aren't consumed by
+the engine — they're authoring metadata for the studio:
+
+- **`runtime_variables: list[str]`** on items declares which template
+  vars the item *expects* the caller to fill. Useful for documentation,
+  for the studio to flag missing inputs, and for validators that want
+  to check coverage. `Engine.hydrate` doesn't enforce it; missing vars
+  just substitute as empty strings.
+- **`pre_context` / `pre_context:`** — string heading that prefixes
+  list-shaped content (`items` / `examples` array fields). The trailing
+  colon spelling is tolerated for legacy data; canonical is
+  `pre_context`.
+
+## What lives in the registry vs in the call
+
+In the registry:
+
+- All authored content (items, fragments, pre_context, template_vars)
+- Default selections / array modes / sliders (when you `Export Model JSON`)
+- Generation overrides + output policy
+
+In the per-call `state`:
+
+- Runtime template-var values (`{location}` → "the kitchen")
+- Selections and modes the caller wants to override
+
+The same JSON your editor exports is loadable as a self-contained model;
+the studio also lets you save snapshots in the browser's localStorage
+for quick switching during authoring.
+
+## What the engine does NOT do
+
+- It does not parse free-form natural language descriptions of prompts.
+- It does not multiplex providers within a single call.
+- It does not "chain" — that's a higher-level concern. Compose by
+  calling `Engine.run` multiple times with different states.
+- It does not validate semantic correctness of generated text beyond
+  what `OutputPolicy` regex/length checks express.
+
+## Why this shape
+
+The earlier iteration of the library shipped Routes, Overlays,
+Injections, Presets, and Pools as separate concepts. They each had
+their own merge/sample/select rule. Authoring a prompt meant learning
+four mental models and reasoning about how they composed. The registry
+collapses all of that into one shape (sections of items + an assembly
+order) with one set of orthogonal modifiers (runtime modes, fragments,
+sliders). Less to learn, less to round-trip, less to break.

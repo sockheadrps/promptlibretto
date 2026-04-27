@@ -61,6 +61,10 @@ function ensureModal() {
       </header>
       <div class="modal-body">
         <p class="hint">The studio sends prompt construction instructions to your browser, which then calls your local model directly. Nothing flows through the studio server.</p>
+        <div class="conn-cors-warning">
+          <strong>Heads up — CORS.</strong>
+          If this studio is hosted on a different origin than your LLM (e.g. <code>https://studio.example.com</code> calling your local <code>http://localhost:11434</code>), your Ollama / llama.cpp server needs to allow that origin. Set <code>OLLAMA_ORIGINS=<span class="conn-origin-hint">&lt;studio origin&gt;</span></code> before starting Ollama (or <code>*</code> if you don't care). Without it the browser's CORS check silently blocks the request and you'll see a "Can't reach server" failure that isn't actually a network problem.
+        </div>
         <div class="dialog-form">
           <label>Base URL
             <input type="text" id="conn-base-url" placeholder="http://localhost:11434" />
@@ -204,6 +208,8 @@ export function openConnectionModal() {
   const modal = ensureModal();
   writeForm(state);
   setStatus("");
+  const originEl = modal.querySelector(".conn-origin-hint");
+  if (originEl) originEl.textContent = window.location.origin;
   modal.hidden = false;
   // If we already have a URL, try to fetch models in the background.
   if (state.baseUrl) doTest({ manual: false });

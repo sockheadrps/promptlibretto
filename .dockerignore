@@ -1,0 +1,36 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+.venv/
+venv/
+env/
+
+.git/
+.github/
+.vscode/
+.idea/
+.claude/
+
+site/
+docs/
+promptlibretto_exports/
+data/
+
+tests/
+*.md
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Everything under studio/static/ is what we actually serve,
+# but scratch files the dev might have dropped here can go.
+*.log
+*.swp
+.DS_Store
