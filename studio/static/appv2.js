@@ -1338,24 +1338,92 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     refreshSectionPreviews();
   }
 
+  // Adopt a parsed registry dict as the current registry. Used by both
+  // the paste-JSON importer and the built-in examples modal.
+  function loadRegistryDict(parsed) {
+    registry = parsed.registry || parsed;
+    Object.keys(tvarValues).forEach((k) => delete tvarValues[k]);
+    const title = registry.title || "registry";
+    const ver = registry.version != null ? ` v${registry.version}` : "";
+    metaEl.textContent = `${title}${ver} · ${sectionKeys().length} sections`;
+    hydrateBtn.disabled = false;
+    if (exportBtn) exportBtn.disabled = false;
+    applyGenOverridesToInputs(registry.generation || {});
+    buildControls();
+  }
+
   importBtn.addEventListener("click", () => {
     const raw = prompt("Paste Registry JSON:");
     if (!raw) return;
     try {
-      const parsed = JSON.parse(raw);
-      registry = parsed.registry || parsed;
-      Object.keys(tvarValues).forEach((k) => delete tvarValues[k]);
-      const title = registry.title || "registry";
-      const ver = registry.version != null ? ` v${registry.version}` : "";
-      metaEl.textContent = `${title}${ver} · ${sectionKeys().length} sections`;
-      hydrateBtn.disabled = false;
-      if (exportBtn) exportBtn.disabled = false;
-      applyGenOverridesToInputs(registry.generation || {});
-      buildControls();
+      loadRegistryDict(JSON.parse(raw));
     } catch (e) {
       alert("Import failed: " + e.message);
     }
   });
+
+  // ─── Built-in examples modal ──────────────────────────────────
+  const examplesBtn = $("example-btn");
+  const examplesModal = $("examples-modal");
+  const examplesList = $("examples-list");
+
+  function closeExamplesModal() {
+    if (examplesModal) examplesModal.hidden = true;
+  }
+  document.querySelectorAll("[data-close-examples]").forEach((el) => {
+    el.addEventListener("click", closeExamplesModal);
+  });
+
+  async function openExamplesModal() {
+    if (!examplesModal || !examplesList) return;
+    examplesList.innerHTML = `<div class="muted" style="padding:8px">Loading…</div>`;
+    examplesModal.hidden = false;
+    try {
+      const res = await fetch("/static/examples/index.json", { cache: "no-cache" });
+      if (!res.ok) throw new Error(`manifest ${res.status}`);
+      const data = await res.json();
+      const items = (data.examples || []).map((ex, i) => {
+        const name = escapeHtml(ex.name || ex.file || `example_${i}`);
+        const desc = escapeHtml(ex.description || "");
+        return (
+          `<div class="snapshot-row">` +
+          `<div class="snapshot-meta">` +
+          `<div class="snapshot-row-name">${name}</div>` +
+          (desc ? `<div class="muted">${desc}</div>` : "") +
+          `</div>` +
+          `<div class="snapshot-actions">` +
+          `<button type="button" class="ghost-action small" data-example-load="${escapeHtml(
+            ex.file || ""
+          )}">Load</button>` +
+          `</div></div>`
+        );
+      });
+      examplesList.innerHTML = items.length
+        ? items.join("")
+        : `<div class="muted" style="padding:8px">No examples shipped.</div>`;
+      examplesList.querySelectorAll("[data-example-load]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const file = btn.dataset.exampleLoad;
+          if (!file) return;
+          try {
+            const r = await fetch(`/static/examples/${file}`, { cache: "no-cache" });
+            if (!r.ok) throw new Error(`fetch ${file} ${r.status}`);
+            loadRegistryDict(await r.json());
+            closeExamplesModal();
+          } catch (e) {
+            alert(`Failed to load ${file}: ${e.message}`);
+          }
+        });
+      });
+    } catch (e) {
+      examplesList.innerHTML =
+        `<div class="muted" style="color:var(--warn);padding:8px">` +
+        escapeHtml(`Failed to load examples: ${e.message}`) +
+        `</div>`;
+    }
+  }
+
+  if (examplesBtn) examplesBtn.addEventListener("click", openExamplesModal);
 
   hydrateBtn.addEventListener("click", () => {
     if (!registry) return;

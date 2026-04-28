@@ -1,0 +1,9 @@
+{
+  "examples": [
+    {
+      "file": "twitch_chatter.json",
+      "name": "Twitch Chatter",
+      "description": "Twitch viewer chat simulator. Personas, sentiments, and a raid runtime-injection. Demos every section type the studio supports."
+    }
+  ]
+}

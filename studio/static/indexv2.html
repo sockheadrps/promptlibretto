@@ -343,6 +343,20 @@
     </div>
   </div>
   
+  <div id="examples-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-examples></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="examples-title">
+      <header>
+        <h3 id="examples-title">Built-in examples</h3>
+        <button class="modal-close" type="button" data-close-examples aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="muted">Pick an example to load it as the current registry. Replaces whatever's in the panel.</p>
+        <div id="examples-list" class="snapshot-list"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="snapshot-export-modal" class="modal" hidden>
     <div class="modal-backdrop" data-close-snap-export></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="snap-export-title">
