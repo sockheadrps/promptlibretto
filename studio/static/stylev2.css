@@ -1610,7 +1610,7 @@ button.ghost.small { padding: 2px 8px; font-size: 11px; }
 
 /* Rendered markdown variant */
 .output-text.markdown {
-  white-space: normal;
+  white-space: pre-wrap;
   font-family: var(--font-body);
   font-size: 14px;
   line-height: 1.65;
@@ -1704,10 +1704,17 @@ button.ghost.small { padding: 2px 8px; font-size: 11px; }
   color: var(--muted);
   font-family: var(--font-body);
 }
+.prompt-stage .stage-group {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 .prompt-stage .stage-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1;
   min-height: 24px;
 }
 .prompt-stage .stage-empty { font-size: 12px; padding: 4px 2px; }

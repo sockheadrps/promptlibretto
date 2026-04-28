@@ -311,7 +311,9 @@ def _resolve_token_struct(
     evaluated: dict[str, Any],
     rng: _random.Random,
 ) -> Optional[dict[str, Any]]:
-    # sentiment.scale: synthetic token
+    # sentiment.scale: synthetic token. Phrasing is overridable via the
+    # sentiment section's `scale_template` field (with `{value}` and
+    # `{emotion}` placeholders); default is a neutral generic sentence.
     if token == "sentiment.scale":
         sel = evaluated.get("sentiment")
         if not sel or isinstance(sel, list):
@@ -326,11 +328,16 @@ def _resolve_token_struct(
             or sel.get("id")
             or "feeling"
         )
-        return {
-            "kind": "plain",
-            "text": f"on a scale of 1-10 chat is {int(value)} on {emotion}",
-            "section": "sentiment",
-        }
+        sentiment_section = reg.sections.get("sentiment")
+        # Section dataclass stores unknown extras in `items`-adjacent fields
+        # via from_dict; scale_template comes through the underlying dict.
+        tmpl = (
+            getattr(sentiment_section, "scale_template", None)
+            if sentiment_section
+            else None
+        ) or "On a scale of 1-10, intensity is {value} on {emotion}."
+        text = tmpl.replace("{value}", str(int(value))).replace("{emotion}", emotion)
+        return {"kind": "plain", "text": text, "section": "sentiment"}
 
     m = _BRACKET_RE.match(token)
     if m:
@@ -468,6 +475,15 @@ def hydrate(
     *seed*: deterministic randomness for tests; omit for fresh rolls.
     """
     state = state or HydrateState()
+    # Fold per-section template_var_defaults into state.template_vars so
+    # registries that ship example values render meaningfully even when
+    # the caller didn't pass an explicit state. Caller-provided values
+    # win — defaults only fill gaps.
+    for sec_key, sec in reg.sections.items():
+        for v, default in (sec.template_var_defaults or {}).items():
+            key = f"{sec_key}::{v}"
+            if key not in state.template_vars or state.template_vars[key] == "":
+                state.template_vars[key] = "" if default is None else str(default)
     rng = _random.Random(seed)
 
     order = list(reg.assembly_order)

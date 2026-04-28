@@ -56,7 +56,6 @@
           <div class="registry-actions">
             <button id="registry-import-btn" type="button" class="ghost-action small">Import JSON…</button>
             <button id="registry-export-btn" type="button" class="ghost-action small" disabled>Export Model JSON</button>
-            <button id="registry-hydrate-btn" type="button" class="ghost-action small" disabled>Hydrate → User Input</button>
             <span id="registry-meta" class="muted registry-meta">No registry loaded</span>
           </div>
           <div id="registry-controls" class="registry-controls"></div>
@@ -86,6 +85,50 @@
             <label title="How many times to retry if the response fails the output policy (e.g. forbidden patterns, length limits). 0 disables retries."><span>retries <small class="help-mark">?</small></span><input id="cfg-retries" type="number" step="1" min="0" max="5" /></label>
             <label title="Cap the outgoing prompt length in characters. Useful when the model has a context window limit you don't want to exceed."><span>max_prompt_chars <small class="help-mark">?</small></span><input id="cfg-max_prompt_chars" type="number" step="100" min="0" placeholder="off" /></label>
           </div>
+        </fieldset>
+
+        <fieldset class="field policy-editor" id="output-policy-editor">
+          <legend class="field-label">Output Policy</legend>
+          <div class="policy-row">
+            <label>
+              <span class="policy-label">Min length</span>
+              <input id="op-min-length" type="number" min="0" placeholder="—" />
+            </label>
+            <label>
+              <span class="policy-label">Max length</span>
+              <input id="op-max-length" type="number" min="0" placeholder="—" />
+            </label>
+          </div>
+          <div class="policy-row">
+            <label class="policy-check">
+              <input id="op-collapse-ws" type="checkbox" />
+              <span class="policy-label">Collapse whitespace</span>
+            </label>
+          </div>
+          <label class="policy-field">
+            <span class="policy-label">Append suffix</span>
+            <input id="op-append-suffix" type="text" placeholder="—" />
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Strip prefixes <small class="muted">(one per line)</small></span>
+            <textarea id="op-strip-prefixes" rows="2" placeholder="e.g.&#10;Sure, here is"></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Strip patterns <small class="muted">(regex, one per line)</small></span>
+            <textarea id="op-strip-patterns" rows="2" placeholder="e.g.&#10;```[\s\S]*?```"></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Required patterns <small class="muted">(regex, one per line — output must match all)</small></span>
+            <textarea id="op-require-patterns" rows="2" placeholder="e.g.&#10;^\d+\."></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Forbidden substrings <small class="muted">(one per line)</small></span>
+            <textarea id="op-forbidden-subs" rows="2" placeholder='e.g.&#10;username:'></textarea>
+          </label>
+          <label class="policy-field">
+            <span class="policy-label">Forbidden patterns <small class="muted">(regex, one per line)</small></span>
+            <textarea id="op-forbidden-pats" rows="2" placeholder="e.g.&#10;(?i)as an ai"></textarea>
+          </label>
         </fieldset>
       </div>
     </section>
@@ -139,14 +182,14 @@
         <div class="output-panel-body" data-output-tab="stage" hidden>
           <div id="prompt-stage" class="prompt-stage">
             <div class="stage-banner">
-              <span class="muted">Drag sections to reorder. Click <em>Generate</em> to send this exact order.</span>
+              <span class="muted">Resolved prompt. Click <em>Generate</em> to send this to the model.</span>
               <span class="spacer"></span>
-              <button id="stage-reset" type="button" class="ghost small" title="Discard ordering and go back to the live prompt">Reset</button>
+              <button id="stage-reset" type="button" class="ghost small" title="Discard and re-run Pre-generate">Reset</button>
             </div>
-            <div class="stage-empty-root muted" hidden>Click <strong>Pre-generate</strong> to resolve the current prompt into draggable sections.</div>
+            <div class="stage-empty-root muted" hidden>Click <strong>Pre-generate</strong> to resolve the current prompt.</div>
             <div class="stage-group" data-group="user">
               <div class="stage-list" data-list="user"></div>
-              <div class="stage-empty muted" data-empty="user">(no prompt yet — click Pre-generate)</div>
+              <div class="stage-empty muted" data-empty="user">(click Pre-generate to resolve the prompt)</div>
             </div>
           </div>
         </div>

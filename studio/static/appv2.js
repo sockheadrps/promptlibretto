@@ -86,7 +86,6 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
 // engine's existing route/base flow.
 (() => {
   const importBtn = $("registry-import-btn");
-  const hydrateBtn = $("registry-hydrate-btn");
   const metaEl = $("registry-meta");
   const controlsEl = $("registry-controls");
   const tuningControlsEl = $("registry-controls-tuning");
@@ -119,22 +118,6 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     output_prompt_directions: "Output Directions",
     examples: "Examples",
     prompt_endings: "Prompt Endings",
-  };
-  const PRIMARY_FIELD = {
-    base_context: "text",
-    personas: "context",
-    sentiment: "context",
-    static_injections: "text",
-    runtime_injections: "text",
-    output_prompt_directions: "text",
-    prompt_endings: "text",
-  };
-  const ALIAS = {
-    persona: "personas",
-    sentiments: "sentiment",
-    injections: "static_injections",
-    ending: "prompt_endings",
-    endings: "prompt_endings",
   };
 
   // Strict per-section item schemas — match templatebuilder.html's output shape.
@@ -191,144 +174,12 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     if (!arrayModes[secKey]) arrayModes[secKey] = {};
     arrayModes[secKey][field] = mode;
   }
-  function applyArrayMode(arr, mode) {
-    if (!Array.isArray(arr) || !mode || mode === "all") return arr;
-    if (mode === "none") return [];
-    if (mode.startsWith("random:")) {
-      const k = Math.max(1, parseInt(mode.slice(7), 10) || 1);
-      const copy = arr.slice();
-      for (let i = copy.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [copy[i], copy[j]] = [copy[j], copy[i]];
-      }
-      return copy.slice(0, Math.min(k, copy.length));
-    }
-    if (mode.startsWith("index:")) {
-      const i = parseInt(mode.slice(6), 10) || 0;
-      return arr[i] !== undefined ? [arr[i]] : [];
-    }
-    return arr;
-  }
-
   function sectionKeys() {
     return Object.keys(registry).filter((k) =>
       registry[k] && typeof registry[k] === "object" && Array.isArray(registry[k].items)
     );
   }
 
-  function resolveSectionKey(name) {
-    if (registry && registry[name]) return name;
-    if (ALIAS[name] && registry && registry[ALIAS[name]]) return ALIAS[name];
-    return null;
-  }
-
-  function applyTemplateVars(text, sectionKey) {
-    if (!text || typeof text !== "string") return text;
-    const sec = registry[sectionKey];
-    if (!sec || !sec.template_vars) return text;
-    for (const v of sec.template_vars) {
-      const val = tvarValues[`${sectionKey}::${v}`] ?? "";
-      const bare = v.replace(/^\{|\}$/g, "");
-      // Only replace the canonical `{name}` form — substituting on the
-      // bare name would clobber substrings inside other words.
-      text = text.split(`{${bare}}`).join(val);
-    }
-    return text;
-  }
-
-  // Tolerate the trailing-colon typo `pre_context:` alongside the canonical
-  // `pre_context` key.
-  function getPreContext(item) {
-    if (!item) return null;
-    return item.pre_context ?? item["pre_context:"] ?? null;
-  }
-
-  // Build a list-shaped struct (resolved, but not yet rendered to text).
-  // Returns null when the array mode resolves to nothing (e.g. "none"),
-  // so the token gets dropped from the assembly entirely.
-  function listStruct(items, preContext, secKey, fieldName) {
-    const filtered = applyArrayMode(items, getArrayMode(secKey, fieldName));
-    if (!filtered.length) return null;
-    return {
-      kind: "list",
-      items: filtered.map((x) => applyTemplateVars(String(x), secKey)),
-      preContext: preContext
-        ? applyTemplateVars(String(preContext), secKey)
-        : null,
-      section: secKey,
-    };
-  }
-
-  function plainStruct(text, secKey) {
-    return {
-      kind: "plain",
-      text: applyTemplateVars(String(text), secKey),
-      section: secKey,
-    };
-  }
-
-  // Render a struct to its final text. Bullet rule: bullets if pre_context
-  // is set OR there are 2+ items; a lone value with no pre_context renders
-  // as a plain line.
-  function structToText(s) {
-    if (!s) return "";
-    if (s.kind === "plain") return s.text;
-    const useBullets = !!s.preContext || s.items.length >= 2;
-    const joined = useBullets
-      ? s.items.map((x) => `- ${x}`).join("\n")
-      : s.items.join("\n");
-    return s.preContext ? s.preContext + "\n" + joined : joined;
-  }
-
-  // Fields that, when rendered, get prefixed by the item's `pre_context`
-  // (a free-form intro line written before the list itself, single \n
-  // between).
-  const PRE_CONTEXT_FIELDS = new Set(["items", "examples"]);
-
-  // Resolve `item.field` to a struct (list or plain). Returns null if
-  // the field is missing/empty.
-  //
-  // Special case: when `field == "text"` and the item carries a
-  // `fragments` array, the rendered text is `item.text` (always-shown)
-  // followed by each surviving fragment joined with " ". A fragment with
-  // an `if_var` that has no template-var value is skipped — that's how
-  // unused vars don't leave broken sentences in the output.
-  function renderFragments(item, secKey) {
-    const pieces = [];
-    if (typeof item.text === "string" && item.text.trim()) {
-      pieces.push(applyTemplateVars(item.text, secKey));
-    }
-    for (const f of item.fragments || []) {
-      if (!f || typeof f !== "object") continue;
-      const ifVar = f.if_var || f.var || "";
-      if (ifVar) {
-        const val = tvarValues[`${secKey}::${ifVar}`];
-        if (!val || !String(val).trim()) continue;
-      }
-      const text = applyTemplateVars(String(f.text || ""), secKey);
-      if (text.trim()) pieces.push(text);
-    }
-    return pieces.join(" ").trim();
-  }
-
-  function fieldStruct(item, field, secKey) {
-    if (!item) return null;
-    if (
-      field === "text" &&
-      Array.isArray(item.fragments) &&
-      item.fragments.length
-    ) {
-      const out = renderFragments(item, secKey);
-      return out ? { kind: "plain", text: out, section: secKey } : null;
-    }
-    const v = item[field];
-    if (v === undefined || v === null || v === "") return null;
-    if (Array.isArray(v)) {
-      const pc = PRE_CONTEXT_FIELDS.has(field) ? getPreContext(item) : null;
-      return listStruct(v, pc, secKey, field);
-    }
-    return plainStruct(v, secKey);
-  }
 
   // Only these array fields get a per-field runtime mode selector
   // (the user explicitly asked for nudges/examples; pool-shaped sections
@@ -375,20 +226,52 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     }
   }
 
-  // Section-level "random 1" toggle: when on, hydrate picks a random item
-  // from sec.items[] regardless of the dropdown selection. Disabled for
-  // base_context per the design.
+  // ── Output Policy editor (Tuning tab) ──────────────────────
+  function populatePolicyEditor(policy) {
+    const p = policy || {};
+    const set = (id, v) => { const el = $(id); if (el) el.value = v; };
+    const setChk = (id, v) => { const el = $(id); if (el) el.checked = !!v; };
+    set("op-min-length", p.min_length != null ? p.min_length : "");
+    set("op-max-length", p.max_length != null ? p.max_length : "");
+    setChk("op-collapse-ws", p.collapse_whitespace !== false);
+    set("op-append-suffix", p.append_suffix || "");
+    set("op-strip-prefixes", (p.strip_prefixes || []).join("\n"));
+    set("op-strip-patterns", (p.strip_patterns || []).join("\n"));
+    set("op-require-patterns", (p.require_patterns || []).join("\n"));
+    set("op-forbidden-subs", (p.forbidden_substrings || []).join("\n"));
+    set("op-forbidden-pats", (p.forbidden_patterns || []).join("\n"));
+  }
+
+  function readPolicyEditor() {
+    const out = {};
+    const minLen = ($("op-min-length") || {}).value;
+    const maxLen = ($("op-max-length") || {}).value;
+    if (minLen != null && String(minLen).trim() !== "") out.min_length = parseInt(minLen, 10);
+    if (maxLen != null && String(maxLen).trim() !== "") out.max_length = parseInt(maxLen, 10);
+    const colEl = $("op-collapse-ws");
+    if (colEl && !colEl.checked) out.collapse_whitespace = false;
+    const suffix = (($("op-append-suffix") || {}).value || "").trim();
+    if (suffix) out.append_suffix = suffix;
+    const lines = (id) => {
+      const el = $(id);
+      return el ? el.value.split("\n").map((s) => s.trim()).filter(Boolean) : [];
+    };
+    const sp = lines("op-strip-prefixes");
+    const spat = lines("op-strip-patterns");
+    const rp = lines("op-require-patterns");
+    const fs = lines("op-forbidden-subs");
+    const fp = lines("op-forbidden-pats");
+    if (sp.length) out.strip_prefixes = sp;
+    if (spat.length) out.strip_patterns = spat;
+    if (rp.length) out.require_patterns = rp;
+    if (fs.length) out.forbidden_substrings = fs;
+    if (fp.length) out.forbidden_patterns = fp;
+    return Object.keys(out).length ? out : null;
+  }
+
   const sectionRandom = {};
-  // Per-section integer slider value (1–10). Currently only `sentiment` uses
-  // this — drives the `sentiment.scale` assembly token.
   const sectionSliders = {};
-  // When true for a section, the slider value is re-rolled at hydrate time
-  // (every Pre-generate / Generate picks a fresh 1–10).
   const sectionSliderRandom = {};
-  // sentiment id → emotion noun used in `sentiment.scale`. Sentiment items
-  // can override this via a `scale_emotion` field; otherwise we fall back
-  // to this map, then to the item's id.
-  const SENTIMENT_EMOTIONS = { positive: "excited", negative: "annoyed" };
   function sectionRandomEligible(key) {
     if (!registry || !registry[key]) return false;
     return !!registry[key].required && key !== "base_context";
@@ -418,217 +301,6 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     }
     return s;
   }
-
-  // Evaluation snapshot used by hydrate(): respects sectionRandom toggles
-  // (pick a random item from sec.items[] when enabled).
-  function evaluateSelections() {
-    const s = readState();
-    for (const key of sectionKeys()) {
-      const sec = registry[key];
-      if (sectionRandom[key] && sec.items && sec.items.length) {
-        const i = Math.floor(Math.random() * sec.items.length);
-        s[key] = sec.items[i];
-      }
-    }
-    return s;
-  }
-
-  // Combine multiple structs from a multi-select into a single struct.
-  // If they're all list-shaped, concatenate items (use the first
-  // non-empty pre_context). Otherwise concatenate text bodies.
-  function combineStructs(structs, secKey) {
-    const nonEmpty = structs.filter(Boolean);
-    if (!nonEmpty.length) return null;
-    const allLists = nonEmpty.every((s) => s.kind === "list");
-    if (allLists) {
-      const items = nonEmpty.flatMap((s) => s.items);
-      const pc = nonEmpty.find((s) => s.preContext);
-      return {
-        kind: "list",
-        items,
-        preContext: pc ? pc.preContext : null,
-        section: secKey,
-      };
-    }
-    const text = nonEmpty.map(structToText).filter(Boolean).join("\n\n");
-    return text ? plainStruct(text, secKey) : null;
-  }
-
-  function resolveTokenStruct(token, st) {
-    // Special: sentiment.scale → "on a scale of 1-10 chat is N on <emotion>"
-    if (token === "sentiment.scale") {
-      const sel = st.sentiment;
-      if (!sel || Array.isArray(sel)) return null;
-      const value = sectionSliderRandom.sentiment
-        ? Math.floor(Math.random() * 10) + 1
-        : sectionSliders.sentiment != null
-        ? sectionSliders.sentiment
-        : 5;
-      const emotion =
-        sel.scale_emotion ||
-        SENTIMENT_EMOTIONS[sel.id] ||
-        sel.id ||
-        "feeling";
-      return plainStruct(
-        `on a scale of 1-10 chat is ${value} on ${emotion}`,
-        "sentiment"
-      );
-    }
-    const bracket = token.match(/^([a-z_]+)\[([^\]]+)\]$/i);
-    if (bracket) {
-      const [, secName, innerExpr] = bracket;
-      const secKey = resolveSectionKey(secName);
-      if (!secKey) return null;
-      const innerVal = structToText(resolveTokenStruct(innerExpr, st));
-      if (!innerVal) return null;
-      const sec = registry[secKey];
-      const match = (sec.items || []).find((it) => (it.name || it.id) === innerVal);
-      if (!match) return null;
-      if (Array.isArray(match.items)) {
-        return listStruct(match.items, getPreContext(match), secKey, "items");
-      }
-      return fieldStruct(match, PRIMARY_FIELD[secKey] || "text", secKey);
-    }
-    const parts = token.split(".");
-    const secKey = resolveSectionKey(parts[0]);
-    if (!secKey) return null;
-    const sec = registry[secKey];
-    const sel = st[secKey];
-    if (parts.length === 1) {
-      if (Array.isArray(sel)) {
-        const structs = sel
-          .map((it) => fieldStruct(it, PRIMARY_FIELD[secKey] || "text", secKey))
-          .filter(Boolean);
-        return combineStructs(structs, secKey);
-      }
-      if (sel) {
-        if (Array.isArray(sel.items)) {
-          return listStruct(sel.items, getPreContext(sel), secKey, "items");
-        }
-        return fieldStruct(sel, PRIMARY_FIELD[secKey] || "text", secKey);
-      }
-      return null;
-    }
-    const sub = parts.slice(1).join(".");
-    if (sel && !Array.isArray(sel) && sel[sub] !== undefined) {
-      return fieldStruct(sel, sub, secKey);
-    }
-    if (Array.isArray(sel)) {
-      const structs = sel.map((it) => fieldStruct(it, sub, secKey)).filter(Boolean);
-      const combined = combineStructs(structs, secKey);
-      if (combined) return combined;
-    }
-    const pool = (sec.items || []).find((it) => (it.name || it.id) === sub);
-    if (pool) {
-      if (Array.isArray(pool.items)) {
-        return listStruct(pool.items, getPreContext(pool), secKey, "items");
-      }
-      return fieldStruct(pool, PRIMARY_FIELD[secKey] || "text", secKey);
-    }
-    // Fallback: pool-shaped selection (item with items[])
-    if (sel && !Array.isArray(sel) && Array.isArray(sel.items)) {
-      return listStruct(sel.items, getPreContext(sel), secKey, "items");
-    }
-    if (Array.isArray(sel)) {
-      const pools = sel
-        .filter((it) => Array.isArray(it.items))
-        .map((it) => listStruct(it.items, getPreContext(it), secKey, "items"));
-      const combined = combineStructs(pools, secKey);
-      if (combined) return combined;
-    }
-    return null;
-  }
-
-  function tokenSection(token) {
-    const bracket = token.match(/^([a-z_]+)\[/i);
-    if (bracket) return resolveSectionKey(bracket[1]) || bracket[1];
-    const head = token.split(".")[0];
-    return resolveSectionKey(head) || head;
-  }
-
-  function hydrate() {
-    if (!registry) return "";
-    const st = evaluateSelections();
-    const order = registry.assembly_order || [];
-
-    // Active runtime injections (UI-checked). When any are active, restrict
-    // the rendered tokens to their union of include_sections — plus their
-    // text(s) get appended at the very end.
-    const activeInjections = Array.isArray(st.runtime_injections)
-      ? st.runtime_injections
-      : [];
-    let allowedSections = null;
-    if (activeInjections.length) {
-      allowedSections = new Set(["runtime_injections"]);
-      for (const inj of activeInjections) {
-        const incs = Array.isArray(inj.include_sections) ? inj.include_sections : [];
-        for (const s of incs) allowedSections.add(s);
-      }
-    }
-
-    // 1) Resolve every token to a struct.
-    const resolved = [];
-    for (const tok of order) {
-      const tokSec = tokenSection(tok);
-      if (allowedSections && !allowedSections.has(tokSec)) continue;
-      const s = resolveTokenStruct(tok, st);
-      if (!s) continue;
-      resolved.push({ ...s, _section: tokSec });
-    }
-
-    // 2) Merge adjacent list structs into one bulleted list when:
-    //    • both have the same non-empty pre_context (shared heading), OR
-    //    • the previous one has a pre_context and the current has none
-    //      (current is a continuation of the previous heading).
-    //    A list with its own different pre_context starts a new block.
-    //    `prompt_endings` is structurally trailing — never merges.
-    const NO_MERGE_SECTIONS = new Set(["prompt_endings"]);
-    const merged = [];
-    for (const s of resolved) {
-      const last = merged[merged.length - 1];
-      const canMerge =
-        last &&
-        last.kind === "list" &&
-        s.kind === "list" &&
-        last.preContext &&
-        (s.preContext == null || s.preContext === last.preContext) &&
-        !NO_MERGE_SECTIONS.has(s._section) &&
-        !NO_MERGE_SECTIONS.has(last._section);
-      if (canMerge) {
-        last.items = last.items.concat(s.items);
-      } else {
-        merged.push(
-          s.kind === "list" ? { ...s, items: s.items.slice() } : { ...s }
-        );
-      }
-    }
-
-    // 3) Render with section-aware glue (\n within section, \n\n between).
-    let out = "";
-    let prevSection = null;
-    for (const s of merged) {
-      const text = structToText(s);
-      if (!text) continue;
-      if (out) out += s._section === prevSection ? "\n" : "\n\n";
-      out += text;
-      prevSection = s._section;
-    }
-    let final = out.replace(/\n{3,}/g, "\n\n").trim();
-
-    // 4) Append active runtime-injection text(s), template-vars filled in.
-    if (activeInjections.length) {
-      const injTexts = activeInjections
-        .map((inj) =>
-          applyTemplateVars(String(inj.text || ""), "runtime_injections").trim()
-        )
-        .filter(Boolean);
-      if (injTexts.length) {
-        final = (final ? final + "\n\n" : "") + injTexts.join("\n\n");
-      }
-    }
-    return final;
-  }
-
 
   function arrayFieldsForSelection(sel) {
     if (!sel) return [];
@@ -1339,17 +1011,49 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   }
 
   // Adopt a parsed registry dict as the current registry. Used by both
-  // the paste-JSON importer and the built-in examples modal.
+  // the paste-JSON importer and the built-in examples modal. Lifts any
+  // baked tool-state (`selected`, `section_random`, `array_modes`,
+  // `slider`, `slider_random`) out of each section and into the
+  // matching runtime state objects so a registry exported with those
+  // fields round-trips on import.
   function loadRegistryDict(parsed) {
     registry = parsed.registry || parsed;
     Object.keys(tvarValues).forEach((k) => delete tvarValues[k]);
+    Object.keys(arrayModes).forEach((k) => delete arrayModes[k]);
+    Object.keys(sectionRandom).forEach((k) => delete sectionRandom[k]);
+    Object.keys(sectionSliders).forEach((k) => delete sectionSliders[k]);
+    Object.keys(sectionSliderRandom).forEach((k) => delete sectionSliderRandom[k]);
+
+    const bakedSelections = {};
+    for (const k of sectionKeys()) {
+      const sec = registry[k];
+      if (!sec) continue;
+      if (sec.selected !== undefined && sec.selected !== null) {
+        bakedSelections[k] = sec.selected;
+      }
+      if (typeof sec.section_random === "boolean") sectionRandom[k] = sec.section_random;
+      if (sec.array_modes && typeof sec.array_modes === "object") {
+        arrayModes[k] = { ...sec.array_modes };
+      }
+      if (typeof sec.slider === "number") sectionSliders[k] = sec.slider;
+      if (typeof sec.slider_random === "boolean") sectionSliderRandom[k] = sec.slider_random;
+      if (sec.template_var_defaults && typeof sec.template_var_defaults === "object") {
+        for (const [v, val] of Object.entries(sec.template_var_defaults)) {
+          if (val == null) continue;
+          tvarValues[`${k}::${v}`] = String(val);
+        }
+      }
+    }
+
     const title = registry.title || "registry";
     const ver = registry.version != null ? ` v${registry.version}` : "";
     metaEl.textContent = `${title}${ver} · ${sectionKeys().length} sections`;
-    hydrateBtn.disabled = false;
     if (exportBtn) exportBtn.disabled = false;
     applyGenOverridesToInputs(registry.generation || {});
+    populatePolicyEditor(registry.output_policy || {});
     buildControls();
+    applySelections(bakedSelections);
+    refreshSectionPreviews();
   }
 
   importBtn.addEventListener("click", () => {
@@ -1425,17 +1129,6 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
 
   if (examplesBtn) examplesBtn.addEventListener("click", openExamplesModal);
 
-  hydrateBtn.addEventListener("click", () => {
-    if (!registry) return;
-    const text = hydrate();
-    const ta = $("input-text");
-    if (ta) {
-      ta.value = text;
-      ta.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    refreshSectionPreviews();
-  });
-
   // ─── Snapshots (save / load current panel state) ─────────────
   const SNAP_KEY = "pl-registry-snapshots-v1";
 
@@ -1493,7 +1186,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   }
 
   function captureSnapshot(name) {
-    return {
+    const snap = {
       name,
       savedAt: new Date().toISOString(),
       registry: JSON.parse(JSON.stringify(registry)),
@@ -1504,6 +1197,9 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       sectionSliderRandom: JSON.parse(JSON.stringify(sectionSliderRandom)),
       tvarValues: JSON.parse(JSON.stringify(tvarValues)),
     };
+    const policy = readPolicyEditor();
+    if (policy) snap.output_policy = policy;
+    return snap;
   }
 
   function restoreSnapshot(snap) {
@@ -1523,9 +1219,9 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     const title = registry.title || "registry";
     const ver = registry.version != null ? ` v${registry.version}` : "";
     metaEl.textContent = `${title}${ver} · ${sectionKeys().length} sections`;
-    hydrateBtn.disabled = false;
     if (exportBtn) exportBtn.disabled = false;
     applyGenOverridesToInputs(registry.generation || snap.generation || {});
+    populatePolicyEditor(snap.output_policy || registry.output_policy || {});
     buildControls();
     applySelections(snap.selections || {});
     refreshSectionPreviews();
@@ -1663,6 +1359,8 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     }
     const overrides = readGenOverrides();
     if (Object.keys(overrides).length) out.generation = overrides;
+    const policy = readPolicyEditor();
+    if (policy) out.output_policy = policy;
     return { registry: out };
   }
 
@@ -1764,19 +1462,25 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     };
   }
 
+  async function backendHydrate() {
+    const state = snapshotActiveState();
+    const resp = await fetch("/api/registry/hydrate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ registry, state }),
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`hydrate failed (${resp.status}): ${err}`);
+    }
+    const data = await resp.json();
+    return data.prompt || "";
+  }
+
   const generateBtn = $("generate-btn");
   if (generateBtn) {
     generateBtn.addEventListener("click", async () => {
       if (!registry) return;
-      const prompt = hydrate();
-      const ta = $("input-text");
-      if (ta) {
-        ta.value = prompt;
-        ta.dispatchEvent(new Event("input", { bubbles: true }));
-        ta.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-      const outputTab = document.querySelector('.output-tab[data-output-tab="output"]');
-      if (outputTab) outputTab.click();
 
       const rendered = $("output-rendered");
       const raw = $("output-raw");
@@ -1787,6 +1491,25 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         }
         if (raw) raw.value = text;
       };
+
+      const outputTab = document.querySelector('.output-tab[data-output-tab="output"]');
+      if (outputTab) outputTab.click();
+      setOutput("(building prompt…)");
+
+      let prompt;
+      try {
+        prompt = await backendHydrate();
+      } catch (e) {
+        setOutput(`error building prompt: ${e.message}`);
+        return;
+      }
+
+      const ta = $("input-text");
+      if (ta) {
+        ta.value = prompt;
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+        ta.dispatchEvent(new Event("change", { bubbles: true }));
+      }
       setOutput("(generating…)");
 
       const conn = getConnection();
@@ -1866,40 +1589,181 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   if (pregenBtn) {
     pregenBtn.addEventListener(
       "click",
-      (e) => {
+      async (e) => {
         if (!registry) return;
         e.stopImmediatePropagation();
         e.preventDefault();
-        const text = hydrate();
-        // Stash the pre-generated prompt as the engine's user input so a
-        // subsequent Generate sends exactly this text to the LLM.
+
+        const stageTab = document.querySelector('.output-tab[data-output-tab="stage"]');
+        if (stageTab) stageTab.click();
+
+        const stage = $("prompt-stage");
+        const showInStage = (text, isError) => {
+          if (!stage) return;
+          const userList = stage.querySelector('[data-list="user"]');
+          const sysList = stage.querySelector('[data-list="system"]');
+          if (sysList) sysList.innerHTML = "";
+          if (userList) {
+            userList.innerHTML = `<pre class="trace" style="white-space:pre-wrap;font-size:12px;padding:8px;margin:0;${isError ? "color:var(--error,#f44)" : ""}">${escapeHtml(text)}</pre>`;
+          }
+          stage.querySelectorAll(".stage-empty, .stage-empty-root").forEach(
+            (el) => (el.hidden = true)
+          );
+        };
+
+        showInStage("(building prompt…)");
+
+        let text;
+        try {
+          text = await backendHydrate();
+        } catch (e) {
+          showInStage(`error building prompt: ${e.message}`, true);
+          return;
+        }
+
+        showInStage(text || "(empty — no tokens resolved)");
+
         const ta = $("input-text");
         if (ta) {
           ta.value = text;
           ta.dispatchEvent(new Event("input", { bubbles: true }));
           ta.dispatchEvent(new Event("change", { bubbles: true }));
         }
-        const stage = $("prompt-stage");
-        if (stage) {
-          const userList = stage.querySelector('[data-list="user"]');
-          const sysList = stage.querySelector('[data-list="system"]');
-          if (sysList) sysList.innerHTML = "";
-          if (userList) {
-            userList.innerHTML =
-              `<pre class="trace" style="white-space:pre-wrap;font-size:12px;padding:8px;margin:0">${escapeHtml(
-                text || "(empty — no tokens resolved)"
-              )}</pre>`;
-          }
-          stage.querySelectorAll(".stage-empty, .stage-empty-root").forEach(
-            (el) => (el.hidden = true)
-          );
-        }
-        const stageTab = document.querySelector('.output-tab[data-output-tab="stage"]');
-        if (stageTab) stageTab.click();
         const badge = $("stage-tab-badge");
         if (badge) badge.hidden = false;
       },
       true
     );
   }
+
+  // ── ? Help modal ───────────────────────────────────────────────
+  const HELP = {
+    compose: {
+      title: "Compose",
+      body: `<p>Import a registry JSON and configure its sections here.</p>
+        <ul>
+          <li><strong>Import JSON</strong> — paste or load a registry. Sections appear below once loaded.</li>
+          <li><strong>Each section</strong> — select an item from the dropdown (required sections) or check items (optional). Toggle random to let the backend pick at runtime.</li>
+          <li><strong>Array modes</strong> — for list fields (nudges, examples, items) choose all, none, a specific index, or random:K.</li>
+          <li><strong>Template vars</strong> — fill in <code>{placeholder}</code> values that get substituted when the prompt is built.</li>
+        </ul>
+        <p>Hit <strong>Pre-generate</strong> to see the resolved prompt, then <strong>Generate</strong> to send it to your local Ollama.</p>`,
+    },
+    state: {
+      title: "Tuning",
+      body: `<p>Per-generation knobs that don't change the registry structure.</p>
+        <ul>
+          <li><strong>Registry — Tuning Sections</strong> — slider and per-item controls for sections that support them (e.g. the sentiment intensity slider).</li>
+          <li><strong>Generation Overrides</strong> — temperature, top_p, top_k, max_tokens, repeat_penalty, retries. Empty fields use the registry's defaults.</li>
+          <li><strong>Output Policy</strong> — min/max length, required patterns, forbidden substrings, strip prefixes, collapse whitespace. Applied by the Python engine on the backend.</li>
+        </ul>`,
+    },
+    registry: {
+      title: "Registry",
+      body: `<p>A <strong>registry</strong> is a JSON object that defines everything about a prompt: its sections, items, assembly order, generation defaults, and output policy.</p>
+        <ul>
+          <li><strong>Sections</strong> — named blocks of content (personas, sentiment, examples, etc). Each has items and an optional set of runtime controls.</li>
+          <li><strong>assembly_order</strong> — dot-notation tokens that determine what goes into the final prompt and in what order (e.g. <code>persona.context</code>, <code>sentiment.scale</code>).</li>
+          <li><strong>Runtime injections</strong> — optional fragments that, when active, filter the prompt down to only the sections they list, then append their own text.</li>
+        </ul>
+        <p>Use <strong>Export JSON</strong> to save the current state (selections, modes, sliders) back into a registry file you can reload later.</p>`,
+    },
+    output: {
+      title: "Output",
+      body: `<p>The Output panel has three tabs:</p>
+        <ul>
+          <li><strong>Output</strong> — the model's response, rendered with whitespace preserved.</li>
+          <li><strong>Pre-generate</strong> — the fully resolved prompt as the Python library assembled it. Review it before sending to Ollama.</li>
+          <li><strong>Raw</strong> — editable copy of the response text.</li>
+        </ul>
+        <p>The meta strip below the tabs shows model, acceptance status, timing, and token count.</p>`,
+    },
+    trace: {
+      title: "Debug Trace",
+      body: `<p>Shows the internals of the last generation:</p>
+        <ul>
+          <li><strong>User prompt</strong> — the exact text sent to Ollama.</li>
+          <li><strong>Active state</strong> — selections, array modes, sliders, and template vars at generation time.</li>
+          <li><strong>Config</strong> — connection details and generation overrides actually used.</li>
+          <li><strong>Attempts / Usage</strong> — response text and token usage from Ollama.</li>
+        </ul>`,
+    },
+  };
+
+  const helpModal = $("modal");
+  const helpTitle = $("modal-title");
+  const helpBody = $("modal-body");
+
+  function openHelp(key) {
+    const entry = HELP[key];
+    if (!entry || !helpModal) return;
+    if (helpTitle) helpTitle.textContent = entry.title;
+    if (helpBody) helpBody.innerHTML = entry.body;
+    helpModal.hidden = false;
+  }
+  function closeHelp() {
+    if (helpModal) helpModal.hidden = true;
+  }
+
+  document.querySelectorAll("button.help").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openHelp(btn.dataset.help);
+    });
+  });
+  if (helpModal) {
+    helpModal.addEventListener("click", (e) => {
+      if (e.target.dataset && e.target.dataset.close !== undefined) closeHelp();
+    });
+  }
+
+  // ── About / Tour slideshow ──────────────────────────────────────
+  const aboutModal = document.getElementById("about-modal");
+  if (aboutModal) {
+    const aboutSlides = aboutModal.querySelectorAll(".about-slide");
+    const aboutDots = aboutModal.querySelector(".about-dots");
+    const aboutPrev = document.getElementById("about-prev");
+    const aboutNext = document.getElementById("about-next");
+    let aboutIdx = 0;
+
+    for (let i = 0; i < aboutSlides.length; i++) {
+      const dot = document.createElement("button");
+      dot.className = "about-dot" + (i === 0 ? " active" : "");
+      dot.type = "button";
+      dot.addEventListener("click", () => goToSlide(i));
+      if (aboutDots) aboutDots.appendChild(dot);
+    }
+
+    function goToSlide(idx) {
+      aboutSlides[aboutIdx].classList.remove("active");
+      if (aboutDots) aboutDots.children[aboutIdx].classList.remove("active");
+      aboutIdx = idx;
+      aboutSlides[aboutIdx].classList.add("active");
+      if (aboutDots) aboutDots.children[aboutIdx].classList.add("active");
+      if (aboutPrev) aboutPrev.disabled = aboutIdx === 0;
+      if (aboutNext) aboutNext.disabled = aboutIdx === aboutSlides.length - 1;
+    }
+
+    if (aboutPrev) aboutPrev.addEventListener("click", () => { if (aboutIdx > 0) goToSlide(aboutIdx - 1); });
+    if (aboutNext) aboutNext.addEventListener("click", () => { if (aboutIdx < aboutSlides.length - 1) goToSlide(aboutIdx + 1); });
+
+    aboutModal.addEventListener("click", (e) => {
+      if (e.target.hasAttribute("data-close-about")) aboutModal.hidden = true;
+    });
+
+    const aboutBtn = document.getElementById("about-btn");
+    if (aboutBtn) aboutBtn.addEventListener("click", () => {
+      goToSlide(0);
+      aboutModal.hidden = false;
+    });
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (helpModal && !helpModal.hidden) closeHelp();
+      if (aboutModal && !aboutModal.hidden) aboutModal.hidden = true;
+    }
+  });
+
 })();

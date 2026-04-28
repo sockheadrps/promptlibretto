@@ -1,0 +1,90 @@
+{
+  "registry": {
+    "version": 22,
+    "title": "Email Drafter",
+    "description": "Drafts a short reply email. Pick a tone, fill recipient + intent, optionally add CC or urgency. Demonstrates conditional fragments and template variables.",
+    "assembly_order": [
+      "output_prompt_directions",
+      "base_context.text",
+      "persona.context",
+      "persona.base_directives",
+      "prompt_endings.endings"
+    ],
+    "generation": {
+      "temperature": 0.5,
+      "max_tokens": 250
+    },
+    "output_policy": {
+      "max_length": 600,
+      "collapse_whitespace": true
+    },
+    "base_context": {
+      "required": true,
+      "template_vars": ["recipient", "subject", "cc", "urgency"],
+      "template_var_defaults": {
+        "recipient": "Sam from Marketing",
+        "subject": "Q2 launch timeline check-in",
+        "cc": "",
+        "urgency": "this week"
+      },
+      "items": [
+        {
+          "name": "scene",
+          "text": "You are drafting an email reply.",
+          "fragments": [
+            { "if_var": "recipient", "text": "It's going to {recipient}." },
+            { "if_var": "subject", "text": "The subject line is: {subject}." },
+            { "if_var": "cc", "text": "{cc} is also CC'd." },
+            { "if_var": "urgency", "text": "Urgency: {urgency}." }
+          ]
+        }
+      ]
+    },
+    "personas": {
+      "required": true,
+      "template_vars": [],
+      "items": [
+        {
+          "id": "formal",
+          "context": "You write in a formal, polished tone.",
+          "base_directives": [
+            "Open with a courteous greeting.",
+            "Use complete sentences and avoid contractions.",
+            "Sign off with 'Best regards,'."
+          ]
+        },
+        {
+          "id": "casual",
+          "context": "You write in a friendly, relaxed tone.",
+          "base_directives": [
+            "Skip stiff openings; jump in.",
+            "Contractions are fine.",
+            "Sign off with 'Cheers,' or 'Talk soon,'."
+          ]
+        }
+      ]
+    },
+    "output_prompt_directions": {
+      "required": true,
+      "template_vars": [],
+      "items": [
+        {
+          "name": "rules",
+          "text": "Write the email body only. Do not include the subject line, To:, From:, or any header. Keep it under 150 words."
+        }
+      ]
+    },
+    "prompt_endings": {
+      "required": true,
+      "template_vars": [],
+      "selected": ["endings"],
+      "array_modes": { "items": "random:1" },
+      "items": [
+        {
+          "name": "endings",
+          "items": ["Email body:", "Draft:", "Reply:"]
+        }
+      ]
+    }
+  }
+}

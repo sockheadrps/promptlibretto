@@ -116,7 +116,7 @@ def test_hydrate_sentiment_scale_token(twitch_registry: Registry) -> None:
         sliders={"sentiment": 8},
     )
     out = hydrate(twitch_registry, state)
-    assert "on a scale of 1-10 chat is 8 on excited" in out
+    assert "intensity is 8 on excited" in out
 
 
 def test_hydrate_sentiment_scale_random(twitch_registry: Registry) -> None:
@@ -125,7 +125,7 @@ def test_hydrate_sentiment_scale_random(twitch_registry: Registry) -> None:
         slider_random={"sentiment": True},
     )
     out = hydrate(twitch_registry, state, seed=7)
-    assert "on a scale of 1-10 chat is" in out
+    assert "intensity is" in out
     assert "on annoyed" in out
 
 

@@ -37,6 +37,13 @@ class Section:
     array_modes: Optional[dict[str, str]] = None
     slider: Optional[float] = None
     slider_random: Optional[bool] = None
+    # Sentiment-only: format string for the `sentiment.scale` token.
+    # Placeholders: `{value}` (1-10), `{emotion}` (per-item scale_emotion).
+    scale_template: Optional[str] = None
+    # Default values for declared template_vars. Studio pre-fills the
+    # runtime-input rows from this on load so examples come ready to
+    # Pre-generate without the user typing in placeholders.
+    template_var_defaults: Optional[dict[str, str]] = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -56,10 +63,15 @@ class Section:
             out["slider"] = self.slider
         if self.slider_random is not None:
             out["slider_random"] = self.slider_random
+        if self.scale_template:
+            out["scale_template"] = self.scale_template
+        if self.template_var_defaults:
+            out["template_var_defaults"] = dict(self.template_var_defaults)
         return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Section":
+        defaults = data.get("template_var_defaults")
         return cls(
             required=bool(data.get("required", True)),
             template_vars=list(data.get("template_vars") or []),
@@ -69,6 +81,8 @@ class Section:
             array_modes=dict(data["array_modes"]) if data.get("array_modes") else None,
             slider=data.get("slider"),
             slider_random=data.get("slider_random"),
+            scale_template=data.get("scale_template"),
+            template_var_defaults=dict(defaults) if defaults else None,
         )
 
 
