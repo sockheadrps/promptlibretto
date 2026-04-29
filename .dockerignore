@@ -25,6 +25,7 @@ data/
 
 tests/
 *.md
+!README.md
 .dockerignore
 Dockerfile
 docker-compose.yml
