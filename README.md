@@ -18,6 +18,7 @@ otherwise pile up as f-string spaghetti.
 - Full docs & walkthrough: **[sockheadrps.github.io/promptlibretto](https://sockheadrps.github.io/promptlibretto/)**
 - Design rationale: [DESIGN.md](DESIGN.md)
 - Studio: [studio/](studio/)
+- online tool https://promptlibretto.readtheerror.com/
 
 ## Install
 
