@@ -23,6 +23,158 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// Collect text fragments that came from sections whose content is randomly
+// rotated per generation — either `section_random: true` (whole item gets
+// rolled) or an `array_modes[field] = "random:N"` (specific list field
+// rolls each turn). Used to mark these spans with a dashed underline so
+// the user can see "this part will change next time."
+function collectRandomMarkers(reg, sectionRandom, arrayModes) {
+  const out = [];
+  if (!reg) return out;
+  for (const [secKey, sec] of Object.entries(reg)) {
+    if (!sec || typeof sec !== "object" || !Array.isArray(sec.items)) continue;
+    const wholeRandom = !!(sectionRandom && sectionRandom[secKey]);
+    const modes = (arrayModes && arrayModes[secKey]) || {};
+    const randomFields = Object.entries(modes)
+      .filter(([, mode]) => typeof mode === "string" && mode.startsWith("random:"))
+      .map(([f]) => f);
+
+    for (const item of sec.items) {
+      // When the WHOLE section is random-rolled, every candidate item is in
+      // play for the next generation — mark all of their text content.
+      if (wholeRandom) {
+        for (const field of ["text", "context", "scale_emotion"]) {
+          const v = item[field];
+          if (typeof v === "string" && v.trim().length >= 4) {
+            out.push({ key: `${secKey}::${field} (random item)`, value: v, kind: "random" });
+          }
+        }
+      }
+      // For random-array fields, every list element is a possible next pick.
+      for (const f of randomFields) {
+        const arr = item[f];
+        if (!Array.isArray(arr)) continue;
+        for (const entry of arr) {
+          if (typeof entry === "string" && entry.trim().length >= 4) {
+            out.push({ key: `${secKey}.${f} (random:1)`, value: entry, kind: "random" });
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// Build a list of fragment outcomes (which fired, which were skipped) for
+// the footer summary. Returns: [{section, item, fragments: [{text, fired, var}]}]
+function describeFragments(reg, tvarMap) {
+  const out = [];
+  if (!reg) return out;
+  for (const [secKey, sec] of Object.entries(reg)) {
+    if (!sec || typeof sec !== "object" || !Array.isArray(sec.items)) continue;
+    for (const item of sec.items) {
+      if (!Array.isArray(item.fragments) || !item.fragments.length) continue;
+      const frags = item.fragments.map((f) => {
+        const v = f.if_var || f.var || "";
+        const val = v ? String(tvarMap[`${secKey}::${v}`] || "").trim() : "";
+        return {
+          var: v,
+          fired: !v || !!val,
+          text: String(f.text || ""),
+        };
+      });
+      out.push({ section: secKey, item: item.name || item.id || "(unnamed)", fragments: frags });
+    }
+  }
+  return out;
+}
+
+// Walk `text`, longest-match-wins over the combined `markers` list, and
+// emit HTML wrapping each match in a kind-specific span.
+function _decorateText(text, markers) {
+  if (!markers.length) return escapeHtml(text);
+  // Sort longest first so subsumed matches don't shadow.
+  markers = [...markers].sort((a, b) => b.value.length - a.value.length);
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    let best = null;
+    for (const m of markers) {
+      if (text.startsWith(m.value, i) &&
+          (!best || m.value.length > best.value.length)) {
+        best = m;
+      }
+    }
+    if (best) {
+      const cls = best.kind === "random" ? "random-injection" : "tvar-injection";
+      out += `<span class="${cls}" title="${escapeHtml(best.key)}">${escapeHtml(best.value)}</span>`;
+      i += best.value.length;
+    } else {
+      const ch = text[i];
+      out += (ch === "&" || ch === "<" || ch === ">" || ch === '"' || ch === "'")
+        ? escapeHtml(ch)
+        : ch;
+      i++;
+    }
+  }
+  return out;
+}
+
+// Combined decorator used by Pre-generate: highlight tvar injections AND
+// mark spans coming from random-rotated sections, plus return a summary
+// note about fragments and randomization.
+function decoratePromptOutput(text, registry, state) {
+  const tvarMap = state?.template_vars || {};
+  const reg = registry?.registry || registry || {};
+  const tvars = Object.entries(tvarMap)
+    .map(([k, v]) => ({ key: k, value: String(v == null ? "" : v), kind: "tvar" }))
+    .filter((e) => e.value.trim().length >= 2);
+  const randoms = collectRandomMarkers(reg, state?.section_random, state?.array_modes);
+  const html = _decorateText(text, [...tvars, ...randoms]);
+
+  // Fragment summary
+  const fragInfo = describeFragments(reg, tvarMap);
+  const noteLines = [];
+  for (const e of fragInfo) {
+    const fired = e.fragments.filter((f) => f.fired);
+    const skipped = e.fragments.filter((f) => !f.fired);
+    if (skipped.length) {
+      noteLines.push(
+        `<div class="pregen-note-line">` +
+        `<span class="muted">${escapeHtml(e.section)}.${escapeHtml(e.item)}:</span> ` +
+        `${fired.length} fragment${fired.length === 1 ? "" : "s"} fired, ` +
+        `${skipped.length} skipped (vars empty: ${skipped.map((f) => `<code>${escapeHtml(f.var)}</code>`).join(", ")})` +
+        `</div>`
+      );
+    }
+  }
+  const sliderRandom = state?.slider_random || {};
+  const randomSlider = Object.entries(sliderRandom).filter(([, v]) => v).map(([k]) => k);
+  if (randomSlider.length) {
+    noteLines.push(`<div class="pregen-note-line"><span class="muted">random sliders:</span> ${randomSlider.map(escapeHtml).join(", ")}</div>`);
+  }
+  const randomSecs = Object.entries(state?.section_random || {}).filter(([, v]) => v).map(([k]) => k);
+  if (randomSecs.length) {
+    noteLines.push(`<div class="pregen-note-line"><span class="muted">random section items:</span> ${randomSecs.map(escapeHtml).join(", ")}</div>`);
+  }
+  const randomArrays = [];
+  for (const [k, modes] of Object.entries(state?.array_modes || {})) {
+    for (const [field, mode] of Object.entries(modes || {})) {
+      if (typeof mode === "string" && mode.startsWith("random:")) {
+        randomArrays.push(`${k}.${field} (${mode})`);
+      }
+    }
+  }
+  if (randomArrays.length) {
+    noteLines.push(`<div class="pregen-note-line"><span class="muted">random array picks:</span> ${randomArrays.map(escapeHtml).join(", ")}</div>`);
+  }
+
+  const note = noteLines.length
+    ? `<div class="pregen-note">${noteLines.join("")}</div>`
+    : "";
+  return { html, note };
+}
+
 function renderInlineMarkdown(text) {
   return escapeHtml(text)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -236,6 +388,46 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     return Object.keys(registry).filter((k) =>
       registry[k] && typeof registry[k] === "object" && Array.isArray(registry[k].items)
     );
+  }
+
+  function itemId(item, fallback = "") {
+    return item?.id || item?.name || fallback;
+  }
+
+  function defaultSelectionsForRegistry() {
+    const sels = {};
+    if (!registry) return sels;
+    for (const key of sectionKeys()) {
+      const sec = registry[key];
+      const items = Array.isArray(sec.items) ? sec.items : [];
+      if (!items.length) continue;
+      if (sec.selected !== undefined && sec.selected !== null) {
+        sels[key] = sec.selected;
+        continue;
+      }
+      if (sec.required || key === "memory_recall") {
+        sels[key] = itemId(items[0], "item_0");
+      } else {
+        sels[key] = [];
+      }
+    }
+    return sels;
+  }
+
+  function defaultArrayModesForSelection(sels) {
+    if (!registry || !sels) return;
+    for (const [key, val] of Object.entries(sels)) {
+      const sec = registry[key];
+      const items = Array.isArray(sec?.items) ? sec.items : [];
+      const selectedItems = Array.isArray(val)
+        ? items.filter((it, idx) => val.includes(itemId(it, `item_${idx}`)))
+        : items.filter((it, idx) => itemId(it, `item_${idx}`) === val);
+      for (const item of selectedItems) {
+        for (const field of arrayFieldsOf(item)) {
+          if (!arrayModes[key]?.[field]) setArrayMode(key, field, "all");
+        }
+      }
+    }
   }
 
 
@@ -997,8 +1189,8 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   // the paste-JSON importer and the built-in examples modal. Lifts any
   // baked tool-state (`selected`, `section_random`, `array_modes`,
   // `slider`, `slider_random`) out of each section and into the
-  // matching runtime state objects so a registry exported with those
-  // fields round-trips on import.
+  // matching runtime state objects. Also accepts root-level state in
+  // either builder/snapshot camelCase or backend snake_case.
   function loadRegistryDict(parsed) {
     registry = parsed.registry || parsed;
     Object.keys(tvarValues).forEach((k) => delete tvarValues[k]);
@@ -1007,7 +1199,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     Object.keys(sectionSliders).forEach((k) => delete sectionSliders[k]);
     Object.keys(sectionSliderRandom).forEach((k) => delete sectionSliderRandom[k]);
 
-    const bakedSelections = {};
+    const bakedSelections = defaultSelectionsForRegistry();
     for (const k of sectionKeys()) {
       const sec = registry[k];
       if (!sec) continue;
@@ -1028,6 +1220,44 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       }
     }
 
+    if (parsed && typeof parsed === "object") {
+      const rootGeneration = parsed.generation;
+      const rootPolicy = parsed.output_policy;
+      if (rootGeneration && typeof rootGeneration === "object") {
+        registry.generation = { ...(registry.generation || {}), ...rootGeneration };
+      }
+      if (rootPolicy && typeof rootPolicy === "object") {
+        registry.output_policy = { ...(registry.output_policy || {}), ...rootPolicy };
+      }
+
+      const rootArrayModes = parsed.arrayModes || parsed.array_modes;
+      if (rootArrayModes && typeof rootArrayModes === "object") {
+        for (const [k, modes] of Object.entries(rootArrayModes)) {
+          if (modes && typeof modes === "object") arrayModes[k] = { ...modes };
+        }
+      }
+      const rootSectionRandom = parsed.sectionRandom || parsed.section_random;
+      if (rootSectionRandom && typeof rootSectionRandom === "object") {
+        Object.assign(sectionRandom, rootSectionRandom);
+      }
+      const rootSectionSliders = parsed.sectionSliders || parsed.section_sliders || parsed.sliders;
+      if (rootSectionSliders && typeof rootSectionSliders === "object") {
+        Object.assign(sectionSliders, rootSectionSliders);
+      }
+      const rootSliderRandom =
+        parsed.sectionSliderRandom || parsed.section_slider_random || parsed.slider_random;
+      if (rootSliderRandom && typeof rootSliderRandom === "object") {
+        Object.assign(sectionSliderRandom, rootSliderRandom);
+      }
+      const rootTvarValues = parsed.tvarValues || parsed.templateVars || parsed.template_vars;
+      if (rootTvarValues && typeof rootTvarValues === "object") {
+        for (const [k, val] of Object.entries(rootTvarValues)) {
+          if (val == null) continue;
+          tvarValues[k] = String(val);
+        }
+      }
+    }
+
     const title = registry.title || "registry";
     const ver = registry.version != null ? ` v${registry.version}` : "";
     metaEl.textContent = `${title}${ver} · ${sectionKeys().length} sections`;
@@ -1035,8 +1265,11 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     applyGenOverridesToInputs(registry.generation || {});
     populatePolicyEditor(registry.output_policy || {});
     buildControls();
-    applySelections(bakedSelections);
+    const loadedSelections = { ...bakedSelections, ...(parsed.selections || parsed.selected || {}) };
+    defaultArrayModesForSelection(loadedSelections);
+    applySelections(loadedSelections);
     refreshSectionPreviews();
+    refreshMemoryUI();
   }
 
   function consumeBuilderHandoff() {
@@ -1052,16 +1285,22 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     }
   }
 
+  const exampleSaveBtn = $("example-save-btn");
+  let loadedExample = null;
+  let exampleDirtyTimer = null;
+
   importBtn.addEventListener("click", () => {
     const raw = prompt("Paste Registry JSON:");
     if (!raw) return;
     try {
       loadRegistryDict(JSON.parse(raw));
+      clearLoadedExample();
     } catch (e) {
       alert("Import failed: " + e.message);
     }
   });
   consumeBuilderHandoff();
+  if (registry) clearLoadedExample();
 
   // ─── Built-in examples modal ──────────────────────────────────
   const examplesBtn = $("example-btn");
@@ -1075,26 +1314,123 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     el.addEventListener("click", closeExamplesModal);
   });
 
+  async function fetchExampleManifest(url, basePath, sourceLabel) {
+    const res = await fetch(url, { cache: "no-cache" });
+    if (!res.ok) throw new Error(`${url} ${res.status}`);
+    const data = await res.json();
+    return (data.examples || []).map((ex) => ({
+      ...ex,
+      sourceLabel,
+      path: `${basePath}/${ex.file || ""}`,
+    }));
+  }
+
+  function stableStringify(value) {
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+    if (value && typeof value === "object") {
+      return `{${Object.keys(value)
+        .sort()
+        .map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`)
+        .join(",")}}`;
+    }
+    return JSON.stringify(value);
+  }
+
+  function buildExampleSavePayload(base = {}) {
+    const title = registry?.title || base.name || base.registry?.title || "Example";
+    const snap = captureSnapshot(base.name || title);
+    if (snap.output_policy) snap.registry.output_policy = snap.output_policy;
+    return {
+      ...base,
+      name: base.name || title,
+      savedAt: new Date().toISOString(),
+      registry: snap.registry,
+      selections: snap.selections,
+      arrayModes: snap.arrayModes,
+      sectionRandom: snap.sectionRandom,
+      sectionSliders: snap.sectionSliders,
+      sectionSliderRandom: snap.sectionSliderRandom,
+      tvarValues: snap.tvarValues,
+      ...(snap.output_policy ? { output_policy: snap.output_policy } : {}),
+    };
+  }
+
+  function comparableExamplePayload(base = {}) {
+    const payload = buildExampleSavePayload(base);
+    delete payload.savedAt;
+    return payload;
+  }
+
+  function updateExampleSaveButton() {
+    if (!exampleSaveBtn) return;
+    const dirty = !!loadedExample?.dirty;
+    exampleSaveBtn.hidden = !dirty;
+    if (dirty) {
+      exampleSaveBtn.textContent = `Save ${loadedExample.name || "Example"}`;
+      exampleSaveBtn.title = `Save changes to ${loadedExample.path}`;
+    }
+  }
+
+  function setLoadedExample(meta, payload) {
+    loadedExample = {
+      path: meta.path,
+      name: meta.name || payload.name || payload.registry?.title || meta.file || "Example",
+      sourceLabel: meta.sourceLabel || "Example",
+      base: JSON.parse(JSON.stringify(payload || {})),
+      dirty: false,
+      baseline: "",
+    };
+    loadedExample.baseline = stableStringify(comparableExamplePayload(loadedExample.base));
+    updateExampleSaveButton();
+  }
+
+  function clearLoadedExample() {
+    loadedExample = null;
+    updateExampleSaveButton();
+  }
+
+  function checkExampleDirty() {
+    if (!loadedExample || !registry) return;
+    const current = stableStringify(comparableExamplePayload(loadedExample.base));
+    loadedExample.dirty = current !== loadedExample.baseline;
+    updateExampleSaveButton();
+  }
+
+  function scheduleExampleDirtyCheck() {
+    if (!loadedExample) return;
+    window.clearTimeout(exampleDirtyTimer);
+    exampleDirtyTimer = window.setTimeout(checkExampleDirty, 0);
+  }
+
   async function openExamplesModal() {
     if (!examplesModal || !examplesList) return;
     examplesList.innerHTML = `<div class="muted" style="padding:8px">Loading…</div>`;
     examplesModal.hidden = false;
     try {
-      const res = await fetch("/static/examples/index.json", { cache: "no-cache" });
-      if (!res.ok) throw new Error(`manifest ${res.status}`);
-      const data = await res.json();
-      const items = (data.examples || []).map((ex, i) => {
+      const manifests = await Promise.allSettled([
+        fetchExampleManifest("/static/examples/index.json", "/static/examples", "Studio"),
+        fetchExampleManifest("/static/builder-examples/index.json", "/static/builder-examples", "Builder"),
+      ]);
+      const examples = manifests.flatMap((result) =>
+        result.status === "fulfilled" ? result.value : []
+      );
+      if (!examples.length) {
+        const err = manifests.find((result) => result.status === "rejected")?.reason;
+        throw new Error(err?.message || "No examples shipped.");
+      }
+      const items = examples.map((ex, i) => {
         const name = escapeHtml(ex.name || ex.file || `example_${i}`);
         const desc = escapeHtml(ex.description || "");
+        const source = escapeHtml(ex.sourceLabel || "Example");
         return (
           `<div class="snapshot-row">` +
           `<div class="snapshot-meta">` +
-          `<div class="snapshot-row-name">${name}</div>` +
+          `<div class="snapshot-row-name">${name} <span class="example-source">${source}</span></div>` +
           (desc ? `<div class="muted">${desc}</div>` : "") +
           `</div>` +
           `<div class="snapshot-actions">` +
-          `<button type="button" class="ghost-action small" data-example-load="${escapeHtml(
-            ex.file || ""
+          `<button type="button" class="ghost-action small" data-example-path="${escapeHtml(
+            ex.path || ""
           )}">Load</button>` +
           `</div></div>`
         );
@@ -1102,17 +1438,20 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       examplesList.innerHTML = items.length
         ? items.join("")
         : `<div class="muted" style="padding:8px">No examples shipped.</div>`;
-      examplesList.querySelectorAll("[data-example-load]").forEach((btn) => {
+      examplesList.querySelectorAll("[data-example-path]").forEach((btn) => {
         btn.addEventListener("click", async () => {
-          const file = btn.dataset.exampleLoad;
-          if (!file) return;
+          const path = btn.dataset.examplePath;
+          if (!path) return;
           try {
-            const r = await fetch(`/static/examples/${file}`, { cache: "no-cache" });
-            if (!r.ok) throw new Error(`fetch ${file} ${r.status}`);
-            loadRegistryDict(await r.json());
+            const r = await fetch(path, { cache: "no-cache" });
+            if (!r.ok) throw new Error(`fetch ${path} ${r.status}`);
+            const payload = await r.json();
+            loadRegistryDict(payload);
+            const ex = examples.find((item) => item.path === path) || {};
+            setLoadedExample(ex, payload);
             closeExamplesModal();
           } catch (e) {
-            alert(`Failed to load ${file}: ${e.message}`);
+            alert(`Failed to load ${path}: ${e.message}`);
           }
         });
       });
@@ -1125,6 +1464,40 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   }
 
   if (examplesBtn) examplesBtn.addEventListener("click", openExamplesModal);
+  if (exampleSaveBtn) {
+    exampleSaveBtn.addEventListener("click", async () => {
+      if (!loadedExample || !registry) return;
+      const payload = buildExampleSavePayload(loadedExample.base);
+      exampleSaveBtn.disabled = true;
+      const originalText = exampleSaveBtn.textContent;
+      exampleSaveBtn.textContent = "Saving...";
+      try {
+        const resp = await fetch("/api/registry/example/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: loadedExample.path, payload }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        loadedExample.base = JSON.parse(JSON.stringify(payload));
+        loadedExample.baseline = stableStringify(comparableExamplePayload(loadedExample.base));
+        loadedExample.dirty = false;
+        updateExampleSaveButton();
+      } catch (e) {
+        alert(`Failed to save example: ${e.message}`);
+        exampleSaveBtn.textContent = originalText;
+      } finally {
+        exampleSaveBtn.disabled = false;
+      }
+    });
+  }
+
+  const studioMain = document.querySelector("main.grid");
+  ["input", "change"].forEach((eventName) => {
+    studioMain?.addEventListener(eventName, scheduleExampleDirtyCheck);
+  });
+  studioMain?.addEventListener("click", (e) => {
+    if (e.target.closest("button")) scheduleExampleDirtyCheck();
+  });
 
   // ─── Snapshots (save / load current panel state) ─────────────
   const SNAP_KEY = "pl-registry-snapshots-v1";
@@ -1206,6 +1579,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
 
   function restoreSnapshot(snap) {
     if (!snap || !snap.registry) return;
+    clearLoadedExample();
     registry = JSON.parse(JSON.stringify(snap.registry));
     Object.keys(arrayModes).forEach((k) => delete arrayModes[k]);
     Object.assign(arrayModes, snap.arrayModes || {});
@@ -1227,6 +1601,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     buildControls();
     applySelections(snap.selections || {});
     refreshSectionPreviews();
+    refreshMemoryUI();
 
     const indicator = $("snapshot-indicator");
     const nameEl = $("snapshot-name");
@@ -1492,11 +1867,508 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     return data.prompt || "";
   }
 
+  // ── Memory pipeline ───────────────────────────────────────────────
+  let _memorySessionId = null;
+
+  function hasMemoryRules() {
+    // Activate the memory pipeline when ANY memory feature is configured —
+    // not just memory_rules. Working notes, system summary, and a configured
+    // personality_file are all valid reasons to surface the pipeline UI.
+    if (!registry) return false;
+    const rules = Array.isArray(registry.memory_rules) ? registry.memory_rules : [];
+    const cfg = registry.memory_config || {};
+    return (
+      rules.length > 0 ||
+      !!cfg.working_notes_enabled ||
+      !!cfg.system_summary_enabled ||
+      !!(cfg.personality_file && String(cfg.personality_file).trim())
+    );
+  }
+
+  function refreshMemoryUI() {
+    const memInputBar      = $("memory-input-bar");
+    const memPipeline      = $("memory-pipeline");
+    const normalOutput     = $("output-rendered");
+    const rawOutput        = $("output-raw");
+    const viewToggle       = $("output-view-toggle");
+    const resetBtn         = $("memory-reset-btn");
+    const memCfgFieldset   = $("memory-config-fieldset");
+    const active           = hasMemoryRules();
+
+    if (memInputBar)    memInputBar.hidden    = !active;
+    if (memPipeline)    memPipeline.hidden    = !active;
+    if (normalOutput)   normalOutput.hidden   =  active;
+    if (rawOutput)      rawOutput.hidden      =  true;
+    if (viewToggle)     viewToggle.hidden     =  active;
+    if (resetBtn)       resetBtn.hidden       = !active;
+    if (memCfgFieldset) memCfgFieldset.hidden = !active;
+    if (active) populateMemoryConfigPanel();
+    if (!active) _memorySessionId = null;
+  }
+
+  function populateMemoryConfigPanel() {
+    const cfg = registry?.memory_config || {};
+    const set = (id, val) => { const el = $(id); if (el && val != null) el.value = val; };
+    set("studio-mem-classifier-url",   cfg.classifier_url);
+    set("studio-mem-classifier-model", cfg.classifier_model);
+    set("studio-mem-embed-url",        cfg.embed_url);
+    set("studio-mem-embed-model",      cfg.embed_model);
+    set("studio-mem-top-k",            cfg.top_k);
+    set("studio-mem-prune-keep",       cfg.prune_keep);
+  }
+
+  function syncMemoryConfigFromPanel() {
+    if (!registry) return;
+    const read = (id) => $(id)?.value?.trim() || undefined;
+    const readNum = (id) => { const n = parseInt($(id)?.value, 10); return Number.isFinite(n) ? n : undefined; };
+    const cfg = {};
+    const cu = read("studio-mem-classifier-url");   if (cu) cfg.classifier_url   = cu;
+    const cm = read("studio-mem-classifier-model"); if (cm) cfg.classifier_model = cm;
+    const eu = read("studio-mem-embed-url");        if (eu) cfg.embed_url        = eu;
+    const em = read("studio-mem-embed-model");      if (em) cfg.embed_model      = em;
+    const tk = readNum("studio-mem-top-k");         if (tk) cfg.top_k            = tk;
+    const pk = readNum("studio-mem-prune-keep");    if (pk != null) cfg.prune_keep = pk;
+    // preserve other keys (store_path, personality_file) from registry
+    registry.memory_config = { ...(registry.memory_config || {}), ...cfg };
+  }
+
+  // Wire memory config panel inputs to sync back into registry on change
+  ["studio-mem-classifier-url","studio-mem-classifier-model","studio-mem-embed-url",
+   "studio-mem-embed-model","studio-mem-top-k","studio-mem-prune-keep"].forEach((id) => {
+    $(id)?.addEventListener("change", syncMemoryConfigFromPanel);
+  });
+
+  const studioMemFetchBtn = $("studio-mem-fetch-btn");
+  if (studioMemFetchBtn) {
+    studioMemFetchBtn.addEventListener("click", async () => {
+      const base = ($("studio-mem-classifier-url")?.value?.trim() || "").replace(/\/+$/, "");
+      if (!base) { alert("Set classifier_url first."); return; }
+      studioMemFetchBtn.textContent = "…";
+      studioMemFetchBtn.disabled = true;
+      try {
+        let models = [];
+        for (const path of ["/api/tags", "/v1/models"]) {
+          try {
+            const r = await fetch(base + path);
+            if (!r.ok) continue;
+            const d = await r.json();
+            if (Array.isArray(d.models)) { models = d.models.map((m) => m.name).filter(Boolean); break; }
+            if (Array.isArray(d.data))   { models = d.data.map((m) => m.id).filter(Boolean); break; }
+          } catch {}
+        }
+        const input = $("studio-mem-classifier-model");
+        if (input && models.length) {
+          const current = input.value;
+          // Show a quick datalist for autocomplete
+          let dl = document.getElementById("studio-mem-model-list");
+          if (!dl) { dl = document.createElement("datalist"); dl.id = "studio-mem-model-list"; document.body.appendChild(dl); input.setAttribute("list", "studio-mem-model-list"); }
+          dl.innerHTML = models.map((m) => `<option value="${m}">`).join("");
+          if (!current) input.value = models[0] || "";
+        } else if (!models.length) {
+          alert("No models found at that URL.");
+        }
+      } catch (e) {
+        alert(`Fetch failed: ${e.message}`);
+      } finally {
+        studioMemFetchBtn.textContent = "↺";
+        studioMemFetchBtn.disabled = false;
+      }
+    });
+  }
+
+  function renderMemoryPipeline(userInput, result) {
+    const emptyEl  = $("memory-pipeline-empty");
+    const trackEl  = $("memory-pipeline-track");
+    if (emptyEl) emptyEl.hidden = true;
+    if (trackEl) trackEl.hidden = false;
+
+    // Helper: mark a step node active or dim
+    const setStepActive = (stepId, active) => {
+      const node = $(`${stepId}`)?.querySelector(".pipeline-node");
+      if (node) node.classList.toggle("pipeline-node--active", active);
+    };
+
+    // 1. Message
+    const inputBody = $("pipe-input-body");
+    if (inputBody) inputBody.textContent = userInput || "";
+    setStepActive("pipe-input-step", true);
+
+    // 2. Memory Retrieval
+    const chunksMeta = $("pipe-chunks-meta");
+    const chunksBody = $("pipe-chunks-body");
+    const chunks = result.retrieved_chunks || [];
+    if (chunksMeta) chunksMeta.textContent = chunks.length ? `${chunks.length} chunk${chunks.length > 1 ? "s" : ""}` : "none";
+    if (chunksBody) {
+      chunksBody.innerHTML = chunks.length
+        ? chunks.map((c) => `
+            <div class="memory-chunk">
+              <span class="memory-chunk-role">${escapeHtml(c.role)}</span>
+              <span class="memory-chunk-score">score: ${c.score}</span>
+              <div class="memory-chunk-text">${escapeHtml(c.text)}</div>
+              ${c.tags?.length ? `<div class="memory-chunk-tags">${c.tags.map((t) => `<span class="memory-chip">${escapeHtml(t)}</span>`).join("")}</div>` : ""}
+            </div>`).join("")
+        : `<span class="muted" style="font-size:12px">Nothing in store yet — first turn.</span>`;
+    }
+    setStepActive("pipe-chunks-step", chunks.length > 0);
+
+    // 3. Classifier / Tags
+    const tagsMeta = $("pipe-tags-meta");
+    const tagsBody = $("pipe-tags-body");
+    const tags = result.extracted_tags || [];
+    const cs = result.classifier_stats || {};
+    const csMeta = [
+      cs.model ? escapeHtml(cs.model) : null,
+      cs.ms    ? `${Math.round(cs.ms)}ms` : null,
+      cs.tokens != null ? `${cs.tokens} tok` : null,
+    ].filter(Boolean).join(" · ");
+    if (tagsMeta) tagsMeta.textContent = tags.length ? `→ ${tags.join(", ")}` : (cs.error ? "→ error" : "→ no tags");
+    if (tagsBody) {
+      const statsHtml = csMeta ? `<div class="pipeline-clf-stats muted">${csMeta}</div>` : "";
+      const knownHtml = cs.known_tags?.length
+        ? `<div class="muted" style="font-size:11px;margin-top:4px">vocab: ${cs.known_tags.map(escapeHtml).join(", ")}</div>`
+        : "";
+      let bodyContent = "";
+      if (cs.error) {
+        bodyContent = `<div class="reject-banner" style="font-size:12px;padding:6px 8px;margin:0">⚠ classifier error: ${escapeHtml(cs.error)}</div>`;
+        if (cs.raw_response) {
+          bodyContent += `<details style="margin-top:4px;font-size:11px"><summary class="muted" style="cursor:pointer">raw response</summary><pre style="margin:4px 0 0;padding:6px;background:rgba(0,0,0,0.25);border-radius:3px;white-space:pre-wrap">${escapeHtml(cs.raw_response)}</pre></details>`;
+        }
+      } else if (tags.length) {
+        bodyContent = tags.map((t) => `<span class="memory-chip memory-chip--tag">${escapeHtml(t)}</span>`).join("");
+      } else {
+        bodyContent = `<span class="muted" style="font-size:12px">No tags matched — rules will not fire.</span>`;
+        if (cs.raw_response) {
+          bodyContent += `<details style="margin-top:4px;font-size:11px"><summary class="muted" style="cursor:pointer">raw response</summary><pre style="margin:4px 0 0;padding:6px;background:rgba(0,0,0,0.25);border-radius:3px;white-space:pre-wrap">${escapeHtml(cs.raw_response)}</pre></details>`;
+        }
+      }
+      tagsBody.innerHTML = statsHtml + bodyContent + knownHtml;
+    }
+    setStepActive("pipe-tags-step", tags.length > 0);
+
+    // 4. Rules
+    const rulesMeta = $("pipe-rules-meta");
+    const rulesBody = $("pipe-rules-body");
+    const rules = result.applied_rules || [];
+    if (rulesMeta) rulesMeta.textContent = rules.length ? `${rules.length} fired` : "none";
+    if (rulesBody) {
+      rulesBody.innerHTML = rules.length
+        ? rules.map((r) => `<div class="memory-rule-line">${escapeHtml(r)}</div>`).join("")
+        : `<span class="muted" style="font-size:12px">No rules applied.</span>`;
+    }
+    setStepActive("pipe-rules-step", rules.length > 0);
+
+    // 5. Assembled Prompt (collapsible toggle)
+    const promptBody   = $("pipe-prompt-body");
+    const promptToggle = $("pipe-prompt-toggle");
+    if (promptBody) {
+      promptBody.textContent = result.prompt || "(none)";
+      promptBody.hidden = true;
+    }
+    if (promptToggle) {
+      promptToggle.textContent = "show";
+      promptToggle.onclick = () => {
+        const hidden = promptBody.hidden = !promptBody.hidden;
+        promptToggle.textContent = hidden ? "show" : "hide";
+      };
+    }
+    setStepActive("pipe-prompt-step", true);
+
+    // 6. Response
+    const respLabel = $("pipe-response-step")?.querySelector(".pipeline-step-label");
+    if (respLabel) {
+      const model = result.model || "default";
+      respLabel.innerHTML = `Response <span class="pipeline-meta muted">${escapeHtml(model)}</span>`;
+    }
+    const respBody = $("pipe-response-body");
+    if (respBody) respBody.innerHTML = renderMarkdown(result.text || "(empty)");
+  }
+
+  const memResetBtn = $("memory-reset-btn");
+  if (memResetBtn) {
+    memResetBtn.addEventListener("click", async () => {
+      if (!registry || !hasMemoryRules()) return;
+      memResetBtn.textContent = "Resetting…";
+      memResetBtn.disabled = true;
+      try {
+        const resp = await fetch("/api/memory/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ registry: { registry } }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        _memorySessionId = null;
+        const track = $("memory-pipeline-track");
+        if (track) track.hidden = true;
+        const emptyEl = $("memory-pipeline-empty");
+        if (emptyEl) { emptyEl.hidden = false; emptyEl.textContent = "Session reset. Store cleared."; }
+      } catch (e) {
+        alert(`Reset failed: ${e.message}`);
+      } finally {
+        memResetBtn.textContent = "Reset Session";
+        memResetBtn.disabled = false;
+      }
+    });
+  }
+
+  // ── Personality editor ────────────────────────────────────────────
+
+  let _personalityProfile = null;
+
+  function _renderPersonalityEditor(profile, path) {
+    _personalityProfile = profile;
+    const pathEl      = $("personality-path-label");
+    const seedEl      = $("personality-seed");
+    const amendList   = $("personality-amendments-list");
+    const assembledEl = $("personality-assembled");
+    const countEl     = $("personality-amendment-count");
+    const saveBtn     = $("personality-save-btn");
+    const clearBtn    = $("personality-clear-btn");
+
+    if (pathEl)      pathEl.textContent  = path || "";
+    if (seedEl)      seedEl.value        = profile.seed || "";
+    if (assembledEl) assembledEl.textContent = profile.assembled || "(empty)";
+    if (countEl)     countEl.textContent = profile.amendments?.length ? `(${profile.amendments.length})` : "";
+    if (saveBtn)     saveBtn.disabled    = false;
+    if (clearBtn)    clearBtn.disabled   = false;
+
+    if (amendList) {
+      if (!profile.amendments?.length) {
+        amendList.innerHTML = `<div class="muted" style="font-size:12px;padding:4px 0">No amendments yet.</div>`;
+      } else {
+        amendList.innerHTML = profile.amendments.map((a, i) => `
+          <div class="personality-amendment" data-idx="${i}">
+            <div class="personality-amendment-meta">
+              <span class="muted">${escapeHtml(a.timestamp?.slice(0, 19).replace("T", " ") || "")}</span>
+              <button type="button" class="ghost small personality-amend-remove" data-idx="${i}" title="Remove this amendment">✕</button>
+            </div>
+            <textarea class="personality-textarea personality-amend-text" rows="2" data-idx="${i}">${escapeHtml(a.text || "")}</textarea>
+          </div>`).join("");
+
+        amendList.querySelectorAll(".personality-amend-remove").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const idx = parseInt(btn.dataset.idx, 10);
+            _personalityProfile.amendments.splice(idx, 1);
+            _renderPersonalityEditor(_personalityProfile, path);
+          });
+        });
+        amendList.querySelectorAll(".personality-amend-text").forEach((ta) => {
+          ta.addEventListener("input", () => {
+            const idx = parseInt(ta.dataset.idx, 10);
+            _personalityProfile.amendments[idx].text = ta.value;
+          });
+        });
+      }
+    }
+  }
+
+  const personalityLoadBtn = $("personality-load-btn");
+  if (personalityLoadBtn) {
+    personalityLoadBtn.addEventListener("click", async (e) => {
+      e.stopPropagation(); // don't toggle the <details>
+      if (!registry) return;
+      personalityLoadBtn.textContent = "Loading…";
+      personalityLoadBtn.disabled = true;
+      try {
+        const resp = await fetch("/api/memory/personality", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ registry: { registry } }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const data = await resp.json();
+        _renderPersonalityEditor(data.profile, data.path);
+        $("personality-panel")?.setAttribute("open", "");
+      } catch (e) {
+        alert(`Load failed: ${e.message}`);
+      } finally {
+        personalityLoadBtn.textContent = "Load";
+        personalityLoadBtn.disabled = false;
+      }
+    });
+  }
+
+  const personalitySaveBtn = $("personality-save-btn");
+  if (personalitySaveBtn) {
+    personalitySaveBtn.addEventListener("click", async () => {
+      if (!registry || !_personalityProfile) return;
+      // Sync seed field back into profile before saving
+      const seedEl = $("personality-seed");
+      if (seedEl) _personalityProfile.seed = seedEl.value;
+      personalitySaveBtn.textContent = "Saving…";
+      personalitySaveBtn.disabled = true;
+      try {
+        const resp = await fetch("/api/memory/personality/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ registry: { registry }, profile: _personalityProfile }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        // Reload to show updated assembled string
+        const loadResp = await fetch("/api/memory/personality", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ registry: { registry } }),
+        });
+        if (loadResp.ok) {
+          const data = await loadResp.json();
+          _renderPersonalityEditor(data.profile, data.path);
+        }
+      } catch (e) {
+        alert(`Save failed: ${e.message}`);
+      } finally {
+        personalitySaveBtn.textContent = "Save";
+        personalitySaveBtn.disabled = false;
+      }
+    });
+  }
+
+  const personalityClearBtn = $("personality-clear-btn");
+  if (personalityClearBtn) {
+    personalityClearBtn.addEventListener("click", async () => {
+      if (!registry) return;
+      if (!confirm("Clear all personality data (seed + amendments)? This cannot be undone.")) return;
+      personalityClearBtn.textContent = "Clearing…";
+      personalityClearBtn.disabled = true;
+      try {
+        const resp = await fetch("/api/memory/personality/clear", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ registry: { registry } }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const loadResp = await fetch("/api/memory/personality", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ registry: { registry } }),
+        });
+        if (loadResp.ok) {
+          const data = await loadResp.json();
+          _renderPersonalityEditor(data.profile, data.path);
+        }
+      } catch (e) {
+        alert(`Clear failed: ${e.message}`);
+      } finally {
+        personalityClearBtn.textContent = "Clear Personality";
+        personalityClearBtn.disabled = false;
+      }
+    });
+  }
+
   const generateBtn = $("generate-btn");
   if (generateBtn) {
     generateBtn.addEventListener("click", async () => {
       if (!registry) return;
 
+      // — Memory pipeline path —
+      if (hasMemoryRules()) {
+        const userInput = $("memory-user-input")?.value?.trim();
+        if (!userInput) {
+          const emptyEl = $("memory-pipeline-empty");
+          if (emptyEl) { emptyEl.hidden = false; emptyEl.textContent = "Type a message first."; }
+          return;
+        }
+
+        // Show loading state in pipeline
+        const pipelineEmptyEl = $("memory-pipeline-empty");
+        const pipelineTrack   = $("memory-pipeline-track");
+        if (pipelineEmptyEl) { pipelineEmptyEl.hidden = false; pipelineEmptyEl.textContent = "Running memory pipeline…"; }
+        if (pipelineTrack)   pipelineTrack.hidden = true;
+
+        const conn  = getConnection();
+        const state = snapshotActiveState();
+        const overrides = readGenOverrides();
+
+        // Seed Debug Trace with what we know up-front; fill in attempts/usage after.
+        setTrace("trace-user", `[memory pipeline]\nuser_input: ${userInput}`);
+        setTrace("trace-active", state);
+        setTrace("trace-config", {
+          mode: "memory",
+          provider: conn.provider || "ollama",
+          base_url: conn.baseUrl || conn.base_url || "",
+          chat_path: conn.chatPath || conn.chat_path || "",
+          model: conn.model || "default",
+          generation: overrides,
+          session_id: _memorySessionId,
+        });
+        setTrace("trace-attempts", "");
+        setTrace("trace-usage", "");
+
+        try {
+          const resp = await fetch("/api/memory/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              registry:   { registry },
+              state,
+              user_input: userInput,
+              connection: {
+                base_url:      conn.baseUrl      || conn.base_url      || "http://localhost:11434",
+                chat_path:     conn.chatPath     || conn.chat_path     || "/api/chat",
+                payload_shape: conn.payloadShape || conn.payload_shape || "auto",
+                model:         conn.model        || "default",
+              },
+              session_id: _memorySessionId,
+              generation_overrides: overrides,
+            }),
+          });
+          if (!resp.ok) throw new Error(await resp.text());
+          const result = await resp.json();
+          _memorySessionId = result.session_id;
+
+          // Render the full pipeline flow in the Output tab
+          renderMemoryPipeline(userInput, result);
+
+          // Also populate Pre-generate tab with the memory-resolved prompt
+          const stage = $("prompt-stage");
+          if (stage) {
+            const userList = stage.querySelector('[data-list="user"]');
+            if (userList) userList.innerHTML = `<pre class="trace" style="white-space:pre-wrap;font-size:12px;padding:8px;margin:0">${escapeHtml(result.prompt || "(no prompt returned)")}</pre>`;
+            stage.querySelectorAll(".stage-empty, .stage-empty-root").forEach((el) => (el.hidden = true));
+            const stageBanner = stage.querySelector(".stage-banner .muted");
+            if (stageBanner) stageBanner.textContent = "Memory-resolved prompt — assembled after classifier + rule mutations.";
+          }
+          const stageBadge = $("stage-tab-badge");
+          if (stageBadge) stageBadge.hidden = false;
+
+          // Update meta strip
+          const timingEl = $("out-timing");
+          const acceptEl = $("out-accepted");
+          const usageEl  = $("out-usage");
+          const routeEl  = $("out-route");
+          const modelName = result.model || conn.model || "default";
+          if (timingEl && result.timing) timingEl.textContent = `${Math.round(result.timing.total_ms ?? 0)}ms`;
+          if (acceptEl) acceptEl.textContent = result.accepted ? "✓ ok" : "✗ rejected";
+          if (usageEl  && result.usage)  usageEl.textContent  = `${result.usage.completion_tokens ?? "?"} tok`;
+          if (routeEl)  routeEl.textContent  = `${modelName} · memory`;
+
+          // Populate Debug Trace with the assembled prompt + memory steps + response.
+          setTrace("trace-user", result.prompt || "(no prompt)");
+          setTrace("trace-config", {
+            mode: "memory",
+            model: modelName,
+            session_id: result.session_id,
+            base_url: conn.baseUrl || conn.base_url || "",
+            chat_path: conn.chatPath || conn.chat_path || "",
+            extracted_tags: result.extracted_tags,
+            applied_rules:  result.applied_rules,
+            classifier:     result.classifier_stats,
+            retrieved:      (result.retrieved_chunks || []).length,
+          });
+          setTrace("trace-attempts", result.text || "");
+          setTrace("trace-usage", {
+            accepted: result.accepted,
+            timing:   result.timing,
+            usage:    result.usage,
+          });
+        } catch (e) {
+          if (pipelineEmptyEl) { pipelineEmptyEl.hidden = false; pipelineEmptyEl.textContent = `Error: ${e.message}`; }
+          if (pipelineTrack)   pipelineTrack.hidden = true;
+          setTrace("trace-attempts", `error: ${e.message}`);
+        }
+        return;
+      }
+
+      // — Standard (non-memory) path —
       const rendered = $("output-rendered");
       const raw = $("output-raw");
       const setOutput = (text) => {
@@ -1540,15 +2412,14 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       setTrace("trace-attempts", "");
       setTrace("trace-usage", "");
 
-      // Reset meta pills before the call.
-      const routeEl = $("out-route");
+      const routeEl    = $("out-route");
       const acceptedEl = $("out-accepted");
-      const timingEl = $("out-timing");
-      const usageEl = $("out-usage");
-      if (routeEl) routeEl.textContent = `model: ${conn.model || "default"}`;
+      const timingEl   = $("out-timing");
+      const usageEl    = $("out-usage");
+      if (routeEl)    routeEl.textContent    = `model: ${conn.model || "default"}`;
       if (acceptedEl) acceptedEl.textContent = "…";
-      if (timingEl) timingEl.textContent = "—";
-      if (usageEl) usageEl.textContent = "—";
+      if (timingEl)   timingEl.textContent   = "—";
+      if (usageEl)    usageEl.textContent    = "—";
 
       try {
         const overrides = readGenOverrides();
@@ -1587,18 +2458,12 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         setTrace("trace-attempts", text);
         setTrace("trace-usage", { total_ms: ms, ...(response.usage || {}) });
 
-        // Meta strip
-        if (timingEl) timingEl.textContent = `${ms}ms`;
+        if (timingEl)   timingEl.textContent   = `${ms}ms`;
         if (acceptedEl) acceptedEl.textContent = text ? "✓ ok" : "✗ empty";
-        const usage = response.usage || {};
-        const tokens =
-          usage.completion_tokens ?? usage.eval_count ?? usage.total_tokens ?? null;
+        const usage  = response.usage || {};
+        const tokens = usage.completion_tokens ?? usage.eval_count ?? usage.total_tokens ?? null;
         if (usageEl) {
-          if (tokens != null) {
-            usageEl.textContent = `${tokens} tok · ${text.length} chars`;
-          } else {
-            usageEl.textContent = `${text.length} chars`;
-          }
+          usageEl.textContent = tokens != null ? `${tokens} tok · ${text.length} chars` : `${text.length} chars`;
         }
       } catch (e) {
         setOutput(`error: ${e.message}`);
@@ -1630,7 +2495,18 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
           const sysList = stage.querySelector('[data-list="system"]');
           if (sysList) sysList.innerHTML = "";
           if (userList) {
-            userList.innerHTML = `<pre class="trace" style="white-space:pre-wrap;font-size:12px;padding:8px;margin:0;${isError ? "color:var(--error,#f44)" : ""}">${escapeHtml(text)}</pre>`;
+            let inner;
+            let footer = "";
+            if (isError) {
+              inner = escapeHtml(text);
+            } else {
+              const decorated = decoratePromptOutput(text, registry, snapshotActiveState());
+              inner = decorated.html;
+              footer = decorated.note;
+            }
+            userList.innerHTML =
+              `<pre class="trace stage-prompt-pre" style="white-space:pre-wrap;font-size:12px;padding:8px;margin:0;${isError ? "color:var(--error,#f44)" : ""}">${inner}</pre>` +
+              footer;
           }
           stage.querySelectorAll(".stage-empty, .stage-empty-root").forEach(
             (el) => (el.hidden = true)

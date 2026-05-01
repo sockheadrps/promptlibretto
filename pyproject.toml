@@ -25,6 +25,7 @@ dependencies = []
 [project.optional-dependencies]
 ollama = ["httpx>=0.25"]
 studio = ["fastapi>=0.110", "uvicorn>=0.27", "httpx>=0.25", "pydantic>=2.0"]
+memory = ["httpx>=0.25", "sqlite-vec>=0.1"]
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",

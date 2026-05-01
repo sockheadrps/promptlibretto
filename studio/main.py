@@ -15,10 +15,12 @@ from fastapi.staticfiles import StaticFiles
 
 from .registry_routes import router as registry_router
 from .ensemble_routes import router as ensemble_router
+from .memory_routes import router as memory_router
 
 app = FastAPI(title="promptlibretto studio")
 app.include_router(registry_router)
 app.include_router(ensemble_router)
+app.include_router(memory_router)
 
 
 _static_dir = Path(__file__).parent / "static"

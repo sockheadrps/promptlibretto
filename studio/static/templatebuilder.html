@@ -21,7 +21,33 @@
       </nav>
     </div>
     <div class="header-meta">
-      <button type="button" class="header-nav-btn" onclick="loadBuilderExample()">Load Example</button>
+      <select class="header-nav-btn" id="example-picker" onchange="loadBuilderExample(this.value); this.value=''">
+        <option value="">Load Example</option>
+        <optgroup label="Standalone">
+          <option value="support_bot">Support Bot</option>
+          <option value="spongebob">SpongeBob</option>
+        </optgroup>
+        <optgroup label="Conspiracy talk (ensemble pair)">
+          <option value="conspiracy_theorist">Conspiracy Theorist</option>
+          <option value="patient_friend">Patient Friend</option>
+        </optgroup>
+        <optgroup label="Interrogation (ensemble pair)">
+          <option value="detective">Detective</option>
+          <option value="suspect">Suspect</option>
+        </optgroup>
+        <optgroup label="First date — mutual lies (ensemble pair)">
+          <option value="first_date_architect">Date — fake Architect</option>
+          <option value="first_date_doctor">Date — fake Doctor</option>
+        </optgroup>
+        <optgroup label="Wizard spellbook support (ensemble pair)">
+          <option value="wizard_tech_support">Wizard Tech Support</option>
+          <option value="merlin_spellbook">Merlin With the Wrong Spellbook</option>
+        </optgroup>
+        <optgroup label="Light scene (ensemble pair)">
+          <option value="lost_time_traveler">Lost Time Traveler</option>
+          <option value="helpful_local">Helpful Local</option>
+        </optgroup>
+      </select>
       <button type="button" class="header-nav-btn" onclick="importModel()">Import JSON</button>
       <button type="button" class="header-nav-btn" onclick="validateRegistry()">Validate</button>
       <button type="button" class="header-nav-btn" onclick="copyToClipboard()" id="copy-btn">Copy JSON</button>
@@ -79,6 +105,7 @@
           <div class="builder-tabs" role="tablist" aria-label="Builder panels">
             <button type="button" id="tab-sections" class="builder-tab active" onclick="switchBuilderTab('sections')" aria-selected="true">Sections</button>
             <button type="button" id="tab-finalize" class="builder-tab" onclick="switchBuilderTab('finalize')" aria-selected="false">Finalize</button>
+            <button type="button" id="tab-memory" class="builder-tab" onclick="switchBuilderTab('memory')" aria-selected="false">Memory</button>
           </div>
         </section>
 
@@ -159,6 +186,52 @@
                   <label><span>required_patterns</span><textarea id="policy-required-patterns" rows="2" oninput="exportFullModel()" placeholder="Regex, one per line"></textarea></label>
                   <label><span>forbidden_substrings</span><textarea id="policy-forbidden-substrings" rows="2" oninput="exportFullModel()" placeholder="One per line"></textarea></label>
                   <label><span>forbidden_patterns</span><textarea id="policy-forbidden-patterns" rows="2" oninput="exportFullModel()" placeholder="Regex, one per line"></textarea></label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+        </section>
+
+        <section id="builder-tab-memory-panel" class="builder-tab-body">
+          <section class="panel field-panel">
+            <div class="panel-head">
+              <div>
+                <span class="panel-title">Memory Rules</span>
+                <span class="panel-note">Map extracted memory tags to prompt mutations — each rule binds a tag to one or more state changes</span>
+              </div>
+            </div>
+            <div id="memory-rules-list" class="memory-rules-list"></div>
+            <button type="button" class="btn-add" onclick="addMemoryRule()">+ Add Rule</button>
+          </section>
+
+          <section class="builder-advanced-row">
+            <div class="panel field-panel collapsible-panel collapsed" data-builder-collapse>
+              <div class="panel-head">
+                <div>
+                  <span class="panel-title">Memory Config</span>
+                  <span class="panel-note">Optional top-level <code>memory_config</code></span>
+                </div>
+                <button type="button" class="collapse-toggle" onclick="toggleBuilderCollapse(this)">Expand</button>
+              </div>
+              <div class="collapsible-body">
+                <div class="form-grid">
+                  <label><span>classifier_url <span class="label-hint">Ollama base URL for tag classifier</span></span><input id="mem-classifier-url" type="text" placeholder="http://localhost:8080" value="http://localhost:8080" oninput="exportFullModel()" /></label>
+                  <label><span>classifier_model</span>
+                    <div class="mem-model-row">
+                      <select id="mem-classifier-model" onchange="exportFullModel()">
+                        <option value="Qwen3.5-9B-Q4_K_M.gguf" selected>Qwen3.5-9B-Q4_K_M.gguf</option>
+                        <option value="">— fetch models for more —</option>
+                      </select>
+                      <button type="button" class="mem-conn-refresh" onclick="fetchClassifierModels()" title="Fetch models">↺</button>
+                    </div>
+                  </label>
+                  <label><span>embed_url <span class="label-hint">defaults to classifier_url</span></span><input id="mem-embed-url" type="text" placeholder="http://localhost:11111" value="http://localhost:11111" oninput="exportFullModel()" /></label>
+                  <label><span>embed_model</span><input id="mem-embed-model" type="text" placeholder="nomic-embed-text" oninput="exportFullModel()" /></label>
+                  <label><span>top_k</span><input id="mem-top-k" type="number" step="1" min="1" max="20" oninput="exportFullModel()" /></label>
+                  <label><span>prune_keep <span class="label-hint">turns to keep</span></span><input id="mem-prune-keep" type="number" step="50" min="50" placeholder="200" oninput="exportFullModel()" /></label>
+                  <label><span>store_path <span class="label-hint">defaults to ~/.promptlibretto/memory_stores/</span></span><input id="mem-store-path" type="text" placeholder="leave blank for default" oninput="exportFullModel()" /></label>
+                  <label><span>personality_file</span><input id="mem-personality-file" type="text" placeholder="personality.json" oninput="exportFullModel()" /></label>
                 </div>
               </div>
             </div>

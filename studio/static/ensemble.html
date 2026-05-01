@@ -6,110 +6,279 @@
   <title>promptlibretto — ensemble</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Manrope:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/ensemble.css" />
 </head>
 <body>
 
 <header class="header">
-  <span class="header-brand">prompt<span>libretto</span></span>
-  <span class="header-sep">—</span>
-  <span class="header-page">ensemble</span>
-  <nav class="header-nav">
-    <a href="/" class="nav-link">Studio</a>
-    <a href="/builder" class="nav-link">Builder</a>
-  </nav>
+  <div class="header-brand">
+    <h1>promptlibretto</h1>
+    <nav class="header-page-nav">
+      <a href="/" class="header-page-link">Studio</a>
+      <a href="/builder" class="header-page-link">Builder</a>
+      <span class="header-page-link active">Ensemble</span>
+    </nav>
+  </div>
+  <div class="header-controls">
+    <button type="button" class="panel-toggle" id="toggle-side-a" title="Toggle A panel"><span class="pdot a"></span> A</button>
+    <button type="button" class="panel-toggle" id="toggle-side-b" title="Toggle B panel">B <span class="pdot b"></span></button>
+  </div>
+  <span id="conn-chip" class="conn-chip"></span>
 </header>
 
 <div class="layout">
 
-  <!-- config row -->
-  <div class="config-row">
-
-    <!-- participant A -->
-    <div class="config-panel" id="panel-a">
-      <div class="config-panel-header">
-        <div class="participant-dot a"></div>
-        <span class="config-panel-title">Participant A</span>
-      </div>
-      <div class="config-fields">
-        <div class="field-group">
-          <label>Name</label>
-          <input type="text" id="a-name" value="A" placeholder="A" />
+  <!-- compact, collapsible setup strip -->
+  <div class="setup-bar">
+    <details class="pcard" id="card-a" open>
+      <summary class="pcard-summary">
+        <span class="pdot a"></span>
+        <span class="pcard-title" id="a-summary-name">A</span>
+        <span class="pcard-meta" id="a-summary-meta">— configure —</span>
+        <span class="pcard-chips" id="a-summary-chips"></span>
+        <span class="pcard-spacer"></span>
+        <span class="pcard-toggle">▾</span>
+      </summary>
+      <div class="pcard-body">
+        <div class="pcard-row">
+          <label class="pfield"><span>Name</span><input type="text" id="a-name" value="A" /></label>
+          <label class="pfield model-only"><span>Snapshot</span>
+            <select id="a-snapshot" onchange="loadSnapshot('a')"><option value="">— select —</option></select>
+          </label>
+          <label class="pfield model-only"><span>Model</span>
+            <span class="model-row">
+              <input type="text" id="a-model" placeholder="llama3" list="ensemble-models-list" />
+              <button type="button" class="ghost" onclick="fetchModels()" title="Refresh models">↺</button>
+            </span>
+          </label>
         </div>
-        <div class="field-group">
-          <label>Model</label>
-          <input type="text" id="a-model" value="llama3" placeholder="llama3" />
+        <div class="pcard-row pcard-toggles">
+          <label class="inline-toggle"><input type="checkbox" id="a-human" /><span>Human-driven</span></label>
+          <label class="inline-toggle model-only"><input type="checkbox" id="a-memory" checked /><span>Memory pipeline</span></label>
+          <button type="button" class="btn-view-store model-only" onclick="viewStore('a')">View memory</button>
+          <button type="button" class="btn-reset-store model-only" onclick="resetStore('a')">Reset memory</button>
         </div>
-        <div class="field-group full">
-          <label>Load from studio snapshot</label>
-          <div class="snapshot-row">
-            <select id="a-snapshot"><option value="">— select snapshot —</option></select>
-            <button class="btn-load-snap" onclick="loadSnapshot('a')">Load</button>
+        <div class="pcard-row pcard-tts-row">
+          <label class="inline-toggle"><input type="checkbox" id="a-tts" /><span>Speak responses (TTS)</span></label>
+          <label class="pfield pcard-tts-voice">
+            <span>voice</span>
+            <select id="a-tts-voice"><option value="">— default —</option></select>
+          </label>
+        </div>
+        <details class="pcard-tuning model-only">
+          <summary>Generation <span class="muted small">— temperature, top_p, max_tokens, retries</span></summary>
+          <div class="pcard-row pcard-tuning-grid">
+            <label class="pfield"><span>temperature</span><input type="number" step="0.05" min="0" max="2" id="a-gen-temperature" placeholder="0.7" /></label>
+            <label class="pfield"><span>top_p</span><input type="number" step="0.01" min="0" max="1" id="a-gen-top_p" placeholder="0.9" /></label>
+            <label class="pfield"><span>top_k</span><input type="number" step="1" min="0" id="a-gen-top_k" placeholder="40" /></label>
+            <label class="pfield"><span>max_tokens</span><input type="number" step="10" min="50" id="a-gen-max_tokens" placeholder="500" /></label>
+            <label class="pfield"><span>repeat_penalty</span><input type="number" step="0.05" min="0" max="2" id="a-gen-repeat_penalty" placeholder="1.1" /></label>
+            <label class="pfield"><span>retries</span><input type="number" step="1" min="0" max="5" id="a-gen-retries" placeholder="1" /></label>
           </div>
-        </div>
-        <div class="field-group full">
-          <label>Registry JSON</label>
+        </details>
+        <details class="pcard-tuning model-only">
+          <summary>Memory tuning <span class="muted small">— history window, working notes</span></summary>
+          <div class="pcard-row pcard-tuning-grid">
+            <label class="pfield"><span>history_window</span><input type="number" min="0" step="1" id="a-history_window" placeholder="6" /></label>
+            <label class="pfield"><span>top_k</span><input type="number" min="1" step="1" id="a-top_k" placeholder="5" /></label>
+            <label class="inline-toggle pfield-toggle"><input type="checkbox" id="a-working_notes_enabled" /><span>Working notes</span></label>
+            <label class="pfield"><span>notes every N</span><input type="number" min="1" step="1" id="a-working_notes_every_n_turns" placeholder="3" /></label>
+            <label class="pfield"><span>notes max tokens</span><input type="number" min="50" step="10" id="a-working_notes_max_tokens" placeholder="200" /></label>
+            <label class="inline-toggle pfield-toggle"><input type="checkbox" id="a-system_summary_enabled" /><span>Summarize system prompt</span></label>
+            <label class="pfield"><span>summary every N</span><input type="number" min="1" step="1" id="a-system_summary_every_n_turns" placeholder="3" /></label>
+            <label class="pfield"><span>summary max tokens</span><input type="number" min="50" step="10" id="a-system_summary_max_tokens" placeholder="300" /></label>
+          </div>
+        </details>
+        <details class="pcard-tuning model-only">
+          <summary>Notes prompts <span class="muted small">— what each section should track</span></summary>
+          <div class="pcard-notes-grid">
+            <label class="pfield">
+              <span>About me</span>
+              <textarea id="a-notes_about_me_prompt" rows="3" placeholder="How I'm feeling, my mood, my state, decisions I've made about how to handle this. Use markdown — short bullets for distinct thoughts, **bold** for things I've decided, *italic* for emotional texture."></textarea>
+            </label>
+            <label class="pfield">
+              <span>About the other</span>
+              <textarea id="a-notes_about_other_prompt" rows="3" placeholder="My read on them — what they want, how they're behaving, my opinion of them. Use markdown — short bullets for distinct observations, **bold** for things I'm sure of, *italic* for hunches I'm not yet certain about."></textarea>
+            </label>
+          </div>
+        </details>
+        <details class="pcard-json model-only">
+          <summary>Registry JSON <span class="muted small">— filled by snapshot</span></summary>
           <textarea id="a-registry" placeholder='{"registry": { ... }}'></textarea>
-        </div>
+        </details>
       </div>
-    </div>
+    </details>
 
-    <!-- participant B -->
-    <div class="config-panel" id="panel-b">
-      <div class="config-panel-header">
-        <div class="participant-dot b"></div>
-        <span class="config-panel-title">Participant B</span>
-      </div>
-      <div class="config-fields">
-        <div class="field-group">
-          <label>Name</label>
-          <input type="text" id="b-name" value="B" placeholder="B" />
+    <details class="pcard" id="card-b" open>
+      <summary class="pcard-summary">
+        <span class="pdot b"></span>
+        <span class="pcard-title" id="b-summary-name">B</span>
+        <span class="pcard-meta" id="b-summary-meta">— configure —</span>
+        <span class="pcard-chips" id="b-summary-chips"></span>
+        <span class="pcard-spacer"></span>
+        <span class="pcard-toggle">▾</span>
+      </summary>
+      <div class="pcard-body">
+        <div class="pcard-row">
+          <label class="pfield"><span>Name</span><input type="text" id="b-name" value="B" /></label>
+          <label class="pfield model-only"><span>Snapshot</span>
+            <select id="b-snapshot" onchange="loadSnapshot('b')"><option value="">— select —</option></select>
+          </label>
+          <label class="pfield model-only"><span>Model</span>
+            <span class="model-row">
+              <input type="text" id="b-model" placeholder="llama3" list="ensemble-models-list" />
+              <button type="button" class="ghost" onclick="fetchModels()" title="Refresh models">↺</button>
+            </span>
+          </label>
         </div>
-        <div class="field-group">
-          <label>Model</label>
-          <input type="text" id="b-model" value="llama3" placeholder="llama3" />
+        <div class="pcard-row pcard-toggles">
+          <label class="inline-toggle"><input type="checkbox" id="b-human" /><span>Human-driven</span></label>
+          <label class="inline-toggle model-only"><input type="checkbox" id="b-memory" checked /><span>Memory pipeline</span></label>
+          <button type="button" class="btn-view-store model-only" onclick="viewStore('b')">View memory</button>
+          <button type="button" class="btn-reset-store model-only" onclick="resetStore('b')">Reset memory</button>
         </div>
-        <div class="field-group full">
-          <label>Load from studio snapshot</label>
-          <div class="snapshot-row">
-            <select id="b-snapshot"><option value="">— select snapshot —</option></select>
-            <button class="btn-load-snap" onclick="loadSnapshot('b')">Load</button>
+        <div class="pcard-row pcard-tts-row">
+          <label class="inline-toggle"><input type="checkbox" id="b-tts" /><span>Speak responses (TTS)</span></label>
+          <label class="pfield pcard-tts-voice">
+            <span>voice</span>
+            <select id="b-tts-voice"><option value="">— default —</option></select>
+          </label>
+        </div>
+        <details class="pcard-tuning model-only">
+          <summary>Generation <span class="muted small">— temperature, top_p, max_tokens, retries</span></summary>
+          <div class="pcard-row pcard-tuning-grid">
+            <label class="pfield"><span>temperature</span><input type="number" step="0.05" min="0" max="2" id="b-gen-temperature" placeholder="0.7" /></label>
+            <label class="pfield"><span>top_p</span><input type="number" step="0.01" min="0" max="1" id="b-gen-top_p" placeholder="0.9" /></label>
+            <label class="pfield"><span>top_k</span><input type="number" step="1" min="0" id="b-gen-top_k" placeholder="40" /></label>
+            <label class="pfield"><span>max_tokens</span><input type="number" step="10" min="50" id="b-gen-max_tokens" placeholder="500" /></label>
+            <label class="pfield"><span>repeat_penalty</span><input type="number" step="0.05" min="0" max="2" id="b-gen-repeat_penalty" placeholder="1.1" /></label>
+            <label class="pfield"><span>retries</span><input type="number" step="1" min="0" max="5" id="b-gen-retries" placeholder="1" /></label>
           </div>
-        </div>
-        <div class="field-group full">
-          <label>Registry JSON</label>
+        </details>
+        <details class="pcard-tuning model-only">
+          <summary>Memory tuning <span class="muted small">— history window, working notes</span></summary>
+          <div class="pcard-row pcard-tuning-grid">
+            <label class="pfield"><span>history_window</span><input type="number" min="0" step="1" id="b-history_window" placeholder="6" /></label>
+            <label class="pfield"><span>top_k</span><input type="number" min="1" step="1" id="b-top_k" placeholder="5" /></label>
+            <label class="inline-toggle pfield-toggle"><input type="checkbox" id="b-working_notes_enabled" /><span>Working notes</span></label>
+            <label class="pfield"><span>notes every N</span><input type="number" min="1" step="1" id="b-working_notes_every_n_turns" placeholder="3" /></label>
+            <label class="pfield"><span>notes max tokens</span><input type="number" min="50" step="10" id="b-working_notes_max_tokens" placeholder="200" /></label>
+            <label class="inline-toggle pfield-toggle"><input type="checkbox" id="b-system_summary_enabled" /><span>Summarize system prompt</span></label>
+            <label class="pfield"><span>summary every N</span><input type="number" min="1" step="1" id="b-system_summary_every_n_turns" placeholder="3" /></label>
+            <label class="pfield"><span>summary max tokens</span><input type="number" min="50" step="10" id="b-system_summary_max_tokens" placeholder="300" /></label>
+          </div>
+        </details>
+        <details class="pcard-tuning model-only">
+          <summary>Notes prompts <span class="muted small">— what each section should track</span></summary>
+          <div class="pcard-notes-grid">
+            <label class="pfield">
+              <span>About me</span>
+              <textarea id="b-notes_about_me_prompt" rows="3" placeholder="How I'm feeling, my mood, my state, decisions I've made about how to handle this. Use markdown — short bullets for distinct thoughts, **bold** for things I've decided, *italic* for emotional texture."></textarea>
+            </label>
+            <label class="pfield">
+              <span>About the other</span>
+              <textarea id="b-notes_about_other_prompt" rows="3" placeholder="My read on them — what they want, how they're behaving, my opinion of them. Use markdown — short bullets for distinct observations, **bold** for things I'm sure of, *italic* for hunches I'm not yet certain about."></textarea>
+            </label>
+          </div>
+        </details>
+        <details class="pcard-json model-only">
+          <summary>Registry JSON <span class="muted small">— filled by snapshot</span></summary>
           <textarea id="b-registry" placeholder='{"registry": { ... }}'></textarea>
-        </div>
+        </details>
       </div>
-    </div>
-
+    </details>
   </div>
 
-  <!-- controls row -->
-  <div class="controls-row">
-    <div class="ctrl-group">
-      <label>Turns</label>
-      <input type="text" id="turns" value="8" class="turns-input" />
+  <!-- three-column main: side panel A | conversation | side panel B -->
+  <div class="main-row">
+    <aside class="side-panel side-panel-a" id="side-a">
+      <div class="side-panel-header">
+        <span class="pdot a"></span>
+        <span class="side-panel-title" id="side-a-name">A</span>
+        <span class="side-panel-model muted" id="side-a-model">—</span>
+      </div>
+      <div class="side-panel-tabs" role="tablist">
+        <button type="button" class="side-tab active" data-tab="thoughts" data-side="a">Thoughts</button>
+        <button type="button" class="side-tab" data-tab="trace" data-side="a">Trace</button>
+      </div>
+      <div class="side-panel-body" id="side-a-body" data-active-tab="thoughts">
+        <div class="side-tab-pane" data-tab="thoughts">
+          <div class="thoughts-pane thoughts-self" id="side-a-self">
+            <div class="thoughts-pane-label">About me</div>
+            <div class="thoughts-pane-body"><div class="side-panel-empty">no notes yet</div></div>
+          </div>
+          <div class="thoughts-pane thoughts-other" id="side-a-other">
+            <div class="thoughts-pane-label">About other</div>
+            <div class="thoughts-pane-body"><div class="side-panel-empty">no notes yet</div></div>
+          </div>
+        </div>
+        <div class="side-tab-pane" data-tab="trace" hidden>
+          <div id="side-a-trace"><div class="side-panel-empty">no turns yet</div></div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="conversation-area" id="conversation">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-state-icon">⇄</div>
+        <div>Configure two participants, write a seed, hit Run</div>
+      </div>
     </div>
-    <div class="ctrl-group seed">
-      <label>Seed message</label>
-      <input type="text" id="seed" placeholder="Opening message sent to participant A…" />
-    </div>
+
+    <aside class="side-panel side-panel-b" id="side-b">
+      <div class="side-panel-header">
+        <span class="pdot b"></span>
+        <span class="side-panel-title" id="side-b-name">B</span>
+        <span class="side-panel-model muted" id="side-b-model">—</span>
+      </div>
+      <div class="side-panel-tabs" role="tablist">
+        <button type="button" class="side-tab active" data-tab="thoughts" data-side="b">Thoughts</button>
+        <button type="button" class="side-tab" data-tab="trace" data-side="b">Trace</button>
+      </div>
+      <div class="side-panel-body" id="side-b-body" data-active-tab="thoughts">
+        <div class="side-tab-pane" data-tab="thoughts">
+          <div class="thoughts-pane thoughts-self" id="side-b-self">
+            <div class="thoughts-pane-label">About me</div>
+            <div class="thoughts-pane-body"><div class="side-panel-empty">no notes yet</div></div>
+          </div>
+          <div class="thoughts-pane thoughts-other" id="side-b-other">
+            <div class="thoughts-pane-label">About other</div>
+            <div class="thoughts-pane-body"><div class="side-panel-empty">no notes yet</div></div>
+          </div>
+        </div>
+        <div class="side-tab-pane" data-tab="trace" hidden>
+          <div id="side-b-trace"><div class="side-panel-empty">no turns yet</div></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- sticky action bar -->
+  <div class="action-bar">
+    <input type="text" id="seed" class="seed-input" placeholder="Opening message sent to participant A…" />
+    <label class="action-turns"><span>turns</span><input type="text" id="turns" value="8" /></label>
+    <label class="action-toggle" title="When off, each turn waits for you to click Next"><input type="checkbox" id="auto-run" checked /><span>auto</span></label>
     <button class="btn-run" id="btn-run" onclick="startEnsemble()">Run</button>
+    <button class="btn-step" id="btn-step" onclick="stepEnsemble()" hidden>Next ▸</button>
     <button class="btn-stop" id="btn-stop" onclick="stopEnsemble()">Stop</button>
-    <div id="conn-chip" class="conn-chip" title="Connection from Studio settings"></div>
     <span class="status-chip" id="status"></span>
   </div>
 
-  <!-- conversation -->
-  <div class="conversation-area" id="conversation">
-    <div class="empty-state" id="empty-state">
-      <div class="empty-state-icon">⇄</div>
-      <div>Configure two participants and hit Run</div>
-    </div>
-  </div>
+</div>
 
+<datalist id="ensemble-models-list"></datalist>
+
+<!-- View-memory modal -->
+<div id="memview-overlay" class="memview-overlay" hidden>
+  <div class="memview-dialog" role="dialog" aria-modal="true" aria-labelledby="memview-title">
+    <div class="memview-header">
+      <span id="memview-title" class="memview-title">Memory</span>
+      <span id="memview-meta" class="memview-meta muted"></span>
+      <button type="button" class="memview-close" onclick="closeMemView()" aria-label="Close">✕</button>
+    </div>
+    <div id="memview-body" class="memview-body"></div>
+  </div>
 </div>
 
 <script src="/static/ensemble.js"></script>

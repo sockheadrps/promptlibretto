@@ -129,6 +129,8 @@ class Registry:
     routes: dict[str, Route] = field(default_factory=dict)
     generation: dict[str, Any] = field(default_factory=dict)
     output_policy: dict[str, Any] = field(default_factory=dict)
+    memory_rules: list[dict[str, Any]] = field(default_factory=list)
+    memory_config: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self, *, wrap: bool = True) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -149,6 +151,10 @@ class Registry:
             body["generation"] = dict(self.generation)
         if self.output_policy:
             body["output_policy"] = dict(self.output_policy)
+        if self.memory_rules:
+            body["memory_rules"] = list(self.memory_rules)
+        if self.memory_config:
+            body["memory_config"] = dict(self.memory_config)
         return {"registry": body} if wrap else body
 
     @classmethod
@@ -165,6 +171,8 @@ class Registry:
                 "routes",
                 "generation",
                 "output_policy",
+                "memory_rules",
+                "memory_config",
             }:
                 continue
             if isinstance(value, dict) and "items" in value:
@@ -182,4 +190,6 @@ class Registry:
             routes=routes,
             generation=dict(data.get("generation") or {}),
             output_policy=dict(data.get("output_policy") or {}),
+            memory_rules=list(data.get("memory_rules") or []),
+            memory_config=dict(data.get("memory_config") or {}),
         )

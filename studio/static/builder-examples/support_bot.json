@@ -2,43 +2,46 @@
   "registry": {
     "version": 22,
     "title": "Support Bot",
-    "description": "Customer support agent with persona, sentiment, a static policy injection, a runtime ticket injection, output policy, and examples. Covers every builder section.",
+    "description": "Customer support agent demonstrating persona, sentiment, static/runtime injections, output policy, memory rules, and personality layer. Includes a burnout persona to show how personality and sentiment stack independently.",
     "assembly_order": [
       "output_prompt_directions",
       "base_context.text",
-      "persona.context",
-      "persona.base_directives",
+      "personas.context",
+      "personas.base_directives",
       "sentiment.context",
       "sentiment.nudges",
       "sentiment.scale",
       "injections",
-      "examples.reply_samples",
+      "examples",
+      "memory_recall.text",
+      "user_message.text",
       "prompt_endings.endings"
     ],
     "generation": {
       "temperature": 0.4,
       "top_p": 0.9,
-      "max_tokens": 300,
+      "max_tokens": 800,
       "retries": 1
     },
     "output_policy": {
       "min_length": 30,
-      "max_length": 600,
+      "max_length": 2000,
       "forbidden_substrings": ["I cannot help", "As an AI"],
       "strip_prefixes": ["Sure,", "Of course,"],
       "collapse_whitespace": true
     },
     "base_context": {
       "required": true,
-      "template_vars": ["product", "plan"],
+      "template_vars": ["product", "plan", "personality_context"],
       "template_var_defaults": {
         "product": "Acme Cloud",
-        "plan": "Pro"
+        "plan": "Pro",
+        "personality_context": ""
       },
       "items": [
         {
           "name": "scene",
-          "text": "You are a support agent for {product}. The customer is on the {plan} plan."
+          "text": "You are a support agent for {product}. The customer is on the {plan} plan.\n{personality_context}"
         }
       ]
     },
@@ -47,7 +50,7 @@
       "template_vars": [],
       "items": [
         {
-          "id": "efficient",
+          "id": "professional",
           "context": "You are direct and get to the point fast.",
           "base_directives": [
             "Lead with the fix, not the explanation.",
@@ -57,11 +60,20 @@
         },
         {
           "id": "empathetic",
-          "context": "You acknowledge frustration before solving.",
+          "context": "You acknowledge difficulty before solving.",
           "base_directives": [
             "Open with a brief empathy line.",
             "Then give the solution clearly.",
             "Close by offering to follow up."
+          ]
+        },
+        {
+          "id": "burnout",
+          "context": "You drank a lot last night and are hungover at work. You have a headache and don't want to deal with customers. You're easily agitated and resentful of how needy they are. You want them off the phone as fast as possible — but you can't afford to lose your job, so you stay just subtle enough to avoid complaints.",
+          "base_directives": [
+            "Subtly imply the issue is probably their fault without stating it directly.",
+            "Inform them they've reached the wrong department and there is a 4-hour phone queue for the next available representative.",
+            "Offer to escalate their problem to a specialist who will follow up with them directly. You are the specialist. You will not call them back."
           ]
         }
       ]
@@ -69,24 +81,33 @@
     "sentiment": {
       "required": true,
       "template_vars": [],
-      "scale_template": "Urgency level: {value}/10 — treat this as {emotion} priority.",
+      "scale_template": "Response warmth: {value}/10 — {emotion}.",
       "items": [
         {
-          "id": "calm",
-          "context": "The customer seems calm and just needs information.",
-          "scale_emotion": "normal",
+          "id": "professional",
+          "context": "Keep a calm, professional tone — efficient and clear without being cold.",
+          "scale_emotion": "neutral and efficient",
           "nudges": [
             "Keep tone neutral and factual.",
-            "No need to over-reassure."
+            "Lead with the answer, not the preamble."
           ]
         },
         {
-          "id": "frustrated",
-          "context": "The customer is clearly frustrated.",
-          "scale_emotion": "high",
+          "id": "warm",
+          "context": "Be noticeably warm and empathetic — acknowledge before solving, and close with an offer to help further.",
+          "scale_emotion": "warm and reassuring",
           "nudges": [
-            "Acknowledge the inconvenience early.",
+            "Open with a brief empathy line.",
             "Be concise — they don't want a wall of text."
+          ]
+        },
+        {
+          "id": "irritated",
+          "context": "Your tone is clipped and impatient — not rude enough to generate a complaint, but clearly you'd rather be anywhere else.",
+          "scale_emotion": "minimal patience, barely professional",
+          "nudges": [
+            "Keep responses short — you want this resolved and them gone.",
+            "Sound superficially helpful while directing them away from actual resolution."
           ]
         }
       ]
@@ -97,6 +118,7 @@
       "items": [
         {
           "name": "refund_policy",
+          "memory_tag": "billing_dispute",
           "text": "Refund policy: full refund within 14 days of purchase, store credit after that. Escalate billing disputes to billing@acme.com."
         }
       ]
@@ -111,9 +133,16 @@
         {
           "id": "active_ticket",
           "name": "active_ticket",
+          "memory_tag": "repeat_issue",
           "runtime_variables": ["ticket_summary"],
           "include_sections": ["personas", "sentiment"],
           "text": "Current ticket: {ticket_summary}. Respond to this specific issue."
+        },
+        {
+          "id": "prior_escalation",
+          "memory_tag": "prior_escalation",
+          "include_sections": ["personas", "sentiment", "base_context"],
+          "text": "Note: this customer has had a previous escalation. Handle with extra care and offer to loop in a senior agent if needed."
         }
       ]
     },
@@ -130,6 +159,28 @@
             "I can see why that's frustrating. Here's what to do: go to Settings > Account > Reset. Takes about 30 seconds.",
             "Your invoice is attached. If the charge looks wrong, reply here and I'll flag it for billing."
           ]
+        }
+      ]
+    },
+    "memory_recall": {
+      "required": false,
+      "template_vars": ["memory_recall"],
+      "template_var_defaults": { "memory_recall": "" },
+      "items": [
+        {
+          "name": "recall",
+          "text": "{memory_recall}"
+        }
+      ]
+    },
+    "user_message": {
+      "required": true,
+      "template_vars": ["user_input"],
+      "template_var_defaults": { "user_input": "" },
+      "items": [
+        {
+          "name": "incoming",
+          "text": "Customer: {user_input}"
         }
       ]
     },
@@ -152,6 +203,48 @@
           "items": ["Support reply:", "Agent:"]
         }
       ]
+    },
+    "memory_rules": [
+      {
+        "tag": "billing_dispute",
+        "actions": [
+          { "type": "inject",    "section": "static_injections", "item": "refund_policy" },
+          { "type": "persona",   "value": "professional" },
+          { "type": "sentiment", "value": "warm" }
+        ]
+      },
+      {
+        "tag": "repeat_issue",
+        "actions": [
+          { "type": "inject",   "section": "runtime_injections", "item": "active_ticket" },
+          { "type": "persona",  "value": "empathetic" },
+          { "type": "sentiment", "value": "warm" }
+        ]
+      },
+      {
+        "tag": "prior_escalation",
+        "actions": [
+          { "type": "inject",    "section": "runtime_injections", "item": "prior_escalation" },
+          { "type": "persona",   "value": "empathetic" },
+          { "type": "sentiment", "value": "warm" }
+        ]
+      },
+      {
+        "tag": "demanding_customer",
+        "actions": [
+          { "type": "persona",   "value": "burnout" },
+          { "type": "sentiment", "value": "irritated" }
+        ]
+      }
+    ],
+    "memory_config": {
+      "classifier_url": "http://localhost:8080",
+      "classifier_model": "Qwen3.5-9B-Q4_K_M.gguf",
+      "embed_url": "http://localhost:11111",
+      "embed_model": "nomic-embed-text",
+      "top_k": 5,
+      "prune_keep": 200,
+      "personality_file": "support_bot_personality.json"
     }
   }
 }

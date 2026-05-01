@@ -76,6 +76,8 @@ function createEmptyRegistryState() {
     outputPolicyExtras: {},
     extraTopLevel: {},
     sections: {},
+    memory_rules: [],
+    memory_config: {},
   };
 
   SECTION_KEYS.forEach((key) => {
@@ -178,6 +180,13 @@ function buildExportPayload() {
   }
   if (Object.keys(registryState.output_policy).length) {
     registry.output_policy = JSON.parse(JSON.stringify(registryState.output_policy));
+  }
+  if (registryState.memory_rules.length) {
+    registry.memory_rules = JSON.parse(JSON.stringify(registryState.memory_rules));
+  }
+  const memCfg = readMemoryConfig();
+  if (Object.keys(memCfg).length) {
+    registry.memory_config = memCfg;
   }
 
   SECTION_KEYS.forEach((key) => {
@@ -359,20 +368,15 @@ function toggleBuilderCollapse(btn) {
 }
 
 function switchBuilderTab(tab) {
-  activeBuilderTab = tab === "finalize" ? "finalize" : "sections";
-  const sectionsTab = document.getElementById("tab-sections");
-  const finalizeTab = document.getElementById("tab-finalize");
-  const sectionsPanel = document.getElementById("builder-tab-sections-panel");
-  const finalizePanel = document.getElementById("builder-tab-finalize-panel");
-  if (!sectionsTab || !finalizeTab || !sectionsPanel || !finalizePanel) return;
-
-  const onSections = activeBuilderTab === "sections";
-  sectionsTab.classList.toggle("active", onSections);
-  finalizeTab.classList.toggle("active", !onSections);
-  sectionsTab.setAttribute("aria-selected", onSections ? "true" : "false");
-  finalizeTab.setAttribute("aria-selected", onSections ? "false" : "true");
-  sectionsPanel.classList.toggle("active", onSections);
-  finalizePanel.classList.toggle("active", !onSections);
+  activeBuilderTab = ["finalize", "memory"].includes(tab) ? tab : "sections";
+  const tabs = ["sections", "finalize", "memory"];
+  for (const t of tabs) {
+    const btn = document.getElementById(`tab-${t}`);
+    const panel = document.getElementById(`builder-tab-${t}-panel`);
+    const active = activeBuilderTab === t;
+    if (btn) { btn.classList.toggle("active", active); btn.setAttribute("aria-selected", active ? "true" : "false"); }
+    if (panel) panel.classList.toggle("active", active);
+  }
 }
 
 
@@ -738,6 +742,12 @@ function renderItems(type) {
             </select>
           </div>
         </div>
+        <div class="mb-3">
+          <label>Memory Tag <span class="label-hint">tag that activates this injection (from Memory Rules)</span></label>
+          <input type="text" value="${escapeHtml(entry.memory_tag || "")}"
+            placeholder="e.g. past_conflict"
+            oninput="updateField('${type}', ${entry._ui_id}, 'memory_tag', this.value)">
+        </div>
         <div>
           <label>Apply to Sections</label>
           <div class="checkbox-grid">
@@ -788,11 +798,18 @@ function renderItems(type) {
         ${renderListField(type, entry._ui_id, 'items', entry.items)}
       `;
     } else {
+      const memTagRow = (type === "static_injections")
+        ? `<label class="mt-2">Memory Tag <span class="label-hint">tag that activates this injection (from Memory Rules)</span></label>
+           <input type="text" value="${escapeHtml(entry.memory_tag || "")}"
+             placeholder="e.g. past_conflict"
+             oninput="updateField('${type}', ${entry._ui_id}, 'memory_tag', this.value)" class="mb-2">`
+        : "";
       html = `
         <label>Name/ID</label>
         <input type="text" value="${entry.name || entry.id || ""}" oninput="updateField('${type}', ${entry._ui_id}, 'name', this.value)" class="mb-2">
         <label>Text</label>
         <textarea oninput="updateField('${type}', ${entry._ui_id}, 'text', this.value)">${entry.text || ""}</textarea>
+        ${memTagRow}
         <label class="mt-2">Pool Items <span class="label-hint">optional — if set, assembly token <code>${type}.name</code> renders this list instead of text</span></label>
         ${renderListField(type, entry._ui_id, 'items', entry.items)}
       `;
@@ -867,6 +884,13 @@ function applyRegistryJson(json) {
   delete next.outputPolicyExtras.required_patterns;
   for (const [key] of POLICY_LIST_FIELDS) delete next.outputPolicyExtras[key];
 
+  next.memory_rules = Array.isArray(reg.memory_rules)
+    ? JSON.parse(JSON.stringify(reg.memory_rules))
+    : [];
+  next.memory_config = reg.memory_config && typeof reg.memory_config === "object"
+    ? { ...reg.memory_config }
+    : {};
+
   const knownTopLevel = new Set([
     "version",
     "title",
@@ -874,6 +898,8 @@ function applyRegistryJson(json) {
     "assembly_order",
     "generation",
     "output_policy",
+    "memory_rules",
+    "memory_config",
     ...SECTION_KEYS,
   ]);
   for (const [k, v] of Object.entries(reg)) {
@@ -897,6 +923,7 @@ function applyRegistryJson(json) {
   });
 
   registryState = next;
+  populateMemoryConfigInputs();
 
   document.getElementById("model-version").value = registryState.version;
   document.getElementById("model-title-input").value = registryState.title;
@@ -917,12 +944,13 @@ function applyRegistryJson(json) {
   initApp();
 }
 
-async function loadBuilderExample() {
+async function loadBuilderExample(name) {
+  if (!name) return;
   try {
-    const res = await fetch("/static/builder-examples/support_bot.json");
+    const res = await fetch(`/static/builder-examples/${name}.json`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     applyRegistryJson(await res.json());
-    setValidationStatus("Example loaded.", true);
+    setValidationStatus(`Example "${name}" loaded.`, true);
   } catch (e) {
     console.error(e);
     alert("Failed to load example. Check console for details.");
@@ -1062,6 +1090,7 @@ function initApp() {
   });
 
   renderAssemblyOrderEditor();
+  renderMemoryRulesPanel();
   switchBuilderTab(activeBuilderTab);
   exportFullModel();
 }
@@ -1126,6 +1155,228 @@ function closeSectionInfo() {
   if (modal) modal.hidden = true;
 }
 
+// ── Memory Rules ──────────────────────────────────────────────────
+
+const CONN_KEY = "promptlibretto.connection.v1";
+
+function getStudioConnection() {
+  try { return JSON.parse(localStorage.getItem(CONN_KEY) || "{}"); }
+  catch { return {}; }
+}
+
+function refreshMemConnChip() {
+  const chip = document.getElementById("mem-conn-chip");
+  if (!chip) return;
+  const conn = getStudioConnection();
+  const url = conn.baseUrl || conn.base_url || "";
+  if (url) {
+    const model = conn.model ? ` · ${conn.model}` : "";
+    chip.textContent = url + model;
+    chip.classList.remove("mem-conn-chip--warn");
+  } else {
+    chip.textContent = "not set — configure in Studio";
+    chip.classList.add("mem-conn-chip--warn");
+  }
+}
+
+function readMemoryConfig() {
+  const classifierUrl  = document.getElementById("mem-classifier-url")?.value?.trim();
+  const classifierModel = document.getElementById("mem-classifier-model")?.value?.trim();
+  const embedUrl       = document.getElementById("mem-embed-url")?.value?.trim();
+  const embedModel     = document.getElementById("mem-embed-model")?.value?.trim();
+  const topK           = document.getElementById("mem-top-k")?.value;
+  const pruneKeep      = document.getElementById("mem-prune-keep")?.value;
+  const storePath      = document.getElementById("mem-store-path")?.value?.trim();
+  const file           = document.getElementById("mem-personality-file")?.value?.trim();
+  const out = {};
+  if (classifierUrl)   out.classifier_url   = classifierUrl;
+  if (classifierModel) out.classifier_model = classifierModel;
+  if (embedUrl)        out.embed_url        = embedUrl;
+  if (embedModel)      out.embed_model      = embedModel;
+  const k = parseInt(topK, 10);
+  if (Number.isFinite(k) && k > 0) out.top_k = k;
+  const p = parseInt(pruneKeep, 10);
+  if (Number.isFinite(p) && p > 0) out.prune_keep = p;
+  if (storePath) out.store_path = storePath;
+  if (file)      out.personality_file = file;
+  return out;
+}
+
+function _setClassifierModelSelect(models, currentValue) {
+  const sel = document.getElementById("mem-classifier-model");
+  if (!sel) return;
+  const prev = currentValue ?? sel.value;
+  sel.innerHTML = models.length
+    ? models.map((m) => `<option value="${escapeHtml(m)}" ${m === prev ? "selected" : ""}>${escapeHtml(m)}</option>`).join("")
+    : `<option value="">— no models found —</option>`;
+  if (prev && models.includes(prev)) sel.value = prev;
+}
+
+async function fetchClassifierModels() {
+  const urlEl = document.getElementById("mem-classifier-url");
+  const conn = getStudioConnection();
+  const base = (urlEl?.value?.trim() || conn.baseUrl || conn.base_url || "").replace(/\/+$/, "");
+  if (!base) {
+    alert("Set a classifier_url or configure your Studio connection first.");
+    return;
+  }
+  const sel = document.getElementById("mem-classifier-model");
+  if (sel) { sel.innerHTML = `<option value="">Loading…</option>`; }
+  try {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 5000);
+    let models = [];
+    // Try Ollama /api/tags first, fall back to OpenAI /v1/models
+    for (const path of ["/api/tags", "/v1/models"]) {
+      try {
+        const resp = await fetch(base + path, { signal: abort.signal });
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        if (Array.isArray(data.models)) { models = data.models.map((m) => m.name).filter(Boolean); break; }
+        if (Array.isArray(data.data))   { models = data.data.map((m) => m.id).filter(Boolean); break; }
+      } catch {}
+    }
+    clearTimeout(timer);
+    _setClassifierModelSelect(models, registryState.memory_config?.classifier_model);
+    exportFullModel();
+  } catch (err) {
+    if (sel) sel.innerHTML = `<option value="">— fetch failed —</option>`;
+  }
+}
+
+function populateMemoryConfigInputs() {
+  const cfg = registryState.memory_config || {};
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ""; };
+  set("mem-classifier-url",   cfg.classifier_url);
+  set("mem-embed-url",        cfg.embed_url);
+  set("mem-embed-model",      cfg.embed_model);
+  set("mem-top-k",            cfg.top_k);
+  set("mem-prune-keep",       cfg.prune_keep);
+  set("mem-store-path",       cfg.store_path);
+  set("mem-personality-file", cfg.personality_file);
+  if (cfg.classifier_model) {
+    _setClassifierModelSelect([cfg.classifier_model], cfg.classifier_model);
+  }
+}
+
+function addMemoryRule() {
+  registryState.memory_rules.push({ tag: "", actions: [] });
+  renderMemoryRulesPanel();
+  exportFullModel();
+}
+
+function removeMemoryRule(idx) {
+  registryState.memory_rules.splice(idx, 1);
+  renderMemoryRulesPanel();
+  exportFullModel();
+}
+
+function updateMemoryRuleTag(idx, value) {
+  registryState.memory_rules[idx].tag = value;
+  exportFullModel();
+}
+
+function addMemoryAction(ruleIdx) {
+  if (!registryState.memory_rules[ruleIdx]) return;
+  registryState.memory_rules[ruleIdx].actions.push({ type: "inject", section: "runtime_injections", item: "" });
+  renderMemoryRulesPanel();
+  exportFullModel();
+}
+
+function removeMemoryAction(ruleIdx, actionIdx) {
+  registryState.memory_rules[ruleIdx]?.actions.splice(actionIdx, 1);
+  renderMemoryRulesPanel();
+  exportFullModel();
+}
+
+function updateMemoryAction(ruleIdx, actionIdx, field, value) {
+  const action = registryState.memory_rules[ruleIdx]?.actions[actionIdx];
+  if (!action) return;
+  action[field] = value;
+  if (field === "type") {
+    // reset type-specific fields when type changes
+    delete action.section; delete action.item;
+    delete action.value; delete action.key;
+    if (value === "inject") { action.section = "runtime_injections"; action.item = ""; }
+    else if (value === "persona" || value === "sentiment") { action.value = ""; }
+    else if (value === "template_var") { action.key = ""; action.value = ""; }
+  }
+  renderMemoryRulesPanel();
+  exportFullModel();
+}
+
+function _memActionEditor(ruleIdx, actionIdx, action) {
+  const typeOpts = ["inject", "persona", "sentiment", "template_var"]
+    .map((t) => `<option value="${t}" ${action.type === t ? "selected" : ""}>${t}</option>`)
+    .join("");
+
+  let targetHtml = "";
+  if (action.type === "inject") {
+    const secOpts = ["runtime_injections", "static_injections"]
+      .map((s) => `<option value="${s}" ${action.section === s ? "selected" : ""}>${s}</option>`)
+      .join("");
+    const selectedSec = action.section || "runtime_injections";
+    const secItems = (registryState.sections[selectedSec]?.items || []);
+    const itemOpts = secItems.map((it) => {
+      const id = it.id || it.name || "";
+      return `<option value="${id}" ${action.item === id ? "selected" : ""}>${escapeHtml(id)}</option>`;
+    }).join("");
+    targetHtml = `
+      <select class="mem-action-field" onchange="updateMemoryAction(${ruleIdx},${actionIdx},'section',this.value)">${secOpts}</select>
+      <select class="mem-action-field" onchange="updateMemoryAction(${ruleIdx},${actionIdx},'item',this.value)">
+        <option value="">— item id —</option>${itemOpts}
+      </select>`;
+  } else if (action.type === "persona") {
+    const opts = (registryState.sections.personas?.items || [])
+      .map((it) => { const id = it.id || ""; return `<option value="${id}" ${action.value === id ? "selected" : ""}>${escapeHtml(id)}</option>`; })
+      .join("");
+    targetHtml = `<select class="mem-action-field" onchange="updateMemoryAction(${ruleIdx},${actionIdx},'value',this.value)"><option value="">— persona id —</option>${opts}</select>`;
+  } else if (action.type === "sentiment") {
+    const opts = (registryState.sections.sentiment?.items || [])
+      .map((it) => { const id = it.id || ""; return `<option value="${id}" ${action.value === id ? "selected" : ""}>${escapeHtml(id)}</option>`; })
+      .join("");
+    targetHtml = `<select class="mem-action-field" onchange="updateMemoryAction(${ruleIdx},${actionIdx},'value',this.value)"><option value="">— sentiment id —</option>${opts}</select>`;
+  } else if (action.type === "template_var") {
+    targetHtml = `
+      <input class="mem-action-field" type="text" value="${escapeHtml(action.key || "")}" placeholder="var key"
+        oninput="updateMemoryAction(${ruleIdx},${actionIdx},'key',this.value)">
+      <input class="mem-action-field" type="text" value="${escapeHtml(action.value || "")}" placeholder="var value"
+        oninput="updateMemoryAction(${ruleIdx},${actionIdx},'value',this.value)">`;
+  }
+
+  return `<div class="mem-action-row">
+    <select class="mem-action-type" onchange="updateMemoryAction(${ruleIdx},${actionIdx},'type',this.value)">${typeOpts}</select>
+    ${targetHtml}
+    <button type="button" class="mem-action-remove" onclick="removeMemoryAction(${ruleIdx},${actionIdx})" title="Remove action">×</button>
+  </div>`;
+}
+
+function renderMemoryRulesPanel() {
+  const host = document.getElementById("memory-rules-list");
+  if (!host) return;
+
+  if (!registryState.memory_rules.length) {
+    host.innerHTML = `<div class="mem-empty">No rules yet. Add a rule to map memory tags to prompt mutations.</div>`;
+    return;
+  }
+
+  host.innerHTML = registryState.memory_rules.map((rule, rIdx) => {
+    const actionsHtml = rule.actions.length
+      ? rule.actions.map((a, aIdx) => _memActionEditor(rIdx, aIdx, a)).join("")
+      : `<div class="mem-empty-actions">No actions — add one below.</div>`;
+    return `<div class="mem-rule-card">
+      <div class="mem-rule-header">
+        <input type="text" class="mem-rule-tag" value="${escapeHtml(rule.tag)}"
+          placeholder="tag name (e.g. past_conflict)"
+          oninput="updateMemoryRuleTag(${rIdx}, this.value)">
+        <button type="button" class="mem-rule-remove" onclick="removeMemoryRule(${rIdx})">Remove Rule</button>
+      </div>
+      <div class="mem-actions-list">${actionsHtml}</div>
+      <button type="button" class="mem-action-add" onclick="addMemoryAction(${rIdx})">+ Add Action</button>
+    </div>`;
+  }).join("");
+}
+
 consumeStudioHandoff();
 initApp();
 
@@ -1160,3 +1411,11 @@ window.addAssemblyToken = addAssemblyToken;
 window.addAssemblyTokenFromEncoded = addAssemblyTokenFromEncoded;
 window.removeAssemblyToken = removeAssemblyToken;
 window.moveAssemblyToken = moveAssemblyToken;
+window.refreshMemConnChip = refreshMemConnChip;
+window.fetchClassifierModels = fetchClassifierModels;
+window.addMemoryRule = addMemoryRule;
+window.removeMemoryRule = removeMemoryRule;
+window.updateMemoryRuleTag = updateMemoryRuleTag;
+window.addMemoryAction = addMemoryAction;
+window.removeMemoryAction = removeMemoryAction;
+window.updateMemoryAction = updateMemoryAction;

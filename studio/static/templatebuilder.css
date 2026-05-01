@@ -1271,3 +1271,176 @@ select:focus {
   font-family: var(--font-mono);
   color: var(--text-dim);
 }
+
+/* ── Memory Rules ──────────────────────────────────────────────── */
+
+.memory-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.mem-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px 0;
+  font-style: italic;
+}
+
+.mem-rule-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mem-rule-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mem-rule-tag {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.mem-rule-remove {
+  font-size: 11px;
+  padding: 4px 8px;
+  background: rgba(196, 88, 88, 0.15);
+  border: 1px solid rgba(196, 88, 88, 0.25);
+  color: var(--accent-rose);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mem-rule-remove:hover {
+  background: rgba(196, 88, 88, 0.25);
+}
+
+.mem-actions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 8px;
+}
+
+.mem-empty-actions {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.mem-action-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mem-action-type {
+  min-width: 120px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.mem-action-field {
+  flex: 1;
+  min-width: 100px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.mem-action-remove {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.mem-action-remove:hover {
+  color: var(--accent-rose);
+}
+
+.mem-action-add {
+  font-size: 11px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 4px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.mem-action-add:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+}
+
+/* ── Memory Config connection chip ────────────────────────────── */
+
+.mem-conn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+.mem-conn-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.mem-conn-chip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent-2);
+  flex: 1;
+}
+
+.mem-conn-chip--warn {
+  color: var(--warn);
+}
+
+.mem-conn-refresh {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.mem-conn-refresh:hover {
+  color: var(--text);
+}
+
+.mem-model-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.mem-model-row select {
+  flex: 1;
+}

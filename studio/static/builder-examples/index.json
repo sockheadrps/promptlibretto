@@ -1,0 +1,74 @@
+{
+  "examples": [
+    {
+      "file": "support_bot.json",
+      "name": "Support Bot",
+      "description": "Customer support agent with personas, sentiment, runtime context, output policy, memory rules, and personality context."
+    },
+    {
+      "file": "twitch_chatter.json",
+      "name": "Twitch Chatter",
+      "description": "Declarative registry for generating short Twitch-style chat messages from stream context, persona, sentiment, and examples."
+    },
+    {
+      "file": "conspiracy_theorist.json",
+      "name": "Conspiracy Theorist",
+      "description": "Ensemble participant: a true believer who turns every counterpoint into proof of the pattern."
+    },
+    {
+      "file": "patient_friend.json",
+      "name": "Patient Friend",
+      "description": "Ensemble participant: a grounded friend trying to stay kind while keeping the conversation tethered."
+    },
+    {
+      "file": "detective.json",
+      "name": "Detective",
+      "description": "Ensemble participant: interrogation-room detective with controlled pressure and scene-aware dialogue."
+    },
+    {
+      "file": "suspect.json",
+      "name": "Suspect",
+      "description": "Ensemble participant: defensive suspect who reacts to pressure, silence, and suspicion."
+    },
+    {
+      "file": "first_date_architect.json",
+      "name": "First Date Architect",
+      "description": "Ensemble participant: an architect on a first date, tuned for awkward warmth and conversational rhythm."
+    },
+    {
+      "file": "first_date_doctor.json",
+      "name": "First Date Doctor",
+      "description": "Ensemble participant: a doctor on a first date, tuned for guarded curiosity and personal boundaries."
+    },
+    {
+      "file": "spongebob.json",
+      "name": "SpongeBob",
+      "description": "Character-style builder example for testing strong persona, tone, and response shaping."
+    },
+    {
+      "file": "wizard_tech_support.json",
+      "name": "Wizard Tech Support",
+      "description": "A fresh-grad arcane helpdesk apprentice for magical orders, cursed deliveries, and spellbook support."
+    },
+    {
+      "file": "merlin_spellbook.json",
+      "name": "Merlin With the Wrong Spellbook",
+      "description": "An imperious archmage furious about receiving an absurd household spellbook instead of a grand codex."
+    },
+    {
+      "file": "lost_time_traveler.json",
+      "name": "Lost Time Traveler",
+      "description": "A light ensemble participant who is from the wrong era and trying not to make that obvious."
+    },
+    {
+      "file": "helpful_local.json",
+      "name": "Helpful Local",
+      "description": "A grounded local who tries to help a strange visitor without making a scene."
+    },
+    {
+      "file": "office_manager_review.json",
+      "name": "Office Manager Annual Review",
+      "description": "A weary 1962 office manager delivering a mostly poor annual review to a connected teenage intern."
+    }
+  ]
+}

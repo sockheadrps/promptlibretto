@@ -28,6 +28,7 @@
     <div class="header-meta">
       <button id="about-btn" type="button" class="header-nav-btn">About</button>
       <button id="example-btn" type="button" class="header-nav-btn header-nav-accent">View Examples</button>
+      <button id="example-save-btn" type="button" class="header-nav-btn" hidden>Save Example</button>
       <span class="header-nav-sep"></span>
       <div id="connection-slot"></div>
     </div>
@@ -131,6 +132,24 @@
             <textarea id="op-forbidden-pats" rows="2" placeholder="e.g.&#10;(?i)as an ai"></textarea>
           </label>
         </fieldset>
+
+        <fieldset class="field" id="memory-config-fieldset" hidden>
+          <legend class="field-label">Memory Config</legend>
+          <div class="grid-2">
+            <label><span>classifier_url</span><input id="studio-mem-classifier-url" type="text" placeholder="http://localhost:11434" /></label>
+            <label class="mem-model-label">
+              <span>classifier_model</span>
+              <div class="mem-model-row">
+                <input id="studio-mem-classifier-model" type="text" placeholder="llama3.2:1b" />
+                <button id="studio-mem-fetch-btn" type="button" class="ghost small" title="Fetch available models from classifier_url">↺</button>
+              </div>
+            </label>
+            <label><span>embed_url</span><input id="studio-mem-embed-url" type="text" placeholder="http://localhost:11434" /></label>
+            <label><span>embed_model</span><input id="studio-mem-embed-model" type="text" placeholder="nomic-embed-text" /></label>
+            <label><span>top_k</span><input id="studio-mem-top-k" type="number" min="1" step="1" placeholder="5" /></label>
+            <label><span>prune_keep</span><input id="studio-mem-prune-keep" type="number" min="0" step="10" placeholder="200" /></label>
+          </div>
+        </fieldset>
       </div>
     </section>
 
@@ -171,14 +190,111 @@
             <span id="out-timing" class="pill">—</span>
             <span id="out-usage" class="pill">—</span>
             <span class="spacer"></span>
-            <div class="view-toggle" role="group" aria-label="Output view">
+            <div id="output-view-toggle" class="view-toggle" role="group" aria-label="Output view">
               <button id="view-rendered" type="button" class="toggle active">rendered</button>
               <button id="view-raw" type="button" class="toggle">raw</button>
             </div>
+            <button id="memory-reset-btn" type="button" class="memory-reset-btn" title="Clear memory store and start a new session" hidden>Reset Session</button>
           </div>
           <div id="reject-banner" class="reject-banner" hidden></div>
+
+          <!-- Standard (non-memory) output -->
           <div id="output-rendered" class="output-text markdown">(no generation yet)</div>
           <textarea id="output-raw" class="output-text output-raw-edit" hidden readonly>(no generation yet)</textarea>
+
+          <!-- Memory pipeline — shown instead of the above when memory rules are active -->
+          <div id="memory-input-bar" class="memory-input-bar" hidden>
+            <label for="memory-user-input" class="memory-input-label">User message</label>
+            <textarea id="memory-user-input" class="memory-user-input" rows="2" placeholder="Type the user's message — Generate will run the full memory pipeline…"></textarea>
+          </div>
+          <div id="memory-pipeline" class="memory-pipeline" hidden>
+            <div id="memory-pipeline-empty" class="pipeline-empty">Type a message above and hit <strong>Generate</strong> to run the memory pipeline.</div>
+            <div id="memory-pipeline-track" class="pipeline-track" hidden>
+
+              <div class="pipeline-step" id="pipe-input-step">
+                <div class="pipeline-node"></div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-step-content">
+                  <div class="pipeline-step-label">Message</div>
+                  <div id="pipe-input-body" class="pipeline-step-body"></div>
+                </div>
+              </div>
+
+              <div class="pipeline-step" id="pipe-chunks-step">
+                <div class="pipeline-node"></div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-step-content">
+                  <div class="pipeline-step-label">Memory Retrieval <span id="pipe-chunks-meta" class="pipeline-meta muted"></span></div>
+                  <div id="pipe-chunks-body" class="pipeline-step-body"></div>
+                </div>
+              </div>
+
+              <div class="pipeline-step" id="pipe-tags-step">
+                <div class="pipeline-node"></div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-step-content">
+                  <div class="pipeline-step-label">Classifier <span id="pipe-tags-meta" class="pipeline-meta muted"></span></div>
+                  <div id="pipe-tags-body" class="pipeline-step-body"></div>
+                </div>
+              </div>
+
+              <div class="pipeline-step" id="pipe-rules-step">
+                <div class="pipeline-node"></div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-step-content">
+                  <div class="pipeline-step-label">Rules Applied <span id="pipe-rules-meta" class="pipeline-meta muted"></span></div>
+                  <div id="pipe-rules-body" class="pipeline-step-body"></div>
+                </div>
+              </div>
+
+              <div class="pipeline-step" id="pipe-prompt-step">
+                <div class="pipeline-node"></div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-step-content">
+                  <div class="pipeline-step-label">
+                    Assembled Prompt
+                    <button id="pipe-prompt-toggle" type="button" class="ghost small">show</button>
+                  </div>
+                  <div id="pipe-prompt-body" class="pipeline-step-body pipeline-prompt-body" hidden></div>
+                </div>
+              </div>
+
+              <div class="pipeline-step pipeline-step--final" id="pipe-response-step">
+                <div class="pipeline-node pipeline-node--final"></div>
+                <div class="pipeline-step-content">
+                  <div class="pipeline-step-label">Response</div>
+                  <div id="pipe-response-body" class="pipeline-step-body pipeline-response-body markdown"></div>
+                </div>
+              </div>
+
+            </div><!-- /pipeline-track -->
+
+            <details class="memory-personality-panel" id="personality-panel">
+              <summary class="memory-personality-summary">
+                <span>Personality File</span>
+                <button id="personality-load-btn" type="button" class="ghost small" title="Load personality file from disk">Load</button>
+              </summary>
+              <div class="memory-personality-body">
+                <div id="personality-path-label" class="personality-path muted"></div>
+                <div class="personality-field-row">
+                  <label class="personality-field-label">Seed</label>
+                  <textarea id="personality-seed" class="personality-textarea" rows="2" placeholder="Base personality description…"></textarea>
+                </div>
+                <div class="personality-field-row">
+                  <label class="personality-field-label">Amendments <span id="personality-amendment-count" class="muted"></span></label>
+                  <div id="personality-amendments-list" class="personality-amendments-list"></div>
+                </div>
+                <div class="personality-field-row">
+                  <label class="personality-field-label">Assembled <span class="muted">(auto-built from seed + amendments)</span></label>
+                  <div id="personality-assembled" class="personality-assembled muted">(load to view)</div>
+                </div>
+                <div class="personality-actions">
+                  <button id="personality-save-btn" type="button" class="action-btn action-btn--secondary" disabled>Save</button>
+                  <button id="personality-clear-btn" type="button" class="memory-reset-btn" disabled>Clear Personality</button>
+                </div>
+              </div>
+            </details>
+          </div><!-- /memory-pipeline -->
         </div>
         <div class="output-panel-body" data-output-tab="stage" hidden>
           <div id="prompt-stage" class="prompt-stage">

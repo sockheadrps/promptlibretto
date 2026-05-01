@@ -12,7 +12,9 @@ notebooks, alternate frontends).
 """
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -67,6 +69,35 @@ class GenerateRequest(HydrateRequest):
     pass
 
 
+class SaveExampleRequest(BaseModel):
+    path: str
+    payload: dict[str, Any]
+
+
+_STATIC_DIR = Path(__file__).parent / "static"
+_EXAMPLE_DIRS = {
+    "/static/examples/": _STATIC_DIR / "examples",
+    "/static/builder-examples/": _STATIC_DIR / "builder-examples",
+}
+
+
+def _resolve_example_path(path: str) -> Path:
+    for prefix, root in _EXAMPLE_DIRS.items():
+        if not path.startswith(prefix):
+            continue
+        name = path.removeprefix(prefix)
+        if not name or "/" in name or "\\" in name or not name.endswith(".json"):
+            raise HTTPException(400, "invalid example filename")
+        target = (root / name).resolve()
+        root_resolved = root.resolve()
+        if target.parent != root_resolved:
+            raise HTTPException(400, "invalid example path")
+        if not target.exists():
+            raise HTTPException(404, "example does not exist")
+        return target
+    raise HTTPException(400, "example path must point to /static/examples or /static/builder-examples")
+
+
 # ── Endpoints ────────────────────────────────────────────────────
 
 
@@ -107,3 +138,15 @@ async def generate(req: GenerateRequest) -> dict[str, Any]:
         "usage": result.usage,
         "timing": result.timing,
     }
+
+
+@router.post("/example/save")
+def save_example(req: SaveExampleRequest) -> dict[str, Any]:
+    target = _resolve_example_path(req.path)
+    try:
+        with target.open("w", encoding="utf-8") as f:
+            json.dump(req.payload, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+    except Exception as e:
+        raise HTTPException(500, f"example save failed: {e}")
+    return {"ok": True, "path": req.path}
