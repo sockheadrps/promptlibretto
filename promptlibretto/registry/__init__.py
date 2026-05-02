@@ -26,9 +26,18 @@ from .hydrate import HydrateState, hydrate
 from .model import (
     SCHEMA_VERSION,
     SECTION_KEYS,
+    ContextItem,
+    ExampleGroup,
+    Fragment,
+    OutputDirection,
+    Persona,
+    PromptEnding,
     Registry,
     Route,
+    RuntimeInjection,
     Section,
+    SentimentItem,
+    StaticInjection,
 )
 from .serialize import export_json, load_registry
 
@@ -45,4 +54,14 @@ __all__ = [
     "export_json",
     "hydrate",
     "load_registry",
+    # Typed item builders
+    "ContextItem",
+    "ExampleGroup",
+    "Fragment",
+    "OutputDirection",
+    "Persona",
+    "PromptEnding",
+    "RuntimeInjection",
+    "SentimentItem",
+    "StaticInjection",
 ]

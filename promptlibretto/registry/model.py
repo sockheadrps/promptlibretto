@@ -23,6 +23,173 @@ SECTION_KEYS: tuple[str, ...] = (
 )
 
 
+# ── Typed item builders ────────────────────────────────────────────
+# Items inside Section are stored as plain dicts (the schema is open —
+# custom sections can use any shape), but the canonical sections all have
+# well-known item shapes. The dataclasses below provide IDE autocomplete +
+# type-checking when constructing items in Python; they each define a
+# `to_dict()` that emits the exact JSON the engine consumes.
+#
+# `Section.items` accepts either dataclass instances OR plain dicts; the
+# Section normalizes to dicts at construction time.
+
+
+@dataclass
+class Fragment:
+    """Conditional text inside a `base_context` item.
+
+    `if_var` names a template variable in the same section; the fragment is
+    rendered only when that var has a non-empty value at hydrate time.
+    """
+    if_var: str
+    text: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"if_var": self.if_var, "text": self.text}
+
+
+@dataclass
+class ContextItem:
+    """Item for the `base_context` section."""
+    name: str
+    text: str = ""
+    fragments: list[Union["Fragment", dict[str, Any]]] = field(default_factory=list)
+    runtime_variables: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"name": self.name, "text": self.text}
+        if self.fragments:
+            out["fragments"] = [
+                f.to_dict() if hasattr(f, "to_dict") else dict(f) for f in self.fragments
+            ]
+        if self.runtime_variables:
+            out["runtime_variables"] = list(self.runtime_variables)
+        return out
+
+
+@dataclass
+class Persona:
+    """Item for the `personas` section."""
+    id: str
+    context: str = ""
+    base_directives: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "context": self.context,
+            "base_directives": list(self.base_directives),
+        }
+
+
+@dataclass
+class SentimentItem:
+    """Item for the `sentiment` section. `scale_emotion` is the noun phrase
+    interpolated into the section's `scale_template`."""
+    id: str
+    context: str = ""
+    scale_emotion: str = ""
+    nudges: list[str] = field(default_factory=list)
+    examples: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "context": self.context,
+            "scale_emotion": self.scale_emotion,
+            "nudges": list(self.nudges),
+            "examples": list(self.examples),
+        }
+
+
+@dataclass
+class ExampleGroup:
+    """Item for the `examples` section. `items` is a list of example strings;
+    `pre_context` is an optional intro line printed once above the group."""
+    name: str
+    items: list[str] = field(default_factory=list)
+    pre_context: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"name": self.name, "items": list(self.items)}
+        if self.pre_context:
+            out["pre_context"] = self.pre_context
+        return out
+
+
+@dataclass
+class StaticInjection:
+    """Item for the `static_injections` section. Always-on context that gets
+    appended when the section is selected."""
+    name: str
+    text: str
+    memory_tag: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"name": self.name, "text": self.text}
+        if self.memory_tag:
+            out["memory_tag"] = self.memory_tag
+        return out
+
+
+@dataclass
+class RuntimeInjection:
+    """Item for the `runtime_injections` section. When active, filters the
+    rendered prompt down to only the listed `include_sections` and appends
+    its own text."""
+    id: str
+    text: str
+    include_sections: list[str] = field(default_factory=list)
+    runtime_variables: list[str] = field(default_factory=list)
+    name: str = ""
+    required: bool = False
+    memory_tag: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"id": self.id, "text": self.text}
+        if self.name:
+            out["name"] = self.name
+        if self.include_sections:
+            out["include_sections"] = list(self.include_sections)
+        if self.runtime_variables:
+            out["runtime_variables"] = list(self.runtime_variables)
+        if self.required:
+            out["required"] = True
+        if self.memory_tag:
+            out["memory_tag"] = self.memory_tag
+        return out
+
+
+@dataclass
+class OutputDirection:
+    """Item for the `output_prompt_directions` section."""
+    name: str
+    text: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "text": self.text}
+
+
+@dataclass
+class PromptEnding:
+    """Item for the `prompt_endings` section. `items` is the list of ending
+    strings; one is picked per generation (combine with `array_modes` for
+    rotation)."""
+    name: str = "endings"
+    items: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "items": list(self.items)}
+
+
+def _normalize_item(it: Any) -> dict[str, Any]:
+    """Coerce an item to a plain dict. Accepts any dataclass with `to_dict()`
+    (the typed item builders above) or a raw mapping."""
+    if hasattr(it, "to_dict") and callable(it.to_dict):
+        return dict(it.to_dict())
+    return dict(it)
+
+
 @dataclass
 class Section:
     """One section of the registry. Has items + optional tool-state extras."""
@@ -44,6 +211,12 @@ class Section:
     # runtime-input rows from this on load so examples come ready to
     # Pre-generate without the user typing in placeholders.
     template_var_defaults: Optional[dict[str, str]] = None
+
+    def __post_init__(self) -> None:
+        # Normalize items: accept typed builders (Persona, SentimentItem, …)
+        # OR plain dicts. Internally we always store dicts so hydrate.py and
+        # to_dict() / from_dict() round-trip cleanly.
+        self.items = [_normalize_item(it) for it in (self.items or [])]
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {

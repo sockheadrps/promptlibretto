@@ -91,6 +91,8 @@ string) or `run()` on (hydrate + provider call + output policy).
 
 ### 2. Build it in code
 
+The minimum viable registry is two sections and an assembly order:
+
 ```python
 import asyncio
 from promptlibretto import Engine, MockProvider, Registry
@@ -118,6 +120,332 @@ print(eng.hydrate(state={"selections": {"personas": "loud"}}))
 #
 # You're full of energy.
 ```
+
+A full registry — personas, sentiment with a slider, conditional template fragments,
+optional examples, output policy, generation overrides, and an Ollama provider —
+all built in Python with no JSON file:
+
+```python
+import asyncio
+from promptlibretto import Engine, OllamaProvider, Registry
+
+reg = Registry.from_dict({
+    "registry": {
+        "title": "Twitch Chatter",
+        "assembly_order": [
+            "output_prompt_directions",
+            "base_context.text",
+            "personas.context",
+            "personas.base_directives",
+            "sentiment.context",
+            "sentiment.nudges",
+            "sentiment.scale",
+            "examples.normal_examples",
+            "prompt_endings.endings",
+        ],
+
+        # Generation defaults — overridable per-route or via state.
+        "generation": {
+            "temperature": 1.1,
+            "top_p": 0.9,
+            "max_tokens": 80,
+            "retries": 2,
+        },
+
+        # Output cleaning + validation. retries=2 above means we get up to
+        # two re-rolls if any of these reject the response.
+        "output_policy": {
+            "min_length": 6,
+            "max_length": 180,
+            "collapse_whitespace": True,
+            "forbidden_substrings": ["As an AI", "I cannot help"],
+            "strip_prefixes": ["Sure,", "Of course,"],
+        },
+
+        # Template-var-driven scene context. Fragments are conditional —
+        # any fragment whose `if_var` resolves to an empty string is
+        # silently skipped, so unfilled vars never leave broken sentences.
+        "base_context": {
+            "required": True,
+            "template_vars": ["location", "scenario"],
+            "template_var_defaults": {"location": "stream", "scenario": ""},
+            "items": [{
+                "name": "scene",
+                "text": "You are a Twitch chatter watching a livestream.",
+                "fragments": [
+                    {"if_var": "location", "text": "The stream is at {location}."},
+                    {"if_var": "scenario", "text": "Current situation: {scenario}."},
+                ],
+            }],
+        },
+
+        "personas": {
+            "required": True,
+            "items": [
+                {
+                    "id": "long_time_viewer",
+                    "context": "You've been watching for hours.",
+                    "base_directives": [
+                        "Reply like you know the streamer's rhythm.",
+                        "Drop a confident hot take.",
+                        "Give unsolicited advice.",
+                    ],
+                },
+                {
+                    "id": "the_lurker",
+                    "context": "You usually never type, but something made you send one short message.",
+                    "base_directives": ["Be very brief.", "Keep it simple."],
+                },
+            ],
+            # The base_directives array runs in `random:1` mode — pick one
+            # directive each generation rather than dumping all of them.
+            "array_modes": {"base_directives": "random:1"},
+        },
+
+        # Sentiment supports a `<section>.scale` token that uses `slider`
+        # state and the section's `scale_template` to render a one-line
+        # intensity statement (e.g. "Chat sentiment: 8/10 — excited.").
+        "sentiment": {
+            "required": True,
+            "scale_template": "Chat sentiment: {value}/10 — {emotion}.",
+            "items": [
+                {
+                    "id": "positive",
+                    "context": "Your reaction is positive.",
+                    "scale_emotion": "excited",
+                    "nudges": ["React with hype.", "Be impressed by the streamer."],
+                },
+                {
+                    "id": "negative",
+                    "context": "Your reaction is negative but still casual chat.",
+                    "scale_emotion": "sarcastic, dismissive",
+                    "nudges": ["Be sarcastic.", "Sound bored by repetition."],
+                },
+            ],
+            "array_modes": {"nudges": "random:1"},
+        },
+
+        "examples": {
+            "required": False,
+            "items": [{
+                "name": "normal_examples",
+                "pre_context": "Tone reference (use only if relevant):",
+                "items": ["pog", "lmao", "W", "no way", "wait what"],
+            }],
+            "array_modes": {"items": "random:2"},
+        },
+
+        "output_prompt_directions": {
+            "required": True,
+            "items": [{
+                "name": "rules",
+                "text": "Write exactly one chat-style message, lowercase, no quotes, under 20 words.",
+            }],
+        },
+
+        "prompt_endings": {
+            "required": True,
+            "items": [{
+                "name": "endings",
+                "items": ["Your message:", "You type:"],
+            }],
+            "array_modes": {"items": "random:1"},
+        },
+    },
+})
+
+eng = Engine(reg, provider=OllamaProvider("http://localhost:11434", "/api/chat"))
+
+async def main():
+    result = await eng.run(state={
+        "selections":     {"personas": "long_time_viewer", "sentiment": "positive"},
+        "section_random": {"personas": True},                       # re-roll persona each call
+        "sliders":        {"sentiment": 8},                         # drives sentiment.scale
+        "template_vars":  {
+            "base_context::location": "Cyberpunk 2077",
+            "base_context::scenario": "boss fight",
+        },
+        # Per-call overrides, on top of registry-level array_modes.
+        "array_modes":    {"sentiment": {"nudges": "random:1"}},
+    })
+    print(result.text)
+    print("accepted:", result.accepted, "tokens:", result.usage)
+
+asyncio.run(main())
+```
+
+If you don't need a provider — e.g. for unit tests or for piping the prompt
+into your own runner — call `eng.hydrate(state)` directly to get the assembled
+string without any LLM call.
+
+#### Or: build with the dataclasses directly
+
+Every part of a registry is a dataclass — `Registry`, `Section`, `Route`, and
+typed item builders for the canonical sections (`Persona`, `SentimentItem`,
+`ContextItem`, `Fragment`, `ExampleGroup`, `StaticInjection`,
+`RuntimeInjection`, `OutputDirection`, `PromptEnding`). `Section.items`
+accepts either typed instances or plain dicts; instances are normalized via
+`to_dict()` at construction time, so the engine sees the same shape either
+way.
+
+```python
+import asyncio
+from promptlibretto import (
+    ContextItem, Engine, ExampleGroup, Fragment, OllamaProvider,
+    OutputDirection, Persona, PromptEnding, Registry, Route, Section,
+    SentimentItem,
+)
+
+personas = Section(
+    required=True,
+    items=[
+        Persona(
+            id="long_time_viewer",
+            context="You've been watching for hours.",
+            base_directives=[
+                "Reply like you know the streamer's rhythm.",
+                "Drop a confident hot take.",
+            ],
+        ),
+        Persona(
+            id="the_lurker",
+            context="You usually never type, but something made you send one short message.",
+            base_directives=["Be very brief.", "Keep it simple."],
+        ),
+    ],
+    array_modes={"base_directives": "random:1"},
+)
+
+sentiment = Section(
+    required=True,
+    scale_template="Chat sentiment: {value}/10 — {emotion}.",
+    items=[
+        SentimentItem(
+            id="positive",
+            context="Your reaction is positive.",
+            scale_emotion="excited",
+            nudges=["React with hype.", "Be impressed by the streamer."],
+        ),
+        SentimentItem(
+            id="negative",
+            context="Your reaction is negative but still casual chat.",
+            scale_emotion="sarcastic, dismissive",
+            nudges=["Be sarcastic.", "Sound bored by repetition."],
+        ),
+    ],
+    array_modes={"nudges": "random:1"},
+)
+
+base_context = Section(
+    required=True,
+    template_vars=["location", "scenario"],
+    template_var_defaults={"location": "stream", "scenario": ""},
+    items=[
+        ContextItem(
+            name="scene",
+            text="You are a Twitch chatter watching a livestream.",
+            fragments=[
+                Fragment(if_var="location", text="The stream is at {location}."),
+                Fragment(if_var="scenario", text="Current situation: {scenario}."),
+            ],
+        ),
+    ],
+)
+
+examples = Section(
+    required=False,
+    items=[
+        ExampleGroup(
+            name="normal_examples",
+            pre_context="Tone reference (use only if relevant):",
+            items=["pog", "lmao", "W", "no way", "wait what"],
+        ),
+    ],
+    array_modes={"items": "random:2"},
+)
+
+output_directions = Section(
+    required=True,
+    items=[
+        OutputDirection(
+            name="rules",
+            text="Write exactly one chat-style message, lowercase, no quotes, under 20 words.",
+        ),
+    ],
+)
+
+prompt_endings = Section(
+    required=True,
+    items=[PromptEnding(name="endings", items=["Your message:", "You type:"])],
+    array_modes={"items": "random:1"},
+)
+
+reg = Registry(
+    title="Twitch Chatter",
+    assembly_order=[
+        "output_prompt_directions",
+        "base_context.text",
+        "personas.context",
+        "personas.base_directives",
+        "sentiment.context",
+        "sentiment.nudges",
+        "sentiment.scale",
+        "examples.normal_examples",
+        "prompt_endings.endings",
+    ],
+    sections={
+        "base_context":             base_context,
+        "personas":                 personas,
+        "sentiment":                sentiment,
+        "examples":                 examples,
+        "output_prompt_directions": output_directions,
+        "prompt_endings":           prompt_endings,
+    },
+    generation={
+        "temperature": 1.1,
+        "top_p":       0.9,
+        "max_tokens":  80,
+        "retries":     2,
+    },
+    output_policy={
+        "min_length":           6,
+        "max_length":           180,
+        "collapse_whitespace":  True,
+        "forbidden_substrings": ["As an AI", "I cannot help"],
+        "strip_prefixes":       ["Sure,", "Of course,"],
+    },
+    # Optional alternative assembly orders / generation / policy:
+    routes={
+        "raid": Route(
+            assembly_order=["output_prompt_directions", "base_context.text"],
+            generation={"max_tokens": 32},
+        ),
+    },
+)
+
+eng = Engine(reg, provider=OllamaProvider("http://localhost:11434", "/api/chat"))
+
+async def main():
+    result = await eng.run(state={
+        "selections":     {"personas": "long_time_viewer", "sentiment": "positive"},
+        "section_random": {"personas": True},
+        "sliders":        {"sentiment": 8},
+        "template_vars":  {
+            "base_context::location": "Cyberpunk 2077",
+            "base_context::scenario": "boss fight",
+        },
+    })
+    print(result.text)
+
+asyncio.run(main())
+
+# Round-trip back to JSON whenever you want to hand it to the studio:
+# import json; print(json.dumps(reg.to_dict(), indent=2))
+```
+
+`Registry.to_dict(wrap=True)` (default) emits `{"registry": {...}}` — the
+exact shape `load_registry()` and the studio frontend consume. So a
+hand-built `Registry` and a JSON-imported one are interchangeable end-to-end.
 
 The full state shape (all fields optional):
 
