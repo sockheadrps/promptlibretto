@@ -7,10 +7,13 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 from ..providers.base import ProviderAdapter, ProviderMessage, ProviderRequest
-from ..registry.hydrate import HydrateState
+from ..registry.state import RegistryState, SectionState
 
 if TYPE_CHECKING:
     from .store import MemoryTurn
+
+_TVAR_SECTION = "base_context"
+_TVAR_VAR = "personality_context"
 
 _AMEND_SYSTEM = (
     "You are a personality archivist. "
@@ -30,7 +33,6 @@ Recent conversation:
 
 What new personality insight, if any, does this conversation reveal?"""
 
-_TVAR_KEY = "base_context::personality_context"
 
 
 @dataclass
@@ -85,7 +87,7 @@ class PersonalityProfile:
 
 
 class PersonalityLayer:
-    """Loads/saves a personality JSON file and can merge it into HydrateState."""
+    """Loads/saves a personality JSON file and can merge it into RegistryState."""
 
     def __init__(self, path: str) -> None:
         self._path = path
@@ -105,20 +107,21 @@ class PersonalityLayer:
             self.load()
         return self._profile  # type: ignore[return-value]
 
-    def merge_into_state(self, state: HydrateState) -> HydrateState:
+    def merge_into_state(self, state: RegistryState) -> RegistryState:
         assembled = self.profile.assembled
         if not assembled:
             return state
-        tvars = dict(state.template_vars or {})
-        tvars[_TVAR_KEY] = assembled
-        return HydrateState(
-            selections=state.selections,
-            array_modes=state.array_modes,
-            section_random=state.section_random,
-            sliders=state.sliders,
-            slider_random=state.slider_random,
-            template_vars=tvars,
+        base_ss = state.get(_TVAR_SECTION)
+        new_sections = {k: v for k, v in state.sections.items()}
+        new_sections[_TVAR_SECTION] = SectionState(
+            selected=base_ss.selected,
+            slider=base_ss.slider,
+            slider_random=base_ss.slider_random,
+            section_random=base_ss.section_random,
+            array_modes=dict(base_ss.array_modes),
+            template_vars={**base_ss.template_vars, _TVAR_VAR: assembled},
         )
+        return RegistryState(sections=new_sections)
 
     def save(self) -> None:
         self.profile.rebuild()

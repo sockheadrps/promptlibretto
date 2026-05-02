@@ -4,17 +4,16 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from ..registry.hydrate import HydrateState
+from ..registry.state import RegistryState, SectionState
 
 
 @dataclass
 class MemoryAction:
     type: str                       # "inject" | "persona" | "sentiment" | "template_var"
-    section: Optional[str] = None  # inject: which section (runtime_injections / static_injections)
+    section: Optional[str] = None  # inject: which section; template_var: section owning the var
     item: Optional[str] = None     # inject: item id to activate
-    value: Optional[str] = None    # persona / sentiment: selection value
-    key: Optional[str] = None      # template_var: variable key
-    # template_var reuses value for the variable's value
+    value: Optional[str] = None    # persona / sentiment / template_var: target value
+    key: Optional[str] = None      # template_var: variable name (or "section::var" v22 compat)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "MemoryAction":
@@ -56,11 +55,10 @@ class MemoryRule:
 
 
 class Router:
-    """Maps extracted memory tags to HydrateState mutations.
+    """Maps extracted memory tags to RegistryState mutations.
 
     Rules are evaluated in order; last rule wins on conflicts for the same
-    field. Injection activations are additive (all matching injections are
-    included).
+    field. Injection activations are additive.
     """
 
     def __init__(self, rules: list[MemoryRule]) -> None:
@@ -71,7 +69,7 @@ class Router:
     def known_tags(self) -> list[str]:
         return list(self._known_tags)
 
-    def mutate(self, base_state: HydrateState, tags: list[str]) -> HydrateState:
+    def mutate(self, base_state: RegistryState, tags: list[str]) -> RegistryState:
         if not tags:
             return base_state
 
@@ -80,57 +78,66 @@ class Router:
         if not active_rules:
             return base_state
 
-        # Deep-copy state so we don't mutate the caller's object
-        selections   = dict(base_state.selections or {})
-        array_modes  = _deep_copy_dict(base_state.array_modes or {})
-        sec_random   = dict(base_state.section_random or {})
-        sliders      = dict(base_state.sliders or {})
-        slider_random = dict(base_state.slider_random or {})
-        tvars        = dict(base_state.template_vars or {})
+        # Deep-copy all existing section states
+        new_sections: dict[str, SectionState] = {
+            k: SectionState(
+                selected=list(v.selected) if isinstance(v.selected, list) else v.selected,
+                slider=v.slider,
+                slider_random=v.slider_random,
+                section_random=v.section_random,
+                array_modes=dict(v.array_modes),
+                template_vars=dict(v.template_vars),
+            )
+            for k, v in base_state.sections.items()
+        }
+
+        def _sec(sec_id: str) -> SectionState:
+            if sec_id not in new_sections:
+                new_sections[sec_id] = SectionState()
+            return new_sections[sec_id]
 
         applied: list[str] = []
 
         for rule in active_rules:
             for action in rule.actions:
+
                 if action.type == "inject" and action.section and action.item:
-                    existing = selections.get(action.section)
+                    ss = _sec(action.section)
+                    existing = ss.selected
                     if isinstance(existing, list):
                         if action.item not in existing:
                             existing.append(action.item)
                     elif isinstance(existing, str):
                         if existing != action.item:
-                            selections[action.section] = [existing, action.item]
+                            ss.selected = [existing, action.item]
                     else:
-                        selections[action.section] = action.item
+                        ss.selected = action.item
                     applied.append(f"{rule.tag} → inject:{action.section}.{action.item}")
 
                 elif action.type == "persona" and action.value:
-                    selections["personas"] = action.value
+                    _sec("personas").selected = action.value
                     applied.append(f"{rule.tag} → persona:{action.value}")
 
                 elif action.type == "sentiment" and action.value:
-                    selections["sentiment"] = action.value
+                    _sec("sentiment").selected = action.value
                     applied.append(f"{rule.tag} → sentiment:{action.value}")
 
                 elif action.type == "template_var" and action.key and action.value:
-                    tvars[action.key] = action.value
-                    applied.append(f"{rule.tag} → tvar:{action.key}={action.value}")
+                    # Support v22 "section::var" key format and v2 section+key format
+                    key = action.key
+                    if "::" in key:
+                        sec_id, var = key.split("::", 1)
+                    elif action.section:
+                        sec_id, var = action.section, key
+                    else:
+                        sec_id, var = "base_context", key
+                    _sec(sec_id).template_vars[var] = action.value
+                    applied.append(f"{rule.tag} → tvar:{sec_id}.{var}={action.value}")
 
-        new_state = HydrateState(
-            selections=selections,
-            array_modes=array_modes,
-            section_random=sec_random,
-            sliders=sliders,
-            slider_random=slider_random,
-            template_vars=tvars,
-        )
+        new_state = RegistryState(sections=new_sections)
         new_state._applied_rules = applied  # type: ignore[attr-defined]
         return new_state
 
     @classmethod
     def from_registry_rules(cls, rules_raw: list[dict[str, Any]]) -> "Router":
         return cls([MemoryRule.from_dict(r) for r in (rules_raw or [])])
-
-
-def _deep_copy_dict(d: dict) -> dict:
-    return copy.deepcopy(d)

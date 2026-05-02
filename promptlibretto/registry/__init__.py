@@ -26,6 +26,7 @@ from .model import (
     SentimentItem,
     StaticInjection,
 )
+from .schema import StateSchema, SectionStateSchema, SelectableItem, derive_state_schema
 from .serialize import export_json, load_registry
 from .state import RegistryState, SectionState
 
@@ -63,6 +64,11 @@ __all__ = [
     "RuntimeInjection",
     "Sentiment",
     "StaticInjection",
+    # State schema
+    "StateSchema",
+    "SectionStateSchema",
+    "SelectableItem",
+    "derive_state_schema",
     # v22 aliases (kept for migration)
     "ExampleGroup",
     "SentimentItem",

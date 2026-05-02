@@ -15,6 +15,10 @@ from .providers.mock import MockProvider
 from .providers.ollama import OllamaProvider
 from .registry import (
     BaseItem,
+    derive_state_schema,
+    SelectableItem,
+    SectionStateSchema,
+    StateSchema,
     ContextItem,
     Display,
     DynamicMixin,
@@ -80,6 +84,11 @@ __all__ = [
     "RuntimeInjection",
     "Sentiment",
     "StaticInjection",
+    # State schema
+    "StateSchema",
+    "SectionStateSchema",
+    "SelectableItem",
+    "derive_state_schema",
     # v22 aliases
     "ExampleGroup",
     "SentimentItem",

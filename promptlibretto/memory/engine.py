@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Union
 
 from ..registry.engine import Engine, GenerationResult
-from ..registry.hydrate import HydrateState
+from ..registry.state import RegistryState, SectionState
 from ..providers.base import ProviderAdapter
 from .classifier import Classifier, ClassifierResult
 from .personality import PersonalityLayer
@@ -20,14 +20,14 @@ class MemoryGenerationResult(GenerationResult):
     retrieved_chunks: list[MemoryChunk] = field(default_factory=list)
     extracted_tags: list[str] = field(default_factory=list)
     applied_rules: list[str] = field(default_factory=list)
-    final_state: Optional[HydrateState] = None
+    final_state: Optional[RegistryState] = None
     classifier_stats: dict = field(default_factory=dict)
 
 
 @dataclass
 class PreparedMemoryState:
     """Output of MemoryEngine.prepare(): mutated state + diagnostics."""
-    state: HydrateState
+    state: RegistryState
     chunks: list[MemoryChunk] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     applied: list[str] = field(default_factory=list)
@@ -40,7 +40,7 @@ class MemoryEngine:
     On each call to ``run()``:
     1. Embed user input and retrieve similar past turns from the store.
     2. Run the classifier to extract matching memory tags.
-    3. Mutate HydrateState via Router rules.
+    3. Mutate RegistryState via Router rules.
     4. Optionally merge PersonalityLayer into state.
     5. Call Engine.run() with the enriched state.
     6. Write the input+response turn pair back to the store.
@@ -99,20 +99,20 @@ class MemoryEngine:
     async def prepare(
         self,
         user_input: str,
-        base_state: Union[HydrateState, Mapping[str, Any], None] = None,
+        base_state: Union[RegistryState, Mapping[str, Any], None] = None,
         *,
         other_name: Optional[str] = None,
     ) -> PreparedMemoryState:
         """Run retrieve → classify → router → personality merge → tvar injection.
 
-        Returns the mutated HydrateState plus diagnostics. Does NOT generate
+        Returns the mutated RegistryState plus diagnostics. Does NOT generate
         and does NOT write to the store. Callers (ensemble) own generation
         and call `record_turn()` separately.
         """
         if isinstance(base_state, Mapping):
-            state = HydrateState.from_dict(dict(base_state))
+            state = RegistryState.from_dict(dict(base_state))
         elif base_state is None:
-            state = HydrateState()
+            state = RegistryState()
         else:
             state = base_state
 
@@ -148,17 +148,25 @@ class MemoryEngine:
             )
 
         for sec_key, sec in self._engine.registry.sections.items():
-            tvars = sec.template_vars or []
-            if "user_input" in tvars:
-                mutated.template_vars[f"{sec_key}::user_input"] = user_input
-            if "memory_recall" in tvars:
-                mutated.template_vars[f"{sec_key}::memory_recall"] = recall_text
-            if other_name and "other_name" in tvars:
-                mutated.template_vars[f"{sec_key}::other_name"] = other_name
-            if "thoughts_about_other" in tvars:
-                mutated.template_vars[f"{sec_key}::thoughts_about_other"] = thoughts_about_other
-            if "working_notes" in tvars:
-                mutated.template_vars[f"{sec_key}::working_notes"] = notes_text
+            # Collect all template_vars declared by any item in this section
+            all_vars: set[str] = set()
+            for item in sec.items:
+                all_vars.update(item.get("template_vars") or [])
+            if not all_vars:
+                continue
+            if sec_key not in mutated.sections:
+                mutated.sections[sec_key] = SectionState()
+            sec_state = mutated.sections[sec_key]
+            if "user_input" in all_vars:
+                sec_state.template_vars["user_input"] = user_input
+            if "memory_recall" in all_vars:
+                sec_state.template_vars["memory_recall"] = recall_text
+            if other_name and "other_name" in all_vars:
+                sec_state.template_vars["other_name"] = other_name
+            if "thoughts_about_other" in all_vars:
+                sec_state.template_vars["thoughts_about_other"] = thoughts_about_other
+            if "working_notes" in all_vars:
+                sec_state.template_vars["working_notes"] = notes_text
 
         # Cache a "who you are" context using the SELECTED persona for this
         # turn — used by the next working-notes update so notes stay in-voice.
@@ -262,7 +270,7 @@ class MemoryEngine:
     async def run(
         self,
         user_input: str,
-        base_state: Union[HydrateState, Mapping[str, Any], None] = None,
+        base_state: Union[RegistryState, Mapping[str, Any], None] = None,
         *,
         route: Optional[str] = None,
         seed: Optional[int] = None,
@@ -356,7 +364,7 @@ def _strip_directive_sections(prompt: str, reg, skip_keys: list[str]) -> str:
     return "\n\n".join(kept).strip()
 
 
-def _select_persona_context(reg, state: HydrateState, personality) -> str:
+def _select_persona_context(reg, state: RegistryState, personality) -> str:
     """Compose a 'who you are' string from the actively-selected persona +
     base context + personality. Used to write working notes in-voice.
     """
@@ -367,12 +375,11 @@ def _select_persona_context(reg, state: HydrateState, personality) -> str:
         if text and text.strip():
             parts.append(text.strip())
 
-    selections = state.selections or {}
+    sel = state.get("personas").selected
 
     # Pull the persona section's currently-selected item context.
     personas_sec = reg.sections.get("personas")
     if personas_sec and personas_sec.items:
-        sel = selections.get("personas")
         chosen_id = sel if isinstance(sel, str) else (sel[0] if isinstance(sel, list) and sel else None)
         for item in personas_sec.items:
             if chosen_id and item.get("id") != chosen_id:
