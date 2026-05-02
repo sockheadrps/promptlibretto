@@ -14,23 +14,32 @@ from .providers.base import (
 from .providers.mock import MockProvider
 from .providers.ollama import OllamaProvider
 from .registry import (
+    BaseItem,
     ContextItem,
+    Display,
+    DynamicMixin,
     Engine,
     ExampleGroup,
     Fragment,
     GenerationChunk,
     GenerationResult,
+    Group,
     HydrateState,
     OutputDirection,
     Persona,
     PromptEnding,
     Registry,
+    RegistryState,
     Route,
     RuntimeInjection,
-    Section,
-    SentimentItem,
     SCHEMA_VERSION,
     SECTION_KEYS,
+    Scale,
+    ScalableMixin,
+    Section,
+    SectionState,
+    Sentiment,
+    SentimentItem,
     StaticInjection,
     export_json,
     hydrate,
@@ -38,11 +47,15 @@ from .registry import (
 )
 
 __all__ = [
-    # Registry
+    # Engine
     "Engine",
     "GenerationChunk",
     "GenerationResult",
+    # State
     "HydrateState",
+    "RegistryState",
+    "SectionState",
+    # Registry
     "Registry",
     "Route",
     "Section",
@@ -51,16 +64,25 @@ __all__ = [
     "export_json",
     "hydrate",
     "load_registry",
-    # Typed item builders for canonical sections
-    "ContextItem",
-    "ExampleGroup",
+    # Core building blocks
+    "BaseItem",
+    "Display",
+    "DynamicMixin",
     "Fragment",
+    "Scale",
+    "ScalableMixin",
+    # Item types
+    "ContextItem",
+    "Group",
     "OutputDirection",
     "Persona",
     "PromptEnding",
     "RuntimeInjection",
-    "SentimentItem",
+    "Sentiment",
     "StaticInjection",
+    # v22 aliases
+    "ExampleGroup",
+    "SentimentItem",
     # Providers
     "ProviderAdapter",
     "ProviderRequest",

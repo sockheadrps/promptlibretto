@@ -1,24 +1,4 @@
-"""Registry-based prompt model — schema v22.
-
-The registry is a flat list of *sections* (``personas``, ``sentiment``,
-``examples``, …); each section has ``items``. ``assembly_order`` is a
-list of tokens (``section`` / ``section.field`` / ``section[expr]``) that
-specify how the final prompt is built from the selected items.
-
-Quick start::
-
-    from promptlibretto import load_registry, OllamaProvider
-
-    eng = load_registry("twitch_chatter.json", provider=OllamaProvider(...))
-    prompt = eng.hydrate(state={
-        "selections": {"sentiment": "positive", "personas": "the_troll"},
-        "array_modes": {"sentiment": {"nudges": "random:1"}},
-        "template_vars": {"base_context::location": "NYC"},
-    })
-
-    # Or hydrate + LLM + validate:
-    result = await eng.run(state={...}, route="raid")
-"""
+"""Registry-based prompt model — schema v2."""
 from __future__ import annotations
 
 from .engine import Engine, GenerationChunk, GenerationResult
@@ -26,26 +6,39 @@ from .hydrate import HydrateState, hydrate
 from .model import (
     SCHEMA_VERSION,
     SECTION_KEYS,
+    BaseItem,
     ContextItem,
+    Display,
+    DynamicMixin,
     ExampleGroup,
     Fragment,
+    Group,
     OutputDirection,
     Persona,
     PromptEnding,
     Registry,
     Route,
     RuntimeInjection,
+    Scale,
+    ScalableMixin,
     Section,
+    Sentiment,
     SentimentItem,
     StaticInjection,
 )
 from .serialize import export_json, load_registry
+from .state import RegistryState, SectionState
 
 __all__ = [
+    # Engine
     "Engine",
     "GenerationChunk",
     "GenerationResult",
+    # State
     "HydrateState",
+    "RegistryState",
+    "SectionState",
+    # Registry model
     "Registry",
     "Route",
     "Section",
@@ -54,14 +47,23 @@ __all__ = [
     "export_json",
     "hydrate",
     "load_registry",
-    # Typed item builders
-    "ContextItem",
-    "ExampleGroup",
+    # Core building blocks
+    "BaseItem",
+    "Display",
+    "DynamicMixin",
     "Fragment",
+    "Scale",
+    "ScalableMixin",
+    # Item types
+    "ContextItem",
+    "Group",
     "OutputDirection",
     "Persona",
     "PromptEnding",
     "RuntimeInjection",
-    "SentimentItem",
+    "Sentiment",
     "StaticInjection",
+    # v22 aliases (kept for migration)
+    "ExampleGroup",
+    "SentimentItem",
 ]

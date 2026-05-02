@@ -1,16 +1,18 @@
-"""Registry model dataclasses — schema v22.
+"""Registry model dataclasses — schema v2.
 
 JSON-safe, declarative. Maps 1:1 to the JSON the studio frontend
 imports/exports. No rendering logic here — see :mod:`hydrate`.
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
-SCHEMA_VERSION = 22
+from .state import RegistryState, SectionState
 
-# Section keys recognised by the engine (in canonical order).
+SCHEMA_VERSION = 2
+
 SECTION_KEYS: tuple[str, ...] = (
     "base_context",
     "personas",
@@ -18,276 +20,410 @@ SECTION_KEYS: tuple[str, ...] = (
     "static_injections",
     "runtime_injections",
     "output_prompt_directions",
-    "examples",
+    "groups",
     "prompt_endings",
 )
 
 
-# ── Typed item builders ────────────────────────────────────────────
-# Items inside Section are stored as plain dicts (the schema is open —
-# custom sections can use any shape), but the canonical sections all have
-# well-known item shapes. The dataclasses below provide IDE autocomplete +
-# type-checking when constructing items in Python; they each define a
-# `to_dict()` that emits the exact JSON the engine consumes.
-#
-# `Section.items` accepts either dataclass instances OR plain dicts; the
-# Section normalizes to dicts at construction time.
+# ── Display ───────────────────────────────────────────────────────────
+
+
+@dataclass
+class Display:
+    """Tool-facing presentation metadata. Never affects hydration."""
+
+    description: str = ""
+    icon: str = ""
+    color: str = ""
+    order: int = 0
+    hidden: bool = False
+
+
+def _display_dict(d: Display) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    if d.description:
+        out["description"] = d.description
+    if d.icon:
+        out["icon"] = d.icon
+    if d.color:
+        out["color"] = d.color
+    if d.order:
+        out["order"] = d.order
+    if d.hidden:
+        out["hidden"] = d.hidden
+    return out
+
+
+def _display_from_dict(data: dict[str, Any]) -> Display:
+    return Display(
+        description=str(data.get("description") or ""),
+        icon=str(data.get("icon") or ""),
+        color=str(data.get("color") or ""),
+        order=int(data.get("order") or 0),
+        hidden=bool(data.get("hidden", False)),
+    )
+
+
+# ── Scale ─────────────────────────────────────────────────────────────
+
+
+@dataclass
+class Scale:
+    """Reusable scale configuration for ScalableMixin items."""
+
+    label: str = "Intensity"
+    scale_descriptor: str = ""
+    min_value: float = 1.0
+    max_value: float = 10.0
+    default_value: float = 5.0
+    randomize: bool = False
+    template: str = "{label}: {value}/{max_value} - {scale_descriptor}."
+
+
+# ── Fragment ──────────────────────────────────────────────────────────
 
 
 @dataclass
 class Fragment:
-    """Conditional text inside a `base_context` item.
+    """Conditional text block. Renders when *condition* var is non-empty."""
 
-    `if_var` names a template variable in the same section; the fragment is
-    rendered only when that var has a non-empty value at hydrate time.
-    """
-    if_var: str
-    text: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"if_var": self.if_var, "text": self.text}
-
-
-@dataclass
-class ContextItem:
-    """Item for the `base_context` section."""
-    name: str
-    text: str = ""
-    fragments: list[Union["Fragment", dict[str, Any]]] = field(default_factory=list)
-    runtime_variables: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"name": self.name, "text": self.text}
-        if self.fragments:
-            out["fragments"] = [
-                f.to_dict() if hasattr(f, "to_dict") else dict(f) for f in self.fragments
-            ]
-        if self.runtime_variables:
-            out["runtime_variables"] = list(self.runtime_variables)
-        return out
-
-
-@dataclass
-class Persona:
-    """Item for the `personas` section."""
-    id: str
-    context: str = ""
-    base_directives: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "context": self.context,
-            "base_directives": list(self.base_directives),
-        }
-
-
-@dataclass
-class SentimentItem:
-    """Item for the `sentiment` section. `scale_emotion` is the noun phrase
-    interpolated into the section's `scale_template`."""
-    id: str
-    context: str = ""
-    scale_emotion: str = ""
-    nudges: list[str] = field(default_factory=list)
-    examples: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "context": self.context,
-            "scale_emotion": self.scale_emotion,
-            "nudges": list(self.nudges),
-            "examples": list(self.examples),
-        }
-
-
-@dataclass
-class ExampleGroup:
-    """Item for the `examples` section. `items` is a list of example strings;
-    `pre_context` is an optional intro line printed once above the group."""
-    name: str
-    items: list[str] = field(default_factory=list)
-    pre_context: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"name": self.name, "items": list(self.items)}
-        if self.pre_context:
-            out["pre_context"] = self.pre_context
-        return out
-
-
-@dataclass
-class StaticInjection:
-    """Item for the `static_injections` section. Always-on context that gets
-    appended when the section is selected."""
-    name: str
-    text: str
-    memory_tag: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"name": self.name, "text": self.text}
-        if self.memory_tag:
-            out["memory_tag"] = self.memory_tag
-        return out
-
-
-@dataclass
-class RuntimeInjection:
-    """Item for the `runtime_injections` section. When active, filters the
-    rendered prompt down to only the listed `include_sections` and appends
-    its own text."""
     id: str
     text: str
-    include_sections: list[str] = field(default_factory=list)
-    runtime_variables: list[str] = field(default_factory=list)
-    name: str = ""
-    required: bool = False
-    memory_tag: str = ""
+    condition: str = ""
+    label: str = ""
+    display: Display = field(default_factory=Display)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"id": self.id, "text": self.text}
-        if self.name:
-            out["name"] = self.name
+        if self.condition:
+            out["condition"] = self.condition
+        if self.label:
+            out["label"] = self.label
+        d = _display_dict(self.display)
+        if d:
+            out["display"] = d
+        return out
+
+
+# ── BaseItem ──────────────────────────────────────────────────────────
+
+
+@dataclass
+class BaseItem:
+    """Base for all typed item builders."""
+
+    id: str
+    label: str = ""
+    display: Display = field(default_factory=Display)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def _base_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"id": self.id}
+        if self.label:
+            out["label"] = self.label
+        d = _display_dict(self.display)
+        if d:
+            out["display"] = d
+        if self.metadata:
+            out["metadata"] = dict(self.metadata)
+        return out
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._base_dict()
+
+
+# ── Mixins ────────────────────────────────────────────────────────────
+
+
+@dataclass(kw_only=True)
+class DynamicMixin:
+    """Adds template variable + fragment support. Requires Python 3.10+."""
+
+    template_vars: list[str] = field(default_factory=list)
+    template_defaults: dict[str, str] = field(default_factory=dict)
+    fragments: list[Fragment] = field(default_factory=list)
+
+    def _dynamic_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if self.template_vars:
+            out["template_vars"] = list(self.template_vars)
+        if self.template_defaults:
+            out["template_defaults"] = dict(self.template_defaults)
+        if self.fragments:
+            out["fragments"] = [
+                f.to_dict() if hasattr(f, "to_dict") else dict(f)
+                for f in self.fragments
+            ]
+        return out
+
+
+@dataclass(kw_only=True)
+class ScalableMixin:
+    """Adds a Scale to an item (e.g. Sentiment)."""
+
+    scale: Scale = field(default_factory=Scale)
+
+    def _scale_dict(self) -> dict[str, Any]:
+        return {"scale": dataclasses.asdict(self.scale)}
+
+
+# ── Item types ────────────────────────────────────────────────────────
+
+
+@dataclass
+class Group(BaseItem):
+    """Reusable list of prompt snippets. Replaces ExampleGroup, nudges,
+    base_directives."""
+
+    pre_context: str = ""
+    items: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        out = self._base_dict()
+        if self.pre_context:
+            out["pre_context"] = self.pre_context
+        out["items"] = list(self.items)
+        return out
+
+
+@dataclass
+class ContextItem(BaseItem, DynamicMixin):
+    """Item for the ``base_context`` section."""
+
+    text: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        out = self._base_dict()
+        out.update(self._dynamic_dict())
+        if self.text:
+            out["text"] = self.text
+        return out
+
+
+@dataclass
+class Persona(BaseItem, DynamicMixin):
+    """Item for the ``personas`` section."""
+
+    context: str = ""
+    groups: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        out = self._base_dict()
+        out.update(self._dynamic_dict())
+        if self.context:
+            out["context"] = self.context
+        if self.groups:
+            out["groups"] = list(self.groups)
+        return out
+
+
+@dataclass
+class Sentiment(BaseItem, DynamicMixin, ScalableMixin):
+    """Item for the ``sentiment`` section."""
+
+    context: str = ""
+    groups: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        out = self._base_dict()
+        out.update(self._dynamic_dict())
+        out.update(self._scale_dict())
+        if self.context:
+            out["context"] = self.context
+        if self.groups:
+            out["groups"] = list(self.groups)
+        return out
+
+
+@dataclass
+class RuntimeInjection(BaseItem, DynamicMixin):
+    """Item for the ``runtime_injections`` section."""
+
+    text: str = ""
+    include_sections: list[str] = field(default_factory=list)
+    memory_tag: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        out = self._base_dict()
+        out.update(self._dynamic_dict())
+        if self.text:
+            out["text"] = self.text
         if self.include_sections:
             out["include_sections"] = list(self.include_sections)
-        if self.runtime_variables:
-            out["runtime_variables"] = list(self.runtime_variables)
-        if self.required:
-            out["required"] = True
         if self.memory_tag:
             out["memory_tag"] = self.memory_tag
         return out
 
 
 @dataclass
-class OutputDirection:
-    """Item for the `output_prompt_directions` section."""
-    name: str
-    text: str
+class StaticInjection(BaseItem):
+    """Item for the ``static_injections`` section."""
+
+    text: str = ""
+    memory_tag: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "text": self.text}
+        out = self._base_dict()
+        if self.text:
+            out["text"] = self.text
+        if self.memory_tag:
+            out["memory_tag"] = self.memory_tag
+        return out
 
 
 @dataclass
-class PromptEnding:
-    """Item for the `prompt_endings` section. `items` is the list of ending
-    strings; one is picked per generation (combine with `array_modes` for
-    rotation)."""
-    name: str = "endings"
+class OutputDirection(BaseItem, DynamicMixin):
+    """Item for the ``output_prompt_directions`` section."""
+
+    text: str = ""
+    groups: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        out = self._base_dict()
+        out.update(self._dynamic_dict())
+        if self.text:
+            out["text"] = self.text
+        if self.groups:
+            out["groups"] = list(self.groups)
+        return out
+
+
+@dataclass
+class PromptEnding(BaseItem):
+    """Item for the ``prompt_endings`` section."""
+
     items: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "items": list(self.items)}
+        out = self._base_dict()
+        out["items"] = list(self.items)
+        return out
+
+
+# ── v22 compatibility aliases ─────────────────────────────────────────
+
+SentimentItem = Sentiment
+ExampleGroup = Group
+
+
+# ── Normalize ─────────────────────────────────────────────────────────
 
 
 def _normalize_item(it: Any) -> dict[str, Any]:
-    """Coerce an item to a plain dict. Accepts any dataclass with `to_dict()`
-    (the typed item builders above) or a raw mapping."""
+    """Coerce a typed item builder or plain dict to a plain dict."""
     if hasattr(it, "to_dict") and callable(it.to_dict):
         return dict(it.to_dict())
     return dict(it)
 
 
+# ── v22 state extraction (migration helper) ───────────────────────────
+
+
+def _extract_v22_section_state(sec_data: dict[str, Any]) -> Optional[SectionState]:
+    """Pull tool-state fields out of a v22 section dict into a SectionState."""
+    STATE_KEYS = {"selected", "slider", "slider_random", "section_random", "array_modes", "template_var_defaults"}
+    if not any(k in sec_data for k in STATE_KEYS):
+        return None
+    old_modes: dict[str, Any] = sec_data.get("array_modes") or {}
+    new_modes: dict[str, str] = {}
+    for fld, mode in old_modes.items():
+        if isinstance(mode, str):
+            new_modes[fld] = mode
+    template_vars: dict[str, str] = {}
+    for k, v in (sec_data.get("template_var_defaults") or {}).items():
+        template_vars[str(k)] = str(v) if v is not None else ""
+    return SectionState(
+        selected=sec_data.get("selected"),
+        slider=sec_data.get("slider"),
+        slider_random=bool(sec_data.get("slider_random", False)),
+        section_random=bool(sec_data.get("section_random", False)),
+        array_modes=new_modes,
+        template_vars=template_vars,
+    )
+
+
+# ── Section ───────────────────────────────────────────────────────────
+
+
 @dataclass
 class Section:
-    """One section of the registry. Has items + optional tool-state extras."""
+    """One section of the registry — blueprint only, no runtime state."""
 
-    required: bool = True
-    template_vars: list[str] = field(default_factory=list)
+    id: str
+    label: str = ""
+    display: Display = field(default_factory=Display)
     items: list[dict[str, Any]] = field(default_factory=list)
-
-    # Optional tool-state fields (emitted by the studio's Export Model JSON).
-    selected: Optional[Union[str, list[str]]] = None
-    section_random: Optional[bool] = None
-    array_modes: Optional[dict[str, str]] = None
-    slider: Optional[float] = None
-    slider_random: Optional[bool] = None
-    # Sentiment-only: format string for the `sentiment.scale` token.
-    # Placeholders: `{value}` (1-10), `{emotion}` (per-item scale_emotion).
-    scale_template: Optional[str] = None
-    # Default values for declared template_vars. Studio pre-fills the
-    # runtime-input rows from this on load so examples come ready to
-    # Pre-generate without the user typing in placeholders.
-    template_var_defaults: Optional[dict[str, str]] = None
+    required: bool = True
 
     def __post_init__(self) -> None:
-        # Normalize items: accept typed builders (Persona, SentimentItem, …)
-        # OR plain dicts. Internally we always store dicts so hydrate.py and
-        # to_dict() / from_dict() round-trip cleanly.
         self.items = [_normalize_item(it) for it in (self.items or [])]
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "required": self.required,
-            "template_vars": list(self.template_vars),
             "items": [dict(it) for it in self.items],
         }
-        if self.selected is not None:
-            out["selected"] = (
-                self.selected if isinstance(self.selected, str) else list(self.selected)
-            )
-        if self.section_random is not None:
-            out["section_random"] = self.section_random
-        if self.array_modes:
-            out["array_modes"] = dict(self.array_modes)
-        if self.slider is not None:
-            out["slider"] = self.slider
-        if self.slider_random is not None:
-            out["slider_random"] = self.slider_random
-        if self.scale_template:
-            out["scale_template"] = self.scale_template
-        if self.template_var_defaults:
-            out["template_var_defaults"] = dict(self.template_var_defaults)
+        if self.label:
+            out["label"] = self.label
+        d = _display_dict(self.display)
+        if d:
+            out["display"] = d
         return out
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Section":
-        defaults = data.get("template_var_defaults")
+    def from_dict(cls, data: dict[str, Any], section_id: str = "") -> "Section":
+        display_data = data.get("display")
         return cls(
-            required=bool(data.get("required", True)),
-            template_vars=list(data.get("template_vars") or []),
+            id=section_id or str(data.get("id") or ""),
+            label=str(data.get("label") or ""),
+            display=_display_from_dict(display_data) if display_data else Display(),
             items=[dict(it) for it in (data.get("items") or [])],
-            selected=data.get("selected"),
-            section_random=data.get("section_random"),
-            array_modes=dict(data["array_modes"]) if data.get("array_modes") else None,
-            slider=data.get("slider"),
-            slider_random=data.get("slider_random"),
-            scale_template=data.get("scale_template"),
-            template_var_defaults=dict(defaults) if defaults else None,
+            required=bool(data.get("required", True)),
         )
+
+
+# ── Route ─────────────────────────────────────────────────────────────
 
 
 @dataclass
 class Route:
-    """Optional route — overrides assembly_order / generation / output_policy
-    for a single ``Engine.run()`` call. If a registry has no routes, the
-    top-level fields are the only path."""
+    """Optional route — overrides assembly_order / generation / output_policy."""
 
+    id: str = ""
+    label: str = ""
     assembly_order: Optional[list[str]] = None
     generation: dict[str, Any] = field(default_factory=dict)
     output_policy: dict[str, Any] = field(default_factory=dict)
+    default_state: Optional[RegistryState] = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
+        if self.label:
+            out["label"] = self.label
         if self.assembly_order is not None:
             out["assembly_order"] = list(self.assembly_order)
         if self.generation:
             out["generation"] = dict(self.generation)
         if self.output_policy:
             out["output_policy"] = dict(self.output_policy)
+        if self.default_state:
+            out["default_state"] = self.default_state.to_dict()
         return out
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Route":
+    def from_dict(cls, data: dict[str, Any], route_id: str = "") -> "Route":
+        ds_data = data.get("default_state")
         return cls(
-            assembly_order=list(data["assembly_order"])
-            if "assembly_order" in data
-            else None,
+            id=route_id or str(data.get("id") or ""),
+            label=str(data.get("label") or ""),
+            assembly_order=list(data["assembly_order"]) if "assembly_order" in data else None,
             generation=dict(data.get("generation") or {}),
             output_policy=dict(data.get("output_policy") or {}),
+            default_state=RegistryState.from_dict(ds_data) if ds_data else None,
         )
+
+
+# ── Registry ──────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -304,6 +440,7 @@ class Registry:
     output_policy: dict[str, Any] = field(default_factory=dict)
     memory_rules: list[dict[str, Any]] = field(default_factory=list)
     memory_config: dict[str, Any] = field(default_factory=dict)
+    default_state: Optional[RegistryState] = None
 
     def to_dict(self, *, wrap: bool = True) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -328,34 +465,50 @@ class Registry:
             body["memory_rules"] = list(self.memory_rules)
         if self.memory_config:
             body["memory_config"] = dict(self.memory_config)
+        if self.default_state:
+            body["default_state"] = self.default_state.to_dict()
         return {"registry": body} if wrap else body
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Registry":
         if "registry" in data and isinstance(data["registry"], dict):
             data = data["registry"]
+
+        version = int(data.get("version") or 0)
+
+        RESERVED = {
+            "version", "title", "description", "assembly_order",
+            "routes", "generation", "output_policy", "memory_rules",
+            "memory_config", "default_state",
+        }
+
         sections: dict[str, Section] = {}
+        state_sections: dict[str, SectionState] = {}
         for key, value in data.items():
-            if key in {
-                "version",
-                "title",
-                "description",
-                "assembly_order",
-                "routes",
-                "generation",
-                "output_policy",
-                "memory_rules",
-                "memory_config",
-            }:
+            if key in RESERVED:
                 continue
             if isinstance(value, dict) and "items" in value:
-                sections[key] = Section.from_dict(value)
+                sections[key] = Section.from_dict(value, section_id=key)
+                if version < 2:
+                    ss = _extract_v22_section_state(value)
+                    if ss is not None:
+                        state_sections[key] = ss
+
         routes: dict[str, Route] = {}
         for k, v in (data.get("routes") or {}).items():
             if isinstance(v, dict):
-                routes[k] = Route.from_dict(v)
+                routes[k] = Route.from_dict(v, route_id=k)
+
+        ds_data = data.get("default_state")
+        if ds_data:
+            default_state: Optional[RegistryState] = RegistryState.from_dict(ds_data)
+        elif state_sections:
+            default_state = RegistryState(sections=state_sections)
+        else:
+            default_state = None
+
         return cls(
-            version=int(data.get("version") or SCHEMA_VERSION),
+            version=version or SCHEMA_VERSION,
             title=str(data.get("title") or ""),
             description=str(data.get("description") or ""),
             assembly_order=[str(t) for t in (data.get("assembly_order") or [])],
@@ -365,4 +518,5 @@ class Registry:
             output_policy=dict(data.get("output_policy") or {}),
             memory_rules=list(data.get("memory_rules") or []),
             memory_config=dict(data.get("memory_config") or {}),
+            default_state=default_state,
         )
