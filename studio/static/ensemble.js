@@ -10,6 +10,7 @@ function escapeHtml(s) {
 
 let activeReader = null;
 let activeSessionId = null;
+let activeEmbedWs = null;
 const participantState = { a: null, b: null };
 let hasRun = false;
 
@@ -404,6 +405,19 @@ async function startEnsemble() {
     return;
   }
 
+  // Resolve embed config for a side: UI override > registry memory_config > baseUrl fallback.
+  function sideEmbedCfg(side, regObj) {
+    const mc = (regObj?.registry ?? regObj)?.memory_config ?? {};
+    const urlOverride = document.getElementById(`${side}-embed_url`)?.value?.trim();
+    const pathOverride = document.getElementById(`${side}-embed_path`)?.value?.trim();
+    return {
+      url:   urlOverride || mc.embed_url   || mc.classifier_url || conn.baseUrl,
+      path:  pathOverride || mc.embed_path || "/api/embed",
+      model: mc.embed_model || "nomic-embed-text",
+      shape: mc.embed_payload_shape || "auto",
+    };
+  }
+
   // When either side is human-driven, run open-ended (capped huge); user stops manually.
   const turnsRaw = document.getElementById("turns").value.trim();
   const anyHuman = humanA || humanB;
@@ -427,11 +441,59 @@ async function startEnsemble() {
   document.getElementById("card-a")?.removeAttribute("open");
   document.getElementById("card-b")?.removeAttribute("open");
 
+  const sessionId = crypto.randomUUID();
+  activeSessionId = sessionId;
+
+  // Open embed WebSocket before POST so the server can route embed_requests to us.
+  if (memA || memB) {
+    const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+    const embedWs = new WebSocket(`${wsProto}//${location.host}/api/ensemble/ws/${sessionId}/embed`);
+    activeEmbedWs = embedWs;
+
+    const cfgA = sideEmbedCfg("a", registryA);
+    const cfgB = sideEmbedCfg("b", registryB);
+
+    embedWs.onmessage = async (evt) => {
+      let msg;
+      try { msg = JSON.parse(evt.data); } catch { return; }
+      if (msg.type !== "embed_request") return;
+      const { id, text: embedText, side } = msg;
+      const cfg = side === "b" ? cfgB : cfgA;
+      const embedUrl = cfg.url.replace(/\/$/, "") + cfg.path;
+      try {
+        // Support both Ollama (/api/embed) and OpenAI-compat (/v1/embeddings) shapes.
+        const isOllama = cfg.path.includes("/api/embed");
+        const reqBody = isOllama
+          ? { model: cfg.model, input: embedText }
+          : { model: cfg.model, input: embedText };
+        const resp = await fetch(embedUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reqBody),
+        });
+        if (!resp.ok) throw new Error(`embed HTTP ${resp.status}`);
+        const data = await resp.json();
+        // Handle both Ollama (embeddings[0]) and OpenAI (data[0].embedding) response shapes.
+        const vectors = data.embeddings?.[0] ?? data.data?.[0]?.embedding ?? data.embedding ?? [];
+        embedWs.send(JSON.stringify({ type: "embed_result", id, vectors }));
+      } catch (e) {
+        embedWs.send(JSON.stringify({ type: "embed_error", id, error: String(e.message) }));
+      }
+    };
+
+    // Wait for WS to open before sending the POST.
+    await new Promise((resolve, reject) => {
+      embedWs.onopen = resolve;
+      embedWs.onerror = () => reject(new Error("embed WebSocket failed to open"));
+    });
+  }
+
   const body = JSON.stringify({
     a: { registry: registryA, model: modelA, name: nameA, state: participantState.a || {}, human: humanA, memory_enabled: memA, memory_overrides: overA, generation_overrides: genA },
     b: { registry: registryB, model: modelB, name: nameB, state: participantState.b || {}, human: humanB, memory_enabled: memB, memory_overrides: overB, generation_overrides: genB },
     seed,
     turns,
+    session_id: sessionId,
     // Backend gating is purely the auto/step toggle — we never gate at the
     // backend for TTS. TTS pacing is a frontend visual: bubbles render
     // blurred until their audio plays. Generation runs as fast as it can.
@@ -484,6 +546,10 @@ async function startEnsemble() {
     }
   } finally {
     activeReader = null;
+    if (activeEmbedWs) {
+      activeEmbedWs.close();
+      activeEmbedWs = null;
+    }
     hasRun = true;
     updateSeedVisibility();
     setRunning(false);
@@ -956,6 +1022,10 @@ function stopEnsemble() {
   if (activeReader) {
     activeReader.cancel();
     activeReader = null;
+  }
+  if (activeEmbedWs) {
+    activeEmbedWs.close();
+    activeEmbedWs = null;
   }
   flushTtsQueue();
   _stepPending = false;

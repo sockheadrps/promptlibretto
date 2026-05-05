@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -47,6 +47,7 @@ async def _build_memory(
     main_model: str,
     overrides: Optional[dict] = None,
     user_id: str = "",
+    ws_embedder=None,
 ):
     """Construct a per-participant MemoryEngine + return its closeables.
 
@@ -131,11 +132,14 @@ async def _build_memory(
     else:
         notes_path = str(sd / f"{title}_{_safe_name(participant_name)}_notes.json")
 
-    embedder = OllamaEmbedder(
-        base_url=embed_url, model=embed_model,
-        embed_path=cfg.get("embed_path") or "/api/embed",
-        payload_shape=cfg.get("embed_payload_shape") or "auto",
-    )
+    if ws_embedder is not None:
+        embedder = ws_embedder
+    else:
+        embedder = OllamaEmbedder(
+            base_url=embed_url, model=embed_model,
+            embed_path=cfg.get("embed_path") or "/api/embed",
+            payload_shape=cfg.get("embed_payload_shape") or "auto",
+        )
     store    = MemoryStore(db_path=store_path, embedder=embedder)
     classifier = Classifier(
         OllamaProvider(
@@ -196,7 +200,8 @@ async def _build_memory(
 
     async def cleanup() -> None:
         store.close()
-        await embedder.aclose()
+        if ws_embedder is None:
+            await embedder.aclose()
         if notes_provider is not None:
             await notes_provider.aclose()
 
@@ -206,6 +211,45 @@ async def _build_memory(
 # Lives in-process; restart clears it. Fine for single-user studio.
 _HUMAN_FUTURES: dict[str, asyncio.Future[str]] = {}
 _STEP_FUTURES:  dict[str, asyncio.Future[None]] = {}
+
+# session_id -> (embedder_a, embedder_b) for browser-delegated embedding.
+_embed_ws: dict[str, tuple] = {}
+
+
+@router.websocket("/ws/{session_id}/embed")
+async def ensemble_embed_ws(websocket: WebSocket, session_id: str) -> None:
+    """Browser connects here before /run to delegate embed calls client-side."""
+    await websocket.accept()
+
+    try:
+        from promptlibretto.memory.ws_embedder import WsEmbedder
+    except ImportError:
+        await websocket.close(code=1011, reason="memory extra not installed")
+        return
+
+    async def send_fn(msg: dict) -> None:
+        await websocket.send_json(msg)
+
+    emb_a = WsEmbedder(send_fn, side="a")
+    emb_b = WsEmbedder(send_fn, side="b")
+    _embed_ws[session_id] = (emb_a, emb_b)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            t = data.get("type")
+            if t == "embed_result":
+                rid, vecs = data.get("id", ""), data.get("vectors", [])
+                emb_a.resolve(rid, vecs)
+                emb_b.resolve(rid, vecs)
+            elif t == "embed_error":
+                rid, err = data.get("id", ""), data.get("error", "unknown")
+                emb_a.reject(rid, err)
+                emb_b.reject(rid, err)
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        _embed_ws.pop(session_id, None)
 
 
 class HumanSubmit(BaseModel):
@@ -433,11 +477,13 @@ class EnsembleRequest(BaseModel):
     # When False, the run pauses after each turn and waits for an explicit
     # /step/{session_id} POST before continuing. Default True = run free.
     auto_run: bool = True
+    # Client-generated session ID used to link the embed WebSocket to this run.
+    session_id: Optional[str] = None
 
 
 @router.post("/run")
 async def run_ensemble(req: EnsembleRequest, request: Request) -> StreamingResponse:
-    session_id = str(uuid.uuid4())
+    session_id = req.session_id or str(uuid.uuid4())
     _user_id = _get_user_id(request)
 
     async def generate() -> AsyncGenerator[str, None]:
@@ -529,6 +575,8 @@ async def run_ensemble(req: EnsembleRequest, request: Request) -> StreamingRespo
                 # Build per-participant memory pipelines (None if registry
                 # has no memory_rules and no personality_file configured).
                 # Memory pipeline only applies to model-driven participants.
+                _ws_emb = _embed_ws.get(session_id, (None, None))
+                ws_emb_a, ws_emb_b = _ws_emb[0], _ws_emb[1]
                 mem_a = None
                 mem_b = None
                 if req.a.memory_enabled and engine_a is not None:
@@ -541,6 +589,7 @@ async def run_ensemble(req: EnsembleRequest, request: Request) -> StreamingRespo
                         main_model=req.a.model,
                         overrides=req.a.memory_overrides or None,
                         user_id=_user_id,
+                        ws_embedder=ws_emb_a,
                     )
                     cleanups.extend(ca)
                 if req.b.memory_enabled and engine_b is not None:
@@ -553,6 +602,7 @@ async def run_ensemble(req: EnsembleRequest, request: Request) -> StreamingRespo
                         main_model=req.b.model,
                         overrides=req.b.memory_overrides or None,
                         user_id=_user_id,
+                        ws_embedder=ws_emb_b,
                     )
                     cleanups.extend(cb)
 
