@@ -74,7 +74,7 @@
     <section class="builder-meta-grid">
       <div class="panel field-card">
         <label>Registry Version</label>
-        <input type="number" id="model-version" value="" oninput="exportFullModel()" />
+        <input type="number" id="model-version" value="2" readonly oninput="exportFullModel()" />
       </div>
       <div class="panel field-card">
         <label>Registry Title</label>
@@ -196,7 +196,7 @@
         </section>
 
         <section id="builder-tab-memory-panel" class="builder-tab-body">
-          <section class="panel field-panel">
+          <section id="classifier-rules-panel" class="panel field-panel">
             <div class="panel-head">
               <div>
                 <span class="panel-title">Classifier Rules</span>

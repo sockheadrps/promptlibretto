@@ -1994,3 +1994,9 @@ details[open] > .inline-group-summary::before {
 .setup-continue-btn:not(:disabled):hover {
   filter: brightness(1.12);
 }
+
+#model-version[readonly] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}

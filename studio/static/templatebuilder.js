@@ -1381,10 +1381,9 @@ function initSetupFlow() {
 
 function _onMetaInput() {
   if (_setupPhase !== "meta") return;
-  const v = document.getElementById("model-version")?.value?.trim();
   const t = document.getElementById("model-title-input")?.value?.trim();
   const d = document.getElementById("model-desc-input")?.value?.trim();
-  if (v && t && d) {
+  if (t && d) {
     _setupPhase = "memory-choice";
     const card = document.getElementById("builder-setup-card");
     if (card) card.hidden = false;
@@ -1404,7 +1403,10 @@ function setMemoryChoice(useMemory) {
     const banner = document.getElementById("setup-phase-banner");
     if (banner) banner.hidden = false;
     switchBuilderTab("memory");
-    // Expand all memory config collapsibles in the memory tab
+    // Hide rules panel — setup is for memory config only
+    const rulesPanel = document.getElementById("classifier-rules-panel");
+    if (rulesPanel) rulesPanel.hidden = true;
+    // Expand memory config collapsible
     const memPanel = document.getElementById("builder-tab-memory-panel");
     memPanel?.querySelectorAll("[data-builder-collapse]").forEach((p) => {
       p.classList.remove("collapsed");
@@ -1437,6 +1439,9 @@ function completeSetup() {
   if (tabsRow) tabsRow.hidden = false;
   const memTabBtn = document.getElementById("tab-memory");
   if (memTabBtn) memTabBtn.hidden = !_useMemory;
+  // Restore rules panel visibility
+  const rulesPanel = document.getElementById("classifier-rules-panel");
+  if (rulesPanel) rulesPanel.hidden = false;
   if (_useMemory) {
     // Auto-add memory template vars to prompt_endings
     const pe = registryState.sections.prompt_endings;
