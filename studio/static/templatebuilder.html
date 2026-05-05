@@ -202,29 +202,51 @@
                 <button type="button" class="collapse-toggle" onclick="toggleBuilderCollapse(this)">Expand</button>
               </div>
               <div class="collapsible-body">
-                <div class="form-grid">
-                  <label><span>classifier_url <span class="label-hint">Ollama base URL for tag classifier</span></span><input id="mem-classifier-url" type="text" placeholder="http://localhost:8080" value="http://localhost:8080" oninput="exportFullModel()" /></label>
-                  <label><span>classifier_model</span>
-                    <div class="mem-model-row">
-                      <select id="mem-classifier-model" onchange="exportFullModel()">
-                        <option value="Qwen3.5-9B-Q4_K_M.gguf" selected>Qwen3.5-9B-Q4_K_M.gguf</option>
-                        <option value="">— fetch models for more —</option>
-                      </select>
-                      <button type="button" class="mem-conn-refresh" onclick="fetchClassifierModels()" title="Fetch models">↺</button>
-                    </div>
-                  </label>
-                  <label class="mem-embed-toggle-label"><input type="checkbox" id="mem-use-embed-url" onchange="toggleEmbedUrlSection(); exportFullModel()" /> <span>Use Additional Embedding URL? <span class="label-hint">if unchecked, uses classifier_url</span></span><button type="button" class="mem-help-btn" onclick="openEmbedHelp(); event.preventDefault()">?</button></label>
-                  <div id="mem-embed-url-section" hidden>
-                    <label><span>embed_url</span><input id="mem-embed-url" type="text" placeholder="http://localhost:11111" oninput="exportFullModel()" /></label>
+                <div class="mem-config-group">
+                  <div class="mem-config-group-title">Classifier</div>
+                  <div class="form-grid">
+                    <label><span>classifier_url <span class="label-hint">base URL for tag classifier</span></span><input id="mem-classifier-url" type="text" placeholder="http://localhost:8080" value="http://localhost:8080" oninput="exportFullModel()" /></label>
+                    <label><span>classifier_model</span>
+                      <div class="mem-model-row">
+                        <select id="mem-classifier-model" onchange="exportFullModel()">
+                          <option value="Qwen3.5-9B-Q4_K_M.gguf" selected>Qwen3.5-9B-Q4_K_M.gguf</option>
+                          <option value="">— fetch models —</option>
+                        </select>
+                        <button type="button" class="mem-conn-refresh" onclick="fetchClassifierModels()" title="Fetch models">↺</button>
+                      </div>
+                    </label>
+                    <label class="mem-check-label"><span>use_classifier <span class="label-hint">run LLM classifier to extract tags</span></span><input id="mem-use-classifier" type="checkbox" checked onchange="exportFullModel()" /></label>
                   </div>
-                  <label><span>embed_model</span><input id="mem-embed-model" type="text" placeholder="nomic-embed-text" oninput="exportFullModel()" /></label>
-                  <label><span>top_k</span><input id="mem-top-k" type="number" step="1" min="1" max="20" oninput="exportFullModel()" /></label>
-                  <label><span>prune_keep <span class="label-hint">turns to keep</span></span><input id="mem-prune-keep" type="number" step="1" min="1" max="10" placeholder="10" oninput="exportFullModel()" /></label>
-                  <div id="mem-server-managed-paths">
+                </div>
+                <div class="mem-config-group">
+                  <div class="mem-config-group-title">Embedding <button type="button" class="mem-help-btn" onclick="openEmbedHelp(); event.preventDefault()">?</button></div>
+                  <div class="form-grid">
+                    <label class="mem-embed-toggle-label"><input type="checkbox" id="mem-use-embed-url" onchange="toggleEmbedUrlSection(); exportFullModel()" /> <span>Separate embed URL <span class="label-hint">if unchecked, uses classifier_url</span></span></label>
+                    <div id="mem-embed-url-section" hidden>
+                      <label><span>embed_url</span><input id="mem-embed-url" type="text" placeholder="http://localhost:11434" oninput="exportFullModel()" /></label>
+                    </div>
+                    <label><span>embed_model</span>
+                      <div class="mem-model-row">
+                        <input id="mem-embed-model" type="text" placeholder="nomic-embed-text" oninput="exportFullModel()" />
+                        <button type="button" class="mem-conn-refresh" onclick="testEmbedModel()" title="Test embed model">↺</button>
+                        <span id="mem-embed-test-result" class="mem-test-result"></span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+                <div class="mem-config-group">
+                  <div class="mem-config-group-title">Retrieval</div>
+                  <div class="form-grid">
+                    <label><span>top_k</span><input id="mem-top-k" type="number" step="1" min="1" max="20" oninput="exportFullModel()" /></label>
+                    <label><span>prune_keep <span class="label-hint">turns to keep</span></span><input id="mem-prune-keep" type="number" step="1" min="1" max="10" placeholder="10" oninput="exportFullModel()" /></label>
+                  </div>
+                </div>
+                <div id="mem-server-managed-paths" class="mem-config-group">
+                  <div class="mem-config-group-title">Storage</div>
+                  <div class="form-grid">
                     <label><span>store_path <span class="label-hint">defaults to ~/.promptlibretto/memory_stores/</span></span><input id="mem-store-path" type="text" placeholder="leave blank for default" oninput="exportFullModel()" /></label>
                     <label><span>personality_file</span><input id="mem-personality-file" type="text" placeholder="personality.json" oninput="exportFullModel()" /></label>
                   </div>
-                  <label class="mem-check-label"><span>use_classifier <span class="label-hint">run LLM classifier to extract tags</span></span><input id="mem-use-classifier" type="checkbox" checked onchange="exportFullModel()" /></label>
                 </div>
               </div>
             </div>

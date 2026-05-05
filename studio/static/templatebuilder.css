@@ -1806,3 +1806,77 @@ details[open] > .inline-group-summary::before {
   padding: 16px 14px;
   font-style: italic;
 }
+
+/* ── Memory config grouped sections ─────────────────────── */
+
+.mem-config-group {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.mem-config-group:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.mem-config-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mem-check-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  grid-column: 1 / -1;
+}
+
+.mem-check-label input[type="checkbox"] {
+  width: auto;
+  flex-shrink: 0;
+}
+
+.mem-embed-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.mem-embed-toggle-label input[type="checkbox"] {
+  width: auto;
+  flex-shrink: 0;
+}
+
+/* ── Embed test result badge ─────────────────────────────── */
+
+.mem-test-result {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mem-test-ok {
+  color: #4caf82;
+}
+
+.mem-test-fail {
+  color: #e06c75;
+}
+
+.mem-test-warn {
+  color: #e5c07b;
+}

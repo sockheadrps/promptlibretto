@@ -1581,6 +1581,50 @@ async function fetchClassifierModels() {
   }
 }
 
+async function testEmbedModel() {
+  const resultEl = document.getElementById("mem-embed-test-result");
+  const model = document.getElementById("mem-embed-model")?.value?.trim() || "nomic-embed-text";
+  const useEmbed = document.getElementById("mem-use-embed-url")?.checked;
+  const embedUrlEl = document.getElementById("mem-embed-url");
+  const classifierUrlEl = document.getElementById("mem-classifier-url");
+  const base = ((useEmbed ? embedUrlEl?.value?.trim() : null) || classifierUrlEl?.value?.trim() || "").replace(/\/+$/, "");
+  if (!base) {
+    if (resultEl) { resultEl.textContent = "⚠ no URL"; resultEl.className = "mem-test-result mem-test-warn"; }
+    return;
+  }
+  if (resultEl) { resultEl.textContent = "…"; resultEl.className = "mem-test-result"; }
+  try {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 8000);
+    let dims = null;
+    for (const [path, body] of [
+      ["/api/embed",      { model, input: "test" }],
+      ["/v1/embeddings",  { model, input: "test" }],
+    ]) {
+      try {
+        const resp = await fetch(base + path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: abort.signal,
+        });
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        const vec = data.embeddings?.[0] ?? data.data?.[0]?.embedding ?? data.embedding;
+        if (Array.isArray(vec) && vec.length) { dims = vec.length; break; }
+      } catch {}
+    }
+    clearTimeout(timer);
+    if (dims !== null) {
+      if (resultEl) { resultEl.textContent = `✓ ${dims} dims`; resultEl.className = "mem-test-result mem-test-ok"; }
+    } else {
+      if (resultEl) { resultEl.textContent = "✗ no vectors"; resultEl.className = "mem-test-result mem-test-fail"; }
+    }
+  } catch {
+    if (resultEl) { resultEl.textContent = "✗ failed"; resultEl.className = "mem-test-result mem-test-fail"; }
+  }
+}
+
 function populateMemoryConfigInputs() {
   const cfg = registryState.memory_config || {};
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ""; };
