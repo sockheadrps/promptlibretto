@@ -834,7 +834,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       return (
         `<div class="registry-frag-row" data-frag-index="${i}">` +
         `<select data-frag-var>${opts}</select>` +
-        `<input type="text" data-frag-text value="${escapeHtml(text)}" placeholder="fragment text — use {var}…">` +
+        `<textarea data-frag-text rows="3" placeholder="fragment text — use {var}…">${escapeHtml(text)}</textarea>` +
         `<button type="button" class="registry-tvar-remove" data-frag-remove title="Remove fragment">×</button>` +
         `</div>`
       );
@@ -903,7 +903,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         div.className = "registry-frag-row";
         div.innerHTML =
           `<select data-frag-var>${optsHtml}</select>` +
-          `<input type="text" data-frag-text placeholder="fragment text — use {var}…">` +
+          `<textarea data-frag-text rows="3" placeholder="fragment text — use {var}…"></textarea>` +
           `<button type="button" class="registry-tvar-remove" data-frag-remove title="Remove fragment">×</button>`;
         list.appendChild(div);
         wireRow(div);

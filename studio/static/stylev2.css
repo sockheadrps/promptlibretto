@@ -2679,13 +2679,15 @@ details[open] > .registry-scale-summary::before { transform: rotate(90deg); }
   display: grid;
   grid-template-columns: 110px 1fr 22px;
   gap: 6px;
-  align-items: center;
+  align-items: start;
 }
 .registry-frag-row select {
   font-size: 11px; padding: 2px 4px;
 }
-.registry-frag-row input[type=text] {
+.registry-frag-row input[type=text],
+.registry-frag-row textarea {
   font-size: 12px; padding: 4px 6px;
+  resize: vertical;
 }
 
 /* ── Generation Overrides: help-mark hint ─────────────────── */
