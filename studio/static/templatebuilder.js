@@ -5,7 +5,8 @@ const SECTION_KEYS = [
   "static_injections",
   "runtime_injections",
   "output_prompt_directions",
-  "examples",
+  "memory_recall",
+  "user_message",
   "prompt_endings",
 ];
 
@@ -16,8 +17,10 @@ const SECTION_LABELS = {
   static_injections: "Static Injections",
   runtime_injections: "Runtime Injections",
   output_prompt_directions: "Output Directions",
-  examples: "Examples",
+  memory_recall: "Memory Recall",
+  user_message: "User Message",
   prompt_endings: "Prompt Endings",
+  groups: "Groups",
 };
 
 const STUDIO_INBOX_KEY = "pl-studio-handoff-v1";
@@ -40,14 +43,14 @@ const POLICY_LIST_FIELDS = [
 ];
 const DEFAULT_ASSEMBLY_ORDER = [
   "output_prompt_directions",
+  "base_context.text",
+  "personas.context",
+  "personas.groups",
   "sentiment.context",
-  "persona.text",
-  "persona.base_directives",
-  "sentiment.nudges",
-  "injections",
-  "examples.normal_examples",
-  "examples[sentiment.example_pool]",
-  "examples.prompt_endings",
+  "sentiment.groups",
+  "sentiment.scale",
+  "memory_recall.text",
+  "prompt_endings.endings",
 ];
 
 let registryState = createEmptyRegistryState();
@@ -66,9 +69,9 @@ function escapeHtml(s) {
 
 function createEmptyRegistryState() {
   const state = {
-    version: 22,
-    title: "Twitch Chatter",
-    description: "v2.2 Declarative Model",
+    version: 2,
+    title: "New Registry",
+    description: "",
     assembly_order: [],
     generation: {},
     generationExtras: {},
@@ -80,9 +83,10 @@ function createEmptyRegistryState() {
     memory_config: {},
   };
 
+  const optional = new Set(["static_injections", "runtime_injections", "memory_recall", "user_message", "groups"]);
   SECTION_KEYS.forEach((key) => {
     state.sections[key] = {
-      required: key !== "static_injections" && key !== "runtime_injections" && key !== "examples",
+      required: !optional.has(key),
       template_vars: [],
       items: [],
       extras: {},
@@ -167,11 +171,14 @@ function syncTopLevelStateFromInputs() {
 function buildExportPayload() {
   syncTopLevelStateFromInputs();
 
+  const rawOrder = [...registryState.assembly_order];
+  const nonEnding = rawOrder.filter((t) => !isPromptEndingsToken(t));
+  const endings = rawOrder.filter((t) => isPromptEndingsToken(t));
   const registry = {
     version: registryState.version,
     title: registryState.title,
     description: registryState.description,
-    assembly_order: [...registryState.assembly_order],
+    assembly_order: [...nonEnding, ...endings],
     ...registryState.extraTopLevel,
   };
 
@@ -191,11 +198,23 @@ function buildExportPayload() {
 
   SECTION_KEYS.forEach((key) => {
     const sectionData = registryState.sections[key];
-    const items = sectionData.items.map(({ _ui_id, ...rest }) => {
+    const items = sectionData.items.map(({ _ui_id, template_var_defaults, ...rest }) => {
       const out = { ...rest };
-      if (key === "personas" && out.text) {
-        out.context = out.text;
-        delete out.text;
+      // Strip empty scale fields to keep JSON clean
+      if (out.scale) {
+        if (!out.scale.scale_descriptor && !out.scale.template) delete out.scale;
+      }
+      // Strip empty pre_context on groups items
+      if (key === "groups" && !out.pre_context) delete out.pre_context;
+      // Strip empty groups arrays on personas/sentiment
+      if ((key === "personas" || key === "sentiment") && Array.isArray(out.groups) && !out.groups.length) {
+        delete out.groups;
+      }
+      // Strip empty template_vars arrays and legacy fields on runtime_injections
+      if (key === "runtime_injections") {
+        if (Array.isArray(out.template_vars) && !out.template_vars.length) delete out.template_vars;
+        delete out.memory_tag;
+        delete out.include_sections;
       }
       return out;
     });
@@ -216,7 +235,8 @@ function exportFullModel() {
     const output = buildExportPayload();
     document.getElementById("output-json").textContent = JSON.stringify(output, null, 2);
     setValidationStatus("Ready to validate or open in Studio.");
-    renderExamplePrompt();
+    if (activePreviewTab === "prompt") renderExamplePrompt();
+    if (activePreviewTab === "flow") renderFlowView();
     return output;
   } catch (err) {
     document.getElementById("output-json").textContent = `ERROR: ${err.message}`;
@@ -234,37 +254,102 @@ function switchPreviewTab(tab) {
   activePreviewTab = tab;
   const jsonPanel = document.getElementById("preview-json-panel");
   const promptPanel = document.getElementById("preview-prompt-panel");
+  const flowPanel = document.getElementById("preview-flow-panel");
   const jsonTab = document.getElementById("preview-tab-json");
   const promptTab = document.getElementById("preview-tab-prompt");
+  const flowTab = document.getElementById("preview-tab-flow");
   const copyBtn = document.getElementById("preview-action-copy");
   const validateBtn = document.getElementById("preview-action-validate");
-  if (!jsonPanel || !promptPanel) return;
-  const onJson = tab === "json";
-  jsonPanel.hidden = !onJson;
-  promptPanel.hidden = onJson;
-  jsonTab.classList.toggle("active", onJson);
-  promptTab.classList.toggle("active", !onJson);
-  if (copyBtn) copyBtn.hidden = !onJson;
-  if (validateBtn) validateBtn.hidden = !onJson;
-  if (!onJson) renderExamplePrompt();
+  if (!jsonPanel || !promptPanel || !flowPanel) return;
+  jsonPanel.hidden = tab !== "json";
+  promptPanel.hidden = tab !== "prompt";
+  flowPanel.hidden = tab !== "flow";
+  if (jsonTab) jsonTab.classList.toggle("active", tab === "json");
+  if (promptTab) promptTab.classList.toggle("active", tab === "prompt");
+  if (flowTab) flowTab.classList.toggle("active", tab === "flow");
+  if (copyBtn) copyBtn.hidden = tab !== "json";
+  if (validateBtn) validateBtn.hidden = tab !== "json";
+  if (tab === "prompt") renderExamplePrompt();
+  if (tab === "flow") renderFlowView();
+}
+
+function renderFlowView() {
+  const container = document.getElementById("preview-flow-list");
+  if (!container) return;
+
+  if (!registryState.assembly_order.length) {
+    container.innerHTML = `<div class="flow-empty">No assembly order defined yet — add tokens in the Finalize tab.</div>`;
+    return;
+  }
+
+  const blocks = registryState.assembly_order.map((token) => {
+    const text = resolvePreviewToken(token).trim();
+    const isEmpty = !text;
+    return (
+      `<div class="flow-block${isEmpty ? " flow-block--empty" : ""}">` +
+      `<div class="flow-block-token">${escapeHtml(token)}</div>` +
+      (isEmpty
+        ? `<div class="flow-block-body flow-block-body--empty">(empty)</div>`
+        : `<div class="flow-block-body">${escapeHtml(text)}</div>`) +
+      `</div>`
+    );
+  });
+
+  container.innerHTML = blocks.join("");
 }
 
 function resolvePreviewToken(token) {
-  const ALIAS = { persona: "personas", injections: "static_injections" };
+  const ALIAS = {};
 
-  // sentiment.scale — synthetic token using scale_template + scale_emotion
+  // groups[id] — look up directly in groups section
+  const bracketMatch = token.match(/^groups\[([^\]]+)\]$/);
+  if (bracketMatch) {
+    const gid = bracketMatch[1];
+    const group = (registryState.sections.groups?.items || []).find((it) => (it.id || it.name) === gid);
+    if (!group) return `[${token}]`;
+    const header = group.pre_context ? group.pre_context + "\n" : "";
+    return Array.isArray(group.items) && group.items.length
+      ? header + group.items.map((x) => `- ${x}`).join("\n")
+      : "";
+  }
+
+  // injections — runtime injection items (preview shows all items' text)
+  if (token === "injections" || token === "runtime_injections") {
+    const items = registryState.sections.runtime_injections?.items || [];
+    return items.map((it) => it.text || "").filter(Boolean).join("\n\n") || "[runtime injections]";
+  }
+
+  // sentiment.scale — per-item scale object
   if (token === "sentiment.scale") {
     const sec = registryState.sections.sentiment;
     const idx = previewSelections["sentiment"] ?? 0;
     const item = sec?.items[idx];
-    const template = sec?.extras?.scale_template ||
-      "On a scale of 1-10, intensity is {value} on {emotion}.";
-    const emotion = item?.scale_emotion || item?.id || "feeling";
-    return template.replace("{value}", "5").replace("{emotion}", emotion);
+    const scale = item?.scale || {};
+    const desc = Array.isArray(scale.scale_descriptor)
+      ? (scale.scale_descriptor[0] || item?.id || "feeling")
+      : (scale.scale_descriptor || item?.id || "feeling");
+    const tmpl = scale.template || "{value}/10 — {scale_descriptor}.";
+    return tmpl.replace("{value}", String(scale.default_value ?? 5)).replace("{scale_descriptor}", desc);
   }
 
-  // bracket expression — skip, too dynamic for a static preview
-  if (/\[[^\]]+\]/.test(token)) return `[${token}]`;
+  // personas.groups / sentiment.groups — render group items for selected item
+  if (token === "personas.groups" || token === "sentiment.groups") {
+    const secKey = token.split(".")[0];
+    const sec = registryState.sections[secKey];
+    const idx = previewSelections[secKey] ?? 0;
+    const item = sec?.items[idx];
+    if (!item || !Array.isArray(item.groups) || !item.groups.length) return "";
+    return item.groups.map((gOrId) => {
+      const group = typeof gOrId === "string"
+        ? { id: gOrId, pre_context: "", items: [] }
+        : gOrId;
+      if (!group) return "";
+      const header = group.pre_context ? group.pre_context + "\n" : "";
+      return Array.isArray(group.items) && group.items.length
+        ? header + group.items.map((x) => `- ${x}`).join("\n")
+        : "";
+    }).filter(Boolean).join("\n\n");
+  }
 
   const parts = token.split(".");
   const rawSec = parts[0];
@@ -277,7 +362,6 @@ function resolvePreviewToken(token) {
   if (!item) return "";
 
   if (parts.length === 1) {
-    // Bare section token — render primary text field
     if (Array.isArray(item.items) && item.items.length) {
       return item.items.map((x) => `- ${x}`).join("\n");
     }
@@ -286,17 +370,21 @@ function resolvePreviewToken(token) {
 
   const sub = parts.slice(1).join(".");
 
-  // Named pool lookup (e.g. examples.normal_examples)
-  const poolItem = sec.items.find((it) => (it.name || it.id) === sub);
-  if (poolItem) {
-    if (Array.isArray(poolItem.items) && poolItem.items.length) {
-      const header = poolItem.pre_context ? poolItem.pre_context + "\n" : "";
-      return header + poolItem.items.map((x) => `- ${x}`).join("\n");
+  // Named item lookup (e.g. prompt_endings.endings, base_context.stream_context)
+  const namedItem = sec.items.find((it) => (it.id || it.name) === sub);
+  const resolveItem = namedItem || (secKey === "prompt_endings" ? sec.items[0] : null);
+  if (resolveItem) {
+    const hasSubItems = Array.isArray(resolveItem.items) && resolveItem.items.length;
+    const itemText = typeof resolveItem.text === "string" && resolveItem.text.trim() ? resolveItem.text : "";
+    if (hasSubItems) {
+      const header = resolveItem.pre_context ? resolveItem.pre_context + "\n" : "";
+      const labelPart = header + resolveItem.items[0];
+      return itemText ? itemText + "\n\n" + labelPart : labelPart;
     }
-    return poolItem.text || poolItem.context || "";
+    return itemText || resolveItem.context || "";
   }
 
-  // Field on selected item (e.g. persona.base_directives, sentiment.nudges)
+  // Field on selected item (e.g. personas.context, sentiment.context)
   const val = item[sub];
   if (Array.isArray(val)) return val.map((x) => `- ${x}`).join("\n");
   if (typeof val === "string") return val;
@@ -311,7 +399,7 @@ function renderExamplePrompt() {
   // Build per-section dropdowns for sections that have multiple items
   // and are referenced in the current assembly order.
   const referencedSecs = new Set();
-  const ALIAS = { persona: "personas", injections: "static_injections" };
+  const ALIAS = { persona: "personas", injections: "runtime_injections" };
   for (const token of registryState.assembly_order) {
     const rawSec = token.split(".")[0].replace(/\[.*/, "");
     referencedSecs.add(ALIAS[rawSec] || rawSec);
@@ -386,10 +474,17 @@ function removeAssemblyToken(index) {
   exportFullModel();
 }
 
+function isPromptEndingsToken(token) {
+  return token === "prompt_endings" || token.startsWith("prompt_endings.");
+}
+
 function moveAssemblyToken(index, delta) {
   const next = index + delta;
   if (next < 0 || next >= registryState.assembly_order.length) return;
   const arr = registryState.assembly_order;
+  // prompt_endings tokens must stay after all non-prompt_endings tokens
+  if (delta < 0 && isPromptEndingsToken(arr[index]) && !isPromptEndingsToken(arr[next])) return;
+  if (delta > 0 && !isPromptEndingsToken(arr[index]) && isPromptEndingsToken(arr[next])) return;
   [arr[index], arr[next]] = [arr[next], arr[index]];
   renderAssemblyOrderEditor();
   exportFullModel();
@@ -398,19 +493,18 @@ function moveAssemblyToken(index, delta) {
 function dynamicAssemblyVariants() {
   const namedItems = (secKey, alias = secKey, prefix = SECTION_LABELS[secKey]) =>
     (registryState.sections[secKey]?.items || [])
-      .map((item) => item.name || item.id)
+      .map((item) => item.id || item.name)
       .filter(Boolean)
-      .map((name) => ({
-        token: `${alias}.${name}`,
-        label: `${prefix}: ${name}`,
+      .map((id) => ({
+        token: `${alias}.${id}`,
+        label: `${prefix}: ${id}`,
       }));
 
   return {
     base_context: namedItems("base_context", "base_context", "Base Context"),
-    examples: namedItems("examples", "examples", "Examples"),
-    prompt_endings: namedItems("prompt_endings", "prompt_endings", "Prompt Ending"),
-    injections: namedItems("static_injections", "injections", "Static Injection"),
     output_prompt_directions: namedItems("output_prompt_directions", "output_prompt_directions", "Output Direction"),
+    prompt_endings: namedItems("prompt_endings", "prompt_endings", "Prompt Ending"),
+    injections: namedItems("static_injections", "static_injections", "Static Injection"),
   };
 }
 
@@ -418,52 +512,66 @@ function describeAssemblyToken(token) {
   if (token === "base_context" || token === "base_context.text") {
     return { title: "Base Context", detail: "Adds the scene or task framing." };
   }
+  if (token.startsWith("base_context.")) {
+    return { title: `Base Context: ${token.split(".").slice(1).join(".")}`, detail: "Adds one named base context item." };
+  }
   if (token === "output_prompt_directions") {
-    return { title: "Output Directions", detail: "Adds all output rules for how the model should answer." };
+    return { title: "Output Directions", detail: "Adds all output direction items." };
   }
   if (token.startsWith("output_prompt_directions.")) {
-    return { title: `Output Direction: ${token.split(".").slice(1).join(".")}`, detail: "Adds one named output-direction block." };
+    return { title: `Output Direction: ${token.split(".").slice(1).join(".")}`, detail: "Adds one named output-direction item." };
   }
-  if (token === "persona.context" || token === "persona.text") {
-    return { title: "Persona Context", detail: "Adds the chosen persona's voice or identity." };
+  if (token === "personas.context") {
+    return { title: "Personas — context", detail: "Adds the chosen persona's context text." };
   }
-  if (token === "persona.base_directives") {
-    return { title: "Persona Directives", detail: "Adds the persona's explicit instruction bullets." };
+  if (token === "personas.groups") {
+    return { title: "Personas — groups", detail: "Adds directive/example groups attached to the chosen persona." };
   }
   if (token === "sentiment.context") {
-    return { title: "Sentiment Context", detail: "Adds high-level tone framing." };
+    return { title: "Sentiment — context", detail: "Adds the chosen sentiment's context text." };
   }
-  if (token === "sentiment.nudges") {
-    return { title: "Sentiment Nudges", detail: "Adds short nudges that shape the tone." };
-  }
-  if (token === "sentiment.examples") {
-    return { title: "Sentiment Examples", detail: "Adds examples associated with the sentiment." };
+  if (token === "sentiment.groups") {
+    return { title: "Sentiment — groups", detail: "Adds nudge/example groups attached to the chosen sentiment." };
   }
   if (token === "sentiment.scale") {
-    return { title: "Sentiment Scale", detail: "Adds sentiment-scale guidance." };
+    return { title: "Sentiment — scale", detail: "Adds the sentiment slider value and descriptor line." };
   }
-  if (token === "injections") {
+  if (token.startsWith("groups[")) {
+    const id = token.slice(7, -1);
+    return { title: `Group: ${id}`, detail: `Adds the "${id}" group's items directly (ignores persona/sentiment selection).` };
+  }
+  if (token === "static_injections") {
     return { title: "Static Injections", detail: "Adds all selected static injection content." };
   }
-  if (token.startsWith("injections.")) {
-    return { title: `Static Injection: ${token.slice("injections.".length)}`, detail: "Adds one named static injection entry." };
+  if (token.startsWith("static_injections.")) {
+    return { title: `Static Injection: ${token.slice("static_injections.".length)}`, detail: "Adds one named static injection entry." };
   }
-  if (token === "runtime_injections") {
-    return { title: "Runtime Injections", detail: "Runs the special runtime injection layer." };
+  if (token === "injections" || token === "runtime_injections") {
+    return { title: "Runtime Injections", detail: "Adds active runtime injection content." };
   }
-  if (token === "prompt_endings") {
-    return { title: "Prompt Endings", detail: "Adds all prompt-ending entries." };
+  if (token === "memory_recall.text" || token === "memory_recall") {
+    return { title: "Memory Recall", detail: "Inserts retrieved memory context." };
   }
-  if (token.startsWith("prompt_endings.")) {
-    return { title: `Prompt Ending: ${token.slice("prompt_endings.".length)}`, detail: "Adds one named ending pool." };
+  if (token === "user_message.text" || token === "user_message") {
+    return { title: "User Message", detail: "Inserts the user's message, optionally prefixed with their name." };
   }
-  if (token.startsWith("examples[")) {
-    return { title: "Dynamic Examples Pool", detail: "Resolves an examples pool from a runtime variable." };
+  if (token === "prompt_endings" || token.startsWith("prompt_endings.")) {
+    const name = token.startsWith("prompt_endings.") ? token.slice("prompt_endings.".length) : null;
+    const item = name
+      ? (registryState.sections.prompt_endings?.items || []).find((it) => (it.id || it.name) === name)
+      : (registryState.sections.prompt_endings?.items || [])[0];
+    const hasText = item && typeof item.text === "string" && item.text.trim();
+    const hasLabel = item && Array.isArray(item.items) && item.items.length;
+    const detail = hasText && hasLabel
+      ? `Preamble text + "${item.items[0]}"`
+      : hasLabel
+        ? `Ending label: "${item.items[0]}"`
+        : hasText
+          ? "Preamble text only (no ending label yet)"
+          : "Prompt Endings — add items in the Sections tab.";
+    return { title: "Prompt Endings", detail };
   }
-  if (token.startsWith("examples.")) {
-    return { title: `Examples: ${token.slice("examples.".length)}`, detail: "Adds one named examples pool." };
-  }
-  return { title: "Custom Token", detail: "Advanced token preserved exactly as typed." };
+  return { title: "Custom Token", detail: "Advanced token — preserved exactly as typed." };
 }
 
 function assemblyGroups() {
@@ -473,23 +581,23 @@ function assemblyGroups() {
     {
       title: "Common Tokens",
       items: [
-        { token: "base_context", label: "Base Context (all)" },
-        { token: "base_context.text", label: "Base Context — text only" },
         { token: "output_prompt_directions", label: "Output Directions" },
-        { token: "persona.context", label: "Persona — context" },
-        { token: "persona.base_directives", label: "Persona — base directives" },
+        { token: "base_context.text", label: "Base Context — text" },
+        { token: "personas.context", label: "Personas — context" },
+        { token: "personas.groups", label: "Personas — groups" },
         { token: "sentiment.context", label: "Sentiment — context" },
-        { token: "sentiment.nudges", label: "Sentiment — nudges" },
-        { token: "injections", label: "Static Injections" },
-        { token: "runtime_injections", label: "Runtime Injections" },
-        { token: "prompt_endings", label: "Prompt Endings" },
+        { token: "sentiment.groups", label: "Sentiment — groups" },
+        { token: "sentiment.scale", label: "Sentiment — scale" },
+        { token: "memory_recall.text", label: "Memory Recall" },
+        { token: "static_injections", label: "Static Injections" },
+        { token: "injections", label: "Runtime Injections" },
+        { token: "prompt_endings.endings", label: "Prompt Endings" },
       ],
     },
     {
-      title: "Named Pools",
+      title: "Named Items",
       items: [
         ...dynamic.base_context,
-        ...dynamic.examples,
         ...dynamic.output_prompt_directions,
         ...dynamic.injections,
         ...dynamic.prompt_endings,
@@ -520,19 +628,25 @@ function renderAssemblyOrderEditor() {
   if (!registryState.assembly_order.length) {
     host.innerHTML = `<div class="assembly-order-empty">No steps yet. Click a token to build the prompt flow.</div>`;
   } else {
-    host.innerHTML = registryState.assembly_order
+    const order = registryState.assembly_order;
+    host.innerHTML = order
       .map((token, i) => {
         const meta = describeAssemblyToken(token);
+        const isEnding = isPromptEndingsToken(token);
+        const prevIsNonEnding = i > 0 && !isPromptEndingsToken(order[i - 1]);
+        const upDisabled = i === 0 || (isEnding && prevIsNonEnding) ? " disabled" : "";
+        const downDisabled = i === order.length - 1 ? " disabled" : "";
+        const endingBadge = isEnding ? `<span class="assembly-step-badge">last</span>` : "";
         return `<div class="assembly-step-card">` +
           `<div class="assembly-step-number">${i + 1}</div>` +
           `<div class="assembly-step-copy">` +
-          `<div class="assembly-step-title">${escapeHtml(meta.title)}</div>` +
+          `<div class="assembly-step-title">${escapeHtml(meta.title)}${endingBadge}</div>` +
           `<div class="assembly-step-detail">${escapeHtml(meta.detail)}</div>` +
           `<div class="assembly-step-token">${escapeHtml(token)}</div>` +
           `</div>` +
           `<span class="assembly-chip-controls">` +
-          `<button type="button" class="assembly-chip-btn" onclick="moveAssemblyToken(${i}, -1)" title="Move up">Up</button>` +
-          `<button type="button" class="assembly-chip-btn" onclick="moveAssemblyToken(${i}, 1)" title="Move down">Down</button>` +
+          `<button type="button" class="assembly-chip-btn"${upDisabled} onclick="moveAssemblyToken(${i}, -1)" title="Move up">Up</button>` +
+          `<button type="button" class="assembly-chip-btn"${downDisabled} onclick="moveAssemblyToken(${i}, 1)" title="Move down">Down</button>` +
           `<button type="button" class="assembly-chip-btn" onclick="removeAssemblyToken(${i})" title="Remove">Remove</button>` +
           `</span></div>`;
       })
@@ -587,93 +701,67 @@ function removeVar(key, varName) {
   initApp();
 }
 
+function addEntryVar(type, uiId, rawVal) {
+  const varName = (rawVal || "").trim().replace(/^\{|\}$/g, "");
+  if (!varName) return;
+  const entry = registryState.sections[type].items.find((e) => e._ui_id === uiId);
+  if (!entry) return;
+  if (!Array.isArray(entry.template_vars)) entry.template_vars = [];
+  if (!entry.template_vars.includes(varName)) {
+    entry.template_vars.push(varName);
+    renderItems(type);
+    exportFullModel();
+  }
+}
+
+function removeEntryVar(type, uiId, varName) {
+  const entry = registryState.sections[type].items.find((e) => e._ui_id === uiId);
+  if (!entry || !Array.isArray(entry.template_vars)) return;
+  entry.template_vars = entry.template_vars.filter((v) => v !== varName);
+  renderItems(type);
+  exportFullModel();
+}
+
 function updateSectionStatus(key, isRequired) {
   registryState.sections[key].required = isRequired;
   exportFullModel();
 }
 
-function updateSentimentScaleTemplate(value) {
-  if (value.trim()) {
-    registryState.sections.sentiment.extras.scale_template = value;
-  } else {
-    delete registryState.sections.sentiment.extras.scale_template;
-  }
-  exportFullModel();
-}
-
-let scaleBlockExpanded = false;
-
-function toggleScaleBlock() {
-  scaleBlockExpanded = !scaleBlockExpanded;
-  renderSentimentScaleBlock();
-}
-
-function renderSentimentScaleBlock() {
-  const host = document.getElementById("sentiment-scale-block");
-  if (!host) return;
-  const sec = registryState.sections.sentiment;
-  const items = sec.items;
-  const template = sec.extras.scale_template || "";
-
-  const emotionRows = items.length
-    ? items.map((it) => `
-        <div class="scale-emotion-row">
-          <span class="scale-emotion-label">${escapeHtml(it.id || "(unnamed)")}</span>
-          <input type="text" value="${escapeHtml(it.scale_emotion || "")}"
-            placeholder="emotion noun"
-            oninput="updateField('sentiment', ${it._ui_id}, 'scale_emotion', this.value)">
-        </div>`).join("")
-    : `<div class="scale-emotion-empty">Add sentiment items above to set per-item emotions.</div>`;
-
-  host.innerHTML = `
-    <div class="scale-block">
-      <button type="button" class="scale-block-toggle" onclick="toggleScaleBlock()">
-        <span class="scale-block-chevron ${scaleBlockExpanded ? "open" : ""}">▸</span>
-        Scale Settings
-        <span class="scale-block-hint">configures the <code>sentiment.scale</code> assembly token</span>
-      </button>
-      ${scaleBlockExpanded ? `
-      <div class="scale-block-body">
-        <div class="scale-block-field">
-          <label>Scale Template <span class="label-hint">use <code>{value}</code> and <code>{emotion}</code></span></label>
-          <input type="text" id="sentiment-scale-template"
-            value="${escapeHtml(template)}"
-            placeholder="On a scale of 1-10, intensity is {value} on {emotion}."
-            oninput="updateSentimentScaleTemplate(this.value)">
-        </div>
-        <div class="scale-block-field">
-          <label>Emotion per item <span class="label-hint">overrides the default emotion noun when that item is selected</span></label>
-          <div class="scale-emotions-list">${emotionRows}</div>
-        </div>
-      </div>` : ""}
-    </div>`;
-}
 
 function addEntry(type) {
   const entry = { _ui_id: Date.now() + Math.random() };
   if (type === "runtime_injections") {
     entry.id = "new_injection";
-    entry.required = true;
-    entry.include_sections = SECTION_KEYS.filter((k) => k !== "runtime_injections");
+    entry.required = false;
+    entry.text = "";
+    entry.template_vars = [];
   } else if (type === "personas") {
     entry.id = "";
-    entry.text = "";
-    entry.base_directives = [];
+    entry.context = "";
+    entry.groups = [];
   } else if (type === "sentiment") {
     entry.id = "";
     entry.context = "";
-    entry.nudges = [];
-    entry.examples = [];
-  } else if (
-    type === "static_injections" ||
-    type === "output_prompt_directions" ||
-    type === "base_context"
-  ) {
-    entry.name = "";
-    entry.text = "";
-  } else {
-    entry.name = "";
+    entry.scale = { scale_descriptor: "", template: "{value}/10 — {scale_descriptor}.", default_value: 5 };
+    entry.groups = [];
+  } else if (type === "groups") {
+    entry.id = "";
+    entry.pre_context = "";
     entry.items = [];
+  } else if (type === "memory_recall") {
+    entry.name = "recall";
+    entry.text = "{memory_recall}";
+  } else if (type === "user_message") {
+    entry.name = "incoming";
+    entry.text = "{user_input}";
+  } else if (type === "prompt_endings") {
+    entry.name = "endings";
+    entry.text = "";
+    entry.items = [];
+  } else {
+    // base_context, static_injections, output_prompt_directions
+    entry.id = "";
+    entry.text = "";
   }
   registryState.sections[type].items.push(entry);
   renderItems(type);
@@ -718,6 +806,115 @@ function removeListItem(type, uiId, field, index) {
   exportFullModel();
 }
 
+// ── Inline group editors (for personas / sentiment items) ────────────
+
+function renderInlineGroups(type, uiId, groups) {
+  const rows = groups.map((g, gIdx) => {
+    if (typeof g === "string") {
+      // String ID reference — show as a read-only badge with option to expand inline
+      return `<div class="inline-group-ref">
+        <span class="inline-group-ref-id">${escapeHtml(g)}</span>
+        <span class="label-hint"> (top-level reference)</span>
+        <button type="button" class="list-item-remove" onclick="removeInlineGroup('${type}',${uiId},${gIdx})" title="Remove">×</button>
+      </div>`;
+    }
+    const itemRows = (g.items || []).map((val, iIdx) =>
+      `<div class="list-item-row">
+        <input type="text" value="${escapeHtml(val)}"
+          oninput="updateInlineGroupItem('${type}',${uiId},${gIdx},${iIdx},this.value)"
+          placeholder="item ${iIdx + 1}">
+        <button type="button" class="list-item-remove"
+          onclick="removeInlineGroupItem('${type}',${uiId},${gIdx},${iIdx})" title="Remove">×</button>
+      </div>`
+    ).join("");
+    return `<details class="inline-group-card" open>
+      <summary class="inline-group-summary">
+        <span class="inline-group-id">${escapeHtml(g.id || "(unnamed)")}</span>
+        <button type="button" class="list-item-remove" style="margin-left:auto"
+          onclick="event.preventDefault();removeInlineGroup('${type}',${uiId},${gIdx})" title="Remove group">×</button>
+      </summary>
+      <div class="inline-group-body">
+        <label>ID</label>
+        <input type="text" value="${escapeHtml(g.id || "")}"
+          oninput="updateInlineGroupField('${type}',${uiId},${gIdx},'id',this.value,this)" class="mb-2">
+        <label>Pre-context <span class="label-hint">header line before the list</span></label>
+        <input type="text" value="${escapeHtml(g.pre_context || "")}"
+          placeholder="e.g. You should: or Example phrases:"
+          oninput="updateInlineGroupField('${type}',${uiId},${gIdx},'pre_context',this.value)" class="mb-2">
+        <label>Items</label>
+        <div class="list-field">
+          ${itemRows}
+          <button type="button" class="list-item-add"
+            onclick="addInlineGroupItem('${type}',${uiId},${gIdx})">+ Add Item</button>
+        </div>
+      </div>
+    </details>`;
+  }).join("");
+
+  return `<div class="inline-groups-list">${rows}</div>
+    <button type="button" class="list-item-add mt-1"
+      onclick="addInlineGroup('${type}',${uiId})">+ Add Group</button>`;
+}
+
+function _getEntry(type, uiId) {
+  return registryState.sections[type].items.find((e) => e._ui_id === uiId);
+}
+
+function addInlineGroup(type, uiId) {
+  const entry = _getEntry(type, uiId);
+  if (!entry) return;
+  if (!Array.isArray(entry.groups)) entry.groups = [];
+  entry.groups.push({ id: "", pre_context: "", items: [] });
+  renderItems(type);
+  exportFullModel();
+}
+
+function removeInlineGroup(type, uiId, gIdx) {
+  const entry = _getEntry(type, uiId);
+  if (!entry || !Array.isArray(entry.groups)) return;
+  entry.groups.splice(gIdx, 1);
+  renderItems(type);
+  exportFullModel();
+}
+
+function updateInlineGroupField(type, uiId, gIdx, field, value, el) {
+  const entry = _getEntry(type, uiId);
+  if (!entry || !entry.groups || !entry.groups[gIdx]) return;
+  entry.groups[gIdx][field] = value;
+  if (field === "id" && el) {
+    const card = el.closest(".inline-group-card");
+    if (card) {
+      const span = card.querySelector(".inline-group-id");
+      if (span) span.textContent = value || "(unnamed)";
+    }
+  }
+  exportFullModel();
+}
+
+function addInlineGroupItem(type, uiId, gIdx) {
+  const entry = _getEntry(type, uiId);
+  if (!entry || !entry.groups || !entry.groups[gIdx]) return;
+  if (!Array.isArray(entry.groups[gIdx].items)) entry.groups[gIdx].items = [];
+  entry.groups[gIdx].items.push("");
+  renderItems(type);
+  exportFullModel();
+}
+
+function removeInlineGroupItem(type, uiId, gIdx, iIdx) {
+  const entry = _getEntry(type, uiId);
+  if (!entry || !entry.groups?.[gIdx]) return;
+  entry.groups[gIdx].items.splice(iIdx, 1);
+  renderItems(type);
+  exportFullModel();
+}
+
+function updateInlineGroupItem(type, uiId, gIdx, iIdx, value) {
+  const entry = _getEntry(type, uiId);
+  if (!entry || !entry.groups?.[gIdx]) return;
+  entry.groups[gIdx].items[iIdx] = value;
+  exportFullModel();
+}
+
 function renderItems(type) {
   const container = document.getElementById(`${type}-container`);
   container.innerHTML = "";
@@ -728,90 +925,132 @@ function renderItems(type) {
     let html = "";
 
     if (type === "runtime_injections") {
+      const tvars = entry.template_vars || [];
+      const varBadges = tvars.map((v) =>
+        `<span class="var-badge" title="Click to remove" onclick="removeEntryVar('runtime_injections', ${entry._ui_id}, '${escapeHtml(v)}')">{${escapeHtml(v)}}</span>`
+      ).join(" ");
+      const varHint = tvars.length
+        ? `use ${tvars.map((v) => `<code>{${escapeHtml(v)}}</code>`).join(", ")} in the text`
+        : "add template vars above to reference them as <code>{var_name}</code>";
       html = `
-        <div class="grid grid-cols-2 gap-3 mb-4">
+        <div class="grid grid-cols-2 gap-3 mb-3">
           <div>
             <label>Injection ID</label>
-            <input type="text" value="${entry.id || ""}" oninput="updateField('${type}', ${entry._ui_id}, 'id', this.value)">
+            <input type="text" value="${escapeHtml(entry.id || "")}" oninput="updateField('${type}', ${entry._ui_id}, 'id', this.value)">
           </div>
           <div>
-            <label>Strict Requirement</label>
+            <label>Usage</label>
             <select onchange="updateField('${type}', ${entry._ui_id}, 'required', this.value === 'true')">
-              <option value="true" ${entry.required ? "selected" : ""}>True</option>
-              <option value="false" ${!entry.required ? "selected" : ""}>False</option>
+              <option value="false" ${!entry.required ? "selected" : ""}>Optional</option>
+              <option value="true" ${entry.required ? "selected" : ""}>Required</option>
             </select>
           </div>
         </div>
         <div class="mb-3">
-          <label>Memory Tag <span class="label-hint">tag that activates this injection (from Memory Rules)</span></label>
-          <input type="text" value="${escapeHtml(entry.memory_tag || "")}"
-            placeholder="e.g. past_conflict"
-            oninput="updateField('${type}', ${entry._ui_id}, 'memory_tag', this.value)">
+          <label>Template Vars <span class="label-hint">declared vars can be used as <code>{var_name}</code> in the text below</span></label>
+          <div class="entry-var-badges">${varBadges || '<span class="label-hint">none — add one below</span>'}</div>
+          <div class="entry-var-add-row">
+            <input type="text" id="entry-var-input-${entry._ui_id}" class="entry-var-input" placeholder="var_name"
+              onkeydown="if(event.key==='Enter'){addEntryVar('runtime_injections',${entry._ui_id},this.value);this.value='';event.preventDefault();}">
+            <button type="button" class="btn-add-inline"
+              onclick="addEntryVar('runtime_injections',${entry._ui_id},document.getElementById('entry-var-input-${entry._ui_id}').value);document.getElementById('entry-var-input-${entry._ui_id}').value=''">+ Var</button>
+          </div>
         </div>
         <div>
-          <label>Apply to Sections</label>
-          <div class="checkbox-grid">
-            ${SECTION_KEYS.filter((k) => k !== "runtime_injections")
-              .map(
-                (secKey) => `
-              <label class="checkbox-item">
-                <input type="checkbox" ${(entry.include_sections || []).includes(secKey) ? "checked" : ""}
-                  onchange="toggleIncludeSection(${entry._ui_id}, '${secKey}', this.checked)">
-                ${SECTION_LABELS[secKey]}
-              </label>`
-              )
-              .join("")}
-          </div>
+          <label>Text <span class="label-hint">${varHint}</span></label>
+          <textarea oninput="updateField('${type}', ${entry._ui_id}, 'text', this.value)">${escapeHtml(entry.text || "")}</textarea>
         </div>
       `;
     } else if (type === "personas") {
       html = `
         <label>ID</label>
-        <input type="text" value="${entry.id || ""}" oninput="updateField('${type}', ${entry._ui_id}, 'id', this.value)" class="mb-2">
+        <input type="text" value="${escapeHtml(entry.id || "")}" oninput="updateField('${type}', ${entry._ui_id}, 'id', this.value)" class="mb-2">
         <label>Context</label>
-        <textarea oninput="updateField('${type}', ${entry._ui_id}, 'text', this.value)">${entry.text || ""}</textarea>
-        <label class="mt-2">Base Directives</label>
-        ${renderListField(type, entry._ui_id, 'base_directives', entry.base_directives)}
+        <textarea oninput="updateField('${type}', ${entry._ui_id}, 'context', this.value)">${escapeHtml(entry.context || "")}</textarea>
+        <label class="mt-2">Groups</label>
+        ${renderInlineGroups(type, entry._ui_id, entry.groups || [])}
       `;
     } else if (type === "sentiment") {
+      const scale = entry.scale || {};
+      const descRaw = scale.scale_descriptor;
+      const descVal = Array.isArray(descRaw) ? descRaw.join("\n") : (descRaw || "");
       html = `
         <label>ID</label>
-        <input type="text" value="${entry.id || ""}" oninput="updateField('${type}', ${entry._ui_id}, 'id', this.value)" class="mb-2">
+        <input type="text" value="${escapeHtml(entry.id || "")}" oninput="updateField('${type}', ${entry._ui_id}, 'id', this.value)" class="mb-2">
         <label>Context</label>
-        <input type="text" value="${entry.context || ""}" oninput="updateField('${type}', ${entry._ui_id}, 'context', this.value)" class="mb-2">
-        <div class="grid grid-cols-2 gap-3 mt-2">
-          <div>
-            <label>Nudges</label>
-            ${renderListField(type, entry._ui_id, 'nudges', entry.nudges)}
+        <textarea oninput="updateField('${type}', ${entry._ui_id}, 'context', this.value)">${escapeHtml(entry.context || "")}</textarea>
+        <label class="mt-2">Groups</label>
+        ${renderInlineGroups(type, entry._ui_id, entry.groups || [])}
+        <details class="mt-2">
+          <summary class="label" style="cursor:pointer">Scale settings</summary>
+          <div class="mt-2">
+            <label>Scale Descriptor <span class="label-hint">string or multiple lines → becomes a random-pick array</span></label>
+            <textarea rows="3" oninput="updateScaleField('${type}', ${entry._ui_id}, 'scale_descriptor', this.value)">${escapeHtml(descVal)}</textarea>
+            <label class="mt-2">Template <span class="label-hint">use <code>{value}</code> and <code>{scale_descriptor}</code></span></label>
+            <input type="text" value="${escapeHtml(scale.template || "")}"
+              placeholder="{value}/10 — {scale_descriptor}."
+              oninput="updateScaleField('${type}', ${entry._ui_id}, 'template', this.value)">
+            <div class="grid grid-cols-3 gap-3 mt-2">
+              <div>
+                <label>Default</label>
+                <input type="number" step="0.5" value="${scale.default_value ?? 5}"
+                  oninput="updateScaleField('${type}', ${entry._ui_id}, 'default_value', +this.value)">
+              </div>
+              <div>
+                <label>Min</label>
+                <input type="number" step="0.5" value="${scale.min_value ?? 1}"
+                  oninput="updateScaleField('${type}', ${entry._ui_id}, 'min_value', +this.value)">
+              </div>
+              <div>
+                <label>Max</label>
+                <input type="number" step="0.5" value="${scale.max_value ?? 10}"
+                  oninput="updateScaleField('${type}', ${entry._ui_id}, 'max_value', +this.value)">
+              </div>
+            </div>
           </div>
-          <div>
-            <label>Examples</label>
-            ${renderListField(type, entry._ui_id, 'examples', entry.examples)}
-          </div>
-        </div>
+        </details>
       `;
-    } else if (type === "examples" || type === "prompt_endings") {
+    } else if (type === "groups") {
       html = `
-        <label>Name</label>
-        <input type="text" value="${entry.name || ""}" oninput="updateField('${type}', ${entry._ui_id}, 'name', this.value)" class="mb-2">
+        <label>ID</label>
+        <input type="text" value="${escapeHtml(entry.id || "")}" oninput="updateField('${type}', ${entry._ui_id}, 'id', this.value)" class="mb-2">
+        <label>Pre-context <span class="label-hint">header line printed before the list (e.g. "You should:" or "Example phrases:")</span></label>
+        <input type="text" value="${escapeHtml(entry.pre_context || "")}"
+          oninput="updateField('${type}', ${entry._ui_id}, 'pre_context', this.value)" class="mb-2">
         <label>Items</label>
         ${renderListField(type, entry._ui_id, 'items', entry.items)}
       `;
-    } else {
-      const memTagRow = (type === "static_injections")
-        ? `<label class="mt-2">Memory Tag <span class="label-hint">tag that activates this injection (from Memory Rules)</span></label>
-           <input type="text" value="${escapeHtml(entry.memory_tag || "")}"
-             placeholder="e.g. past_conflict"
-             oninput="updateField('${type}', ${entry._ui_id}, 'memory_tag', this.value)" class="mb-2">`
-        : "";
+    } else if (type === "prompt_endings") {
+      html = `
+        <label>Name <span class="label-hint">used as the assembly token suffix — e.g. "endings" → <code>prompt_endings.endings</code></span></label>
+        <input type="text" value="${escapeHtml(entry.name || entry.id || "")}" oninput="updateField('${type}', ${entry._ui_id}, 'name', this.value)" class="mb-2">
+        <label>Preamble text <span class="label-hint">rendered before the ending label — supports template vars declared on this section</span></label>
+        <textarea oninput="updateField('${type}', ${entry._ui_id}, 'text', this.value)" class="mb-2">${escapeHtml(entry.text || "")}</textarea>
+        <label>Ending labels <span class="label-hint">one label per line — one is picked randomly at runtime (e.g. "Support reply:")</span></label>
+        ${renderListField(type, entry._ui_id, 'items', entry.items)}
+      `;
+    } else if (type === "memory_recall") {
       html = `
         <label>Name/ID</label>
-        <input type="text" value="${entry.name || entry.id || ""}" oninput="updateField('${type}', ${entry._ui_id}, 'name', this.value)" class="mb-2">
+        <input type="text" value="${escapeHtml(entry.name || entry.id || "")}" oninput="updateField('${type}', ${entry._ui_id}, 'name', this.value)" class="mb-2">
+        <label>Text <span class="label-hint">use <code>{memory_recall}</code> as the placeholder</span></label>
+        <textarea oninput="updateField('${type}', ${entry._ui_id}, 'text', this.value)">${escapeHtml(entry.text || "")}</textarea>
+      `;
+    } else if (type === "user_message") {
+      html = `
+        <label>Name/ID</label>
+        <input type="text" value="${escapeHtml(entry.name || entry.id || "")}" oninput="updateField('${type}', ${entry._ui_id}, 'name', this.value)" class="mb-2">
+        <label>Text <span class="label-hint">use <code>{user_input}</code> for the message; add <code>{other_name}</code> or other vars as needed</span></label>
+        <textarea oninput="updateField('${type}', ${entry._ui_id}, 'text', this.value)">${escapeHtml(entry.text || "")}</textarea>
+      `;
+    } else {
+      const memTagRow = "";
+      html = `
+        <label>ID</label>
+        <input type="text" value="${escapeHtml(entry.id || entry.name || "")}" oninput="updateField('${type}', ${entry._ui_id}, 'id', this.value)" class="mb-2">
         <label>Text</label>
-        <textarea oninput="updateField('${type}', ${entry._ui_id}, 'text', this.value)">${entry.text || ""}</textarea>
+        <textarea oninput="updateField('${type}', ${entry._ui_id}, 'text', this.value)">${escapeHtml(entry.text || "")}</textarea>
         ${memTagRow}
-        <label class="mt-2">Pool Items <span class="label-hint">optional — if set, assembly token <code>${type}.name</code> renders this list instead of text</span></label>
-        ${renderListField(type, entry._ui_id, 'items', entry.items)}
       `;
     }
 
@@ -819,33 +1058,32 @@ function renderItems(type) {
     container.appendChild(card);
   });
 
-  if (type === "sentiment") renderSentimentScaleBlock();
 }
 
-function toggleIncludeSection(uiId, secKey, isChecked) {
-  const entry = registryState.sections.runtime_injections.items.find((e) => e._ui_id === uiId);
-  if (!entry) return;
-  entry.include_sections = entry.include_sections || [];
-  if (isChecked) {
-    if (!entry.include_sections.includes(secKey)) entry.include_sections.push(secKey);
-  } else {
-    entry.include_sections = entry.include_sections.filter((k) => k !== secKey);
-  }
-  exportFullModel();
-}
 
 function updateField(type, uiId, field, value) {
   const entry = registryState.sections[type].items.find((e) => e._ui_id === uiId);
   if (!entry) return;
-  if (["base_directives", "nudges", "items", "examples"].includes(field)) {
-    entry[field] = String(value)
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  if (field === "groups" || field === "items") {
+    // groups and items are always arrays — split on newlines
+    entry[field] = String(value).split("\n").map((s) => s.trim()).filter(Boolean);
   } else {
     entry[field] = value;
   }
-  if (field === "name" || field === "id") renderAssemblyOrderEditor();
+  if (field === "id") renderAssemblyOrderEditor();
+  exportFullModel();
+}
+
+function updateScaleField(type, uiId, field, value) {
+  const entry = registryState.sections[type].items.find((e) => e._ui_id === uiId);
+  if (!entry) return;
+  if (!entry.scale) entry.scale = {};
+  if (field === "scale_descriptor") {
+    const lines = String(value).split("\n").map((s) => s.trim()).filter(Boolean);
+    entry.scale.scale_descriptor = lines.length > 1 ? lines : (lines[0] || "");
+  } else {
+    entry.scale[field] = value;
+  }
   exportFullModel();
 }
 
@@ -902,21 +1140,42 @@ function applyRegistryJson(json) {
     "memory_config",
     ...SECTION_KEYS,
   ]);
+  // default_state and any other unrecognised top-level keys round-trip via extraTopLevel
   for (const [k, v] of Object.entries(reg)) {
     if (!knownTopLevel.has(k)) next.extraTopLevel[k] = v;
   }
 
+  // Build a lookup from any top-level groups section so string ID refs can be inlined.
+  const topLevelGroupIndex = {};
+  for (const g of (reg.groups?.items || [])) {
+    const id = g.id || g.name;
+    if (id) topLevelGroupIndex[id] = g;
+  }
+
+  function inlineGroupRefs(groups) {
+    if (!Array.isArray(groups)) return [];
+    return groups.map((g) => {
+      if (typeof g !== "string") return g;
+      const found = topLevelGroupIndex[g];
+      return found
+        ? { id: found.id || found.name || g, pre_context: found.pre_context || "", items: [...(found.items || [])] }
+        : { id: g, pre_context: "", items: [] };
+    });
+  }
+
   SECTION_KEYS.forEach((key) => {
     const importedSection = reg[key] || {};
-    const { required, template_vars, items, ...extras } = importedSection;
+    const { required, template_vars, template_var_defaults, items, ...extras } = importedSection;
     next.sections[key] = {
       required: required !== undefined ? required : next.sections[key].required,
       template_vars: Array.isArray(template_vars) ? [...template_vars] : [],
       extras,
       items: (items || []).map((item) => {
         const entry = { ...item, _ui_id: Date.now() + Math.random() };
-        if (key === "personas" && entry.context) entry.text = entry.context;
-        if (key === "runtime_injections" && !entry.include_sections) entry.include_sections = [];
+        if (key === "runtime_injections" && !Array.isArray(entry.template_vars)) entry.template_vars = [];
+        if ((key === "personas" || key === "sentiment") && Array.isArray(entry.groups)) {
+          entry.groups = inlineGroupRefs(entry.groups);
+        }
         return entry;
       }),
     };
@@ -968,7 +1227,17 @@ function importModel() {
   }
 }
 
+function checkMemoryConfigErrors() {
+  const rules = registryState.memory_rules;
+  if (!Array.isArray(rules) || rules.length === 0) return null;
+  const cfg = { ...( registryState.memory_config || {}), ...readMemoryConfig() };
+  if (!cfg.embed_model) return "embed_model is required in memory_config when memory rules are defined.";
+  return null;
+}
+
 async function validateRegistry() {
+  const memErr = checkMemoryConfigErrors();
+  if (memErr) { setValidationStatus(`Validation failed: ${memErr}`, false); return; }
   const payload = exportFullModel();
   if (!payload) return;
   try {
@@ -1000,6 +1269,8 @@ function consumeStudioHandoff() {
 }
 
 function openInStudio() {
+  const memErr = checkMemoryConfigErrors();
+  if (memErr) { alert(`Cannot open in Studio: ${memErr}`); return; }
   const payload = exportFullModel();
   if (!payload) return;
   try {
@@ -1034,6 +1305,8 @@ function initApp() {
   list.innerHTML = "";
 
   SECTION_KEYS.forEach((key) => {
+    // user_message is now handled by prompt_endings — hide from the sections list
+    if (key === "user_message") return;
     const config = registryState.sections[key];
     const section = document.createElement("div");
     section.className = "glass rounded-xl overflow-hidden border border-white/10 collapsed";
@@ -1078,7 +1351,6 @@ function initApp() {
             </div>
           </div>
         </div>
-        ${key === "sentiment" ? `<div id="sentiment-scale-block"></div>` : ""}
         <div id="${key}-container" class="p-4"></div>
         <div class="p-4 pt-0">
           <button onclick="addEntry('${key}')" class="btn-add">+ Add ${SECTION_LABELS[key]} Entry</button>
@@ -1098,43 +1370,48 @@ function initApp() {
 const SECTION_INFO = {
   base_context: {
     title: "Base Context",
-    body: "The foundational framing for the prompt — describes the task, scene, or system role. Usually a single item. Template variables like {product} let the runtime slot in specific values. Every prompt needs at least one base context item.",
-    fields: ["text — the main framing paragraph", "template_vars — variable names available in the text"],
+    body: "The foundational framing for the prompt — describes the task, scene, or system role. Template variables like {location} let the runtime slot in specific values. Supports optional fragments: conditional text blocks that only render when a template variable is non-empty.",
+    fields: ["id — identifier", "text — the main framing text", "fragments — optional conditional text blocks (each has id, condition, text)"],
   },
   personas: {
     title: "Personas",
-    body: "Named character or role configurations. The Studio lets users select one persona at runtime. Use personas when the same prompt needs to behave differently depending on who is 'speaking' — a friendly agent vs. a terse expert, for example.",
-    fields: ["name — identifier used for selection", "context — who this persona is", "base_directives — specific rules for this persona"],
+    body: "Named character or role configurations. Studio selects one at runtime. Each persona references one or more groups from the Groups section — these provide the behavioural directives specific to that persona.",
+    fields: ["id — identifier used for selection", "context — who this persona is", "groups — list of group IDs from the Groups section"],
   },
   sentiment: {
     title: "Sentiment Contexts",
-    body: "Tone or mood overlays applied on top of the selected persona. Good for adjusting formality, energy, or style without changing the core persona. Optional section — leave it empty if tone is always fixed.",
-    fields: ["name — identifier", "context — tone description", "nudges — short phrasing cues the model should follow"],
+    body: "Tone or mood overlays. Each sentiment item has a context description, optional groups (nudges/examples), and a scale object that renders the slider value into a descriptive line in the prompt.",
+    fields: ["id — identifier", "context — tone framing", "groups — group IDs for nudges/examples", "scale — {scale_descriptor, template, default_value, min_value, max_value}"],
   },
   static_injections: {
     title: "Static Injections",
-    body: "Fixed text blocks inserted at a specific point in the assembled prompt. Useful for boilerplate rules, safety disclaimers, or any content that never changes at runtime. Unlike base context, injections are designed to be composable — you can include many.",
-    fields: ["id — identifier", "text — the injected content", "required — whether Studio must include it"],
+    body: "Fixed text blocks inserted in assembly order. Useful for boilerplate rules or safety content. Each injection is optional — include it in the assembly order to activate it, leave it out to skip it.",
+    fields: ["id — identifier", "text — the injected content"],
   },
   runtime_injections: {
     title: "Runtime Injections",
-    body: "Dynamic text blocks that are conditionally included depending on which other sections are active. Use them for context that only makes sense when a certain persona or sentiment is selected (e.g. extra instructions that apply only to a 'formal' sentiment).",
-    fields: ["id — identifier", "text — the injected content", "include_sections — sections that trigger this injection"],
+    body: "Named text blocks placed in the assembly order via the Finalize tab. Each injection can declare its own template vars — use {var_name} in the text and the runtime will substitute values at generation time.",
+    fields: ["id — identifier used in the assembly order", "required — whether the injection must fire", "text — the injected content (use {var_name} for template vars)", "template_vars — vars declared for use in this injection's text"],
   },
   output_prompt_directions: {
     title: "Output Directions",
-    body: "Formatting and structure rules for the model's response — JSON schema, bullet style, length constraints, language requirements. Rendered at the top of the assembly order by default so the model sees constraints early.",
-    fields: ["name — identifier", "text — the directions text"],
+    body: "Formatting and behaviour rules for the model's response. Rendered early in the prompt so the model sees them before the context. Multiple named items let you swap direction sets per scenario.",
+    fields: ["id — identifier", "text — the directions text"],
   },
-  examples: {
-    title: "Examples",
-    body: "Pools of few-shot examples the model can learn from. Items belong to named pools (e.g. 'normal_examples', 'edge_cases'). The assembly order token picks which pool to render. Supports random selection so the model sees varied examples across requests.",
-    fields: ["name — pool the example belongs to", "items — list of example strings"],
+  memory_recall: {
+    title: "Memory Recall",
+    body: "Placeholder section for injecting retrieved memory context at runtime. Typically a single item whose text is just '{memory_recall}'. The memory engine fills this template var before hydration.",
+    fields: ["name — identifier (usually 'recall')", "text — usually just {memory_recall}"],
   },
   prompt_endings: {
     title: "Prompt Endings",
-    body: "Closing lines appended after all other content — a final instruction, a cue like 'Answer:', or a sign-off. Keeps the prompt's last line consistent regardless of which persona or sentiment was chosen.",
-    fields: ["name — identifier", "items — one or more closing lines"],
+    body: "Closing cue lines appended after all other content — e.g. 'Your message:' or 'Answer:'. One item is picked randomly per request. Keeps the prompt's final line consistent.",
+    fields: ["id — identifier for the pool", "items — list of ending strings to choose from"],
+  },
+  groups: {
+    title: "Groups",
+    body: "Reusable lists of strings referenced by personas and sentiment items via their 'groups' field. Keeps directives and examples decoupled from the items that use them. Each group can have an optional pre_context heading.",
+    fields: ["id — identifier (e.g. 'broadcasting_directives', 'positive_examples')", "pre_context — optional header line printed before the list", "items — list of strings"],
   },
 };
 
@@ -1153,6 +1430,54 @@ function openSectionInfo(key) {
 function closeSectionInfo() {
   const modal = document.getElementById("section-info-modal");
   if (modal) modal.hidden = true;
+}
+
+function getEmbedHelpHTML() { return `
+<p>The embedding layer converts conversation text into vectors for semantic memory search. When a new message arrives, it's embedded and compared against stored conversation history to surface the most relevant past context — this becomes the <code>{memory_recall}</code> variable in your prompt.</p>
+<h4>Do I need a separate embed URL?</h4>
+<p>No. If unchecked, embedding runs against the same server as your classifier (<code>classifier_url</code>). Ollama serves both chat and embedding models on the same port, so one server is usually sufficient.</p>
+<p>Enable this only if you want a dedicated embedding server — e.g. a different machine, a specialized service, or a separate Ollama instance.</p>
+<h4>Getting an embedding model (Ollama)</h4>
+<pre style="background:#1a1610;padding:8px 12px;border-radius:6px;font-size:12px;margin:8px 0">ollama pull nomic-embed-text</pre>
+<p>Then run <code>ollama serve</code>. Default Ollama port is <strong>11434</strong>.</p>
+<h4>Common embedding models</h4>
+<ul>
+  <li><code>nomic-embed-text</code> — fast, good general-purpose embeddings</li>
+  <li><code>mxbai-embed-large</code> — higher quality, larger model</li>
+  <li><code>all-minilm</code> — very small and quick</li>
+</ul>
+<h4>CORS</h4>
+<p>Your Ollama / llama.cpp server needs to allow the Studio origin. Without it the browser's CORS check silently blocks the request and you'll see a "Can't reach server" failure that isn't actually a network problem.</p>
+<div class="cors-tab-bar">
+  <button type="button" id="cors-btn-win" class="cors-tab-btn cors-tab-active" onclick="switchCorsTab('win')">Windows (PowerShell)</button>
+  <button type="button" id="cors-btn-nix" class="cors-tab-btn" onclick="switchCorsTab('nix')">Linux / macOS</button>
+</div>
+<pre id="cors-tab-win" class="cors-pre">$env:OLLAMA_ORIGINS="${window.location.origin}"
+ollama serve</pre>
+<pre id="cors-tab-nix" class="cors-pre" hidden>OLLAMA_ORIGINS=${window.location.origin} ollama serve</pre>`; }
+
+function openEmbedHelp() {
+  const modal = document.getElementById("info-modal");
+  if (!modal) return;
+  document.getElementById("info-modal-title").textContent = "Embedding Layer";
+  document.getElementById("info-modal-body").innerHTML = getEmbedHelpHTML();
+  modal.hidden = false;
+}
+
+function closeInfoModal() {
+  const modal = document.getElementById("info-modal");
+  if (modal) modal.hidden = true;
+}
+
+function switchCorsTab(which) {
+  const win = document.getElementById("cors-tab-win");
+  const nix = document.getElementById("cors-tab-nix");
+  const btnWin = document.getElementById("cors-btn-win");
+  const btnNix = document.getElementById("cors-btn-nix");
+  if (win) win.hidden = which !== "win";
+  if (nix) nix.hidden = which !== "nix";
+  if (btnWin) btnWin.classList.toggle("cors-tab-active", which === "win");
+  if (btnNix) btnNix.classList.toggle("cors-tab-active", which === "nix");
 }
 
 // ── Memory Rules ──────────────────────────────────────────────────
@@ -1179,10 +1504,17 @@ function refreshMemConnChip() {
   }
 }
 
+function toggleEmbedUrlSection() {
+  const cb = document.getElementById("mem-use-embed-url");
+  const sec = document.getElementById("mem-embed-url-section");
+  if (sec) sec.hidden = !cb?.checked;
+}
+
 function readMemoryConfig() {
   const classifierUrl  = document.getElementById("mem-classifier-url")?.value?.trim();
   const classifierModel = document.getElementById("mem-classifier-model")?.value?.trim();
-  const embedUrl       = document.getElementById("mem-embed-url")?.value?.trim();
+  const useEmbedUrl    = document.getElementById("mem-use-embed-url")?.checked;
+  const embedUrl       = useEmbedUrl ? document.getElementById("mem-embed-url")?.value?.trim() : undefined;
   const embedModel     = document.getElementById("mem-embed-model")?.value?.trim();
   const topK           = document.getElementById("mem-top-k")?.value;
   const pruneKeep      = document.getElementById("mem-prune-keep")?.value;
@@ -1197,8 +1529,12 @@ function readMemoryConfig() {
   if (Number.isFinite(k) && k > 0) out.top_k = k;
   const p = parseInt(pruneKeep, 10);
   if (Number.isFinite(p) && p > 0) out.prune_keep = p;
-  if (storePath) out.store_path = storePath;
-  if (file)      out.personality_file = file;
+  if (!window.STUDIO_CONFIG?.multi_tenant) {
+    if (storePath) out.store_path = storePath;
+    if (file)      out.personality_file = file;
+  }
+  const useClf = document.getElementById("mem-use-classifier");
+  if (useClf && !useClf.checked) out.use_classifier = false;
   return out;
 }
 
@@ -1248,6 +1584,11 @@ function populateMemoryConfigInputs() {
   const cfg = registryState.memory_config || {};
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ""; };
   set("mem-classifier-url",   cfg.classifier_url);
+  const hasEmbedUrl = !!cfg.embed_url;
+  const embedCb = document.getElementById("mem-use-embed-url");
+  if (embedCb) embedCb.checked = hasEmbedUrl;
+  const embedSec = document.getElementById("mem-embed-url-section");
+  if (embedSec) embedSec.hidden = !hasEmbedUrl;
   set("mem-embed-url",        cfg.embed_url);
   set("mem-embed-model",      cfg.embed_model);
   set("mem-top-k",            cfg.top_k);
@@ -1257,10 +1598,12 @@ function populateMemoryConfigInputs() {
   if (cfg.classifier_model) {
     _setClassifierModelSelect([cfg.classifier_model], cfg.classifier_model);
   }
+  const useClf = document.getElementById("mem-use-classifier");
+  if (useClf) useClf.checked = cfg.use_classifier !== false;
 }
 
 function addMemoryRule() {
-  registryState.memory_rules.push({ tag: "", actions: [] });
+  registryState.memory_rules.push({ tag: "", description: "", ending_text: "" });
   renderMemoryRulesPanel();
   exportFullModel();
 }
@@ -1273,6 +1616,16 @@ function removeMemoryRule(idx) {
 
 function updateMemoryRuleTag(idx, value) {
   registryState.memory_rules[idx].tag = value;
+  exportFullModel();
+}
+
+function updateMemoryRuleDescription(idx, value) {
+  registryState.memory_rules[idx].description = value;
+  exportFullModel();
+}
+
+function updateMemoryRuleEndingText(idx, value) {
+  registryState.memory_rules[idx].ending_text = value;
   exportFullModel();
 }
 
@@ -1356,14 +1709,11 @@ function renderMemoryRulesPanel() {
   if (!host) return;
 
   if (!registryState.memory_rules.length) {
-    host.innerHTML = `<div class="mem-empty">No rules yet. Add a rule to map memory tags to prompt mutations.</div>`;
+    host.innerHTML = `<div class="mem-empty">No rules yet. Add a rule to define a classifier tag.</div>`;
     return;
   }
 
   host.innerHTML = registryState.memory_rules.map((rule, rIdx) => {
-    const actionsHtml = rule.actions.length
-      ? rule.actions.map((a, aIdx) => _memActionEditor(rIdx, aIdx, a)).join("")
-      : `<div class="mem-empty-actions">No actions — add one below.</div>`;
     return `<div class="mem-rule-card">
       <div class="mem-rule-header">
         <input type="text" class="mem-rule-tag" value="${escapeHtml(rule.tag)}"
@@ -1371,14 +1721,125 @@ function renderMemoryRulesPanel() {
           oninput="updateMemoryRuleTag(${rIdx}, this.value)">
         <button type="button" class="mem-rule-remove" onclick="removeMemoryRule(${rIdx})">Remove Rule</button>
       </div>
-      <div class="mem-actions-list">${actionsHtml}</div>
-      <button type="button" class="mem-action-add" onclick="addMemoryAction(${rIdx})">+ Add Action</button>
+      <textarea class="mem-rule-description" rows="2"
+        placeholder="Classifier directions — describe when this tag applies so the classifier knows when to fire this rule."
+        oninput="updateMemoryRuleDescription(${rIdx}, this.value)">${escapeHtml(rule.description || "")}</textarea>
+      <label class="mem-rule-ending-label">Prompt ending injection <span class="label-hint">injected as <code>{rule_ending}</code> — appears after memory summary, before user message</span></label>
+      <textarea class="mem-rule-ending" rows="2"
+        placeholder="Optional: text added to the prompt ending when this rule fires."
+        oninput="updateMemoryRuleEndingText(${rIdx}, this.value)">${escapeHtml(rule.ending_text || "")}</textarea>
     </div>`;
   }).join("");
 }
 
+const SNAP_KEY = "pl-registry-snapshots-v1";
+
+function loadSavedRegistries() {
+  try {
+    return JSON.parse(localStorage.getItem(SNAP_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedRegistries(arr) {
+  localStorage.setItem(SNAP_KEY, JSON.stringify(arr));
+}
+
+function saveRegistry() {
+  const payload = exportFullModel();
+  if (!payload) return;
+  const defaultName = registryState.title || "Untitled Registry";
+  const name = prompt("Save registry as:", defaultName);
+  if (!name) return;
+  const snaps = loadSavedRegistries();
+  const existing = snaps.findIndex((s) => s.name === name);
+  const snap = { name, savedAt: new Date().toISOString(), registry: payload.registry };
+  if (existing >= 0) {
+    snaps[existing] = snap;
+  } else {
+    snaps.push(snap);
+  }
+  persistSavedRegistries(snaps);
+  populateExamplePicker();
+  setValidationStatus(`Saved as "${name}".`, true);
+}
+
+function loadSavedRegistry(name) {
+  const snaps = loadSavedRegistries();
+  const snap = snaps.find((s) => s.name === name);
+  if (!snap) { alert(`Saved registry "${name}" not found.`); return; }
+  applyRegistryJson({ registry: snap.registry });
+  setValidationStatus(`Loaded "${name}".`, true);
+}
+
+function deleteSavedRegistry(name) {
+  if (!confirm(`Delete saved registry "${name}"?`)) return;
+  const snaps = loadSavedRegistries().filter((s) => s.name !== name);
+  persistSavedRegistries(snaps);
+  populateExamplePicker();
+  setValidationStatus(`Deleted "${name}".`, false);
+}
+
+function handlePickerChange(value) {
+  if (!value) return;
+  if (value.startsWith("__saved__:")) {
+    loadSavedRegistry(value.slice("__saved__:".length));
+  } else {
+    loadBuilderExample(value);
+  }
+}
+
+async function populateExamplePicker() {
+  const sel = document.getElementById("example-picker");
+  if (!sel) return;
+
+  let exampleOptions = "";
+  try {
+    const res = await fetch("/static/builder-examples/index.json", { cache: "no-cache" });
+    if (res.ok) {
+      const data = await res.json();
+      const examples = data.examples || [];
+      if (examples.length) {
+        exampleOptions = `<optgroup label="Examples">` +
+          examples.map((ex) => {
+            const val = (ex.file || "").replace(/\.json$/, "");
+            return `<option value="${escapeHtml(val)}">${escapeHtml(ex.name || val)}</option>`;
+          }).join("") +
+          `</optgroup>`;
+      }
+    }
+  } catch (e) {
+    console.warn("Could not load example index:", e);
+  }
+
+  const snaps = loadSavedRegistries();
+  let savedOptions = "";
+  if (snaps.length) {
+    savedOptions = `<optgroup label="Saved">` +
+      snaps.map((s) => {
+        return `<option value="__saved__:${escapeHtml(s.name)}">${escapeHtml(s.name)}</option>`;
+      }).join("") +
+      `</optgroup>`;
+  }
+
+  sel.innerHTML = `<option value="">Load…</option>` + exampleOptions + savedOptions;
+}
+
 consumeStudioHandoff();
 initApp();
+populateExamplePicker();
+
+fetch("/api/config")
+  .then((r) => r.json())
+  .then((cfg) => {
+    window.STUDIO_CONFIG = cfg;
+    if (cfg.multi_tenant) {
+      const el = document.getElementById("mem-server-managed-paths");
+      if (el) el.hidden = true;
+    }
+  })
+  .catch(() => {});
 
 window.toggleSection = toggleSection;
 window.openModal = openModal;
@@ -1386,10 +1847,8 @@ window.closeModal = closeModal;
 window.saveModal = saveModal;
 window.removeVar = removeVar;
 window.updateSectionStatus = updateSectionStatus;
-window.updateSentimentScaleTemplate = updateSentimentScaleTemplate;
-window.toggleScaleBlock = toggleScaleBlock;
+window.updateScaleField = updateScaleField;
 window.addEntry = addEntry;
-window.toggleIncludeSection = toggleIncludeSection;
 window.updateField = updateField;
 window.removeEntry = removeEntry;
 window.exportFullModel = exportFullModel;
@@ -1404,7 +1863,11 @@ window.openInStudio = openInStudio;
 window.toggleBuilderCollapse = toggleBuilderCollapse;
 window.openSectionInfo = openSectionInfo;
 window.closeSectionInfo = closeSectionInfo;
+window.openEmbedHelp = openEmbedHelp;
+window.closeInfoModal = closeInfoModal;
+window.switchCorsTab = switchCorsTab;
 window.switchPreviewTab = switchPreviewTab;
+window.renderFlowView = renderFlowView;
 window.setPreviewSelection = setPreviewSelection;
 window.switchBuilderTab = switchBuilderTab;
 window.addAssemblyToken = addAssemblyToken;
@@ -1416,6 +1879,10 @@ window.fetchClassifierModels = fetchClassifierModels;
 window.addMemoryRule = addMemoryRule;
 window.removeMemoryRule = removeMemoryRule;
 window.updateMemoryRuleTag = updateMemoryRuleTag;
-window.addMemoryAction = addMemoryAction;
-window.removeMemoryAction = removeMemoryAction;
-window.updateMemoryAction = updateMemoryAction;
+window.updateMemoryRuleDescription = updateMemoryRuleDescription;
+window.updateMemoryRuleEndingText = updateMemoryRuleEndingText;
+window.populateExamplePicker = populateExamplePicker;
+window.saveRegistry = saveRegistry;
+window.loadSavedRegistry = loadSavedRegistry;
+window.deleteSavedRegistry = deleteSavedRegistry;
+window.handlePickerChange = handlePickerChange;

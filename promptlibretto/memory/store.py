@@ -83,6 +83,8 @@ class MemoryStore:
         return db
 
     async def upsert(self, turn: MemoryTurn) -> None:
+        if not turn.text.strip():
+            return
         vector = await self.embedder.embed(turn.text)
         if len(vector) != self.dimensions:
             raise ValueError(
@@ -113,6 +115,8 @@ class MemoryStore:
         self._db.commit()
 
     async def retrieve(self, query: str, top_k: int = 5) -> list[MemoryChunk]:
+        if top_k <= 0 or not query.strip():
+            return []
         vector = await self.embedder.embed(query)
         rows = self._db.execute(
             """

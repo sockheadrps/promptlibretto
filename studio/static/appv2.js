@@ -43,7 +43,7 @@ function collectRandomMarkers(reg, sectionRandom, arrayModes) {
       // When the WHOLE section is random-rolled, every candidate item is in
       // play for the next generation — mark all of their text content.
       if (wholeRandom) {
-        for (const field of ["text", "context", "scale_emotion"]) {
+        for (const field of ["text", "context"]) {
           const v = item[field];
           if (typeof v === "string" && v.trim().length >= 4) {
             out.push({ key: `${secKey}::${field} (random item)`, value: v, kind: "random" });
@@ -75,7 +75,7 @@ function describeFragments(reg, tvarMap) {
     for (const item of sec.items) {
       if (!Array.isArray(item.fragments) || !item.fragments.length) continue;
       const frags = item.fragments.map((f) => {
-        const v = f.if_var || f.var || "";
+        const v = f.condition || f.if_var || f.var || "";
         const val = v ? String(tvarMap[`${secKey}::${v}`] || "").trim() : "";
         return {
           var: v,
@@ -87,6 +87,41 @@ function describeFragments(reg, tvarMap) {
     }
   }
   return out;
+}
+
+function refreshTvarPreviews() {
+  // Collect all current tvar input values from the DOM.
+  const tvarMap = {};
+  document.querySelectorAll("input[data-tvar]").forEach((inp) => {
+    tvarMap[inp.dataset.tvar] = inp.value || "";
+  });
+
+  document.querySelectorAll(".tvar-preview[data-preview-section]").forEach((el) => {
+    const secKey = el.dataset.previewSection;
+    // Read the current textarea value from the sibling in the same label.
+    const textarea = el.closest("label")?.querySelector("textarea");
+    if (!textarea) { el.textContent = ""; el.style.display = "none"; return; }
+    const text = textarea.value || "";
+    // Substitute all {var} patterns found in this section's tvar namespace.
+    let resolved = text;
+    let anySubstituted = false;
+    for (const [key, val] of Object.entries(tvarMap)) {
+      if (!key.startsWith(`${secKey}::`)) continue;
+      const varName = key.slice(secKey.length + 2);
+      const placeholder = `{${varName}}`;
+      if (resolved.includes(placeholder) && val.trim()) {
+        resolved = resolved.replaceAll(placeholder, val.trim());
+        anySubstituted = true;
+      }
+    }
+    if (!anySubstituted || resolved === text) {
+      el.textContent = "";
+      el.style.display = "none";
+    } else {
+      el.textContent = resolved;
+      el.style.display = "";
+    }
+  });
 }
 
 // Walk `text`, longest-match-wins over the combined `markers` list, and
@@ -120,16 +155,33 @@ function _decorateText(text, markers) {
   return out;
 }
 
+// Flatten v2 state (sections dict) into legacy flat maps for decorators.
+function _flattenV2State(state) {
+  if (!state || typeof state !== "object") return { tvarMap: {}, secRandom: {}, arrayModes: {}, sliderRandom: {} };
+  const tvarMap = {}, secRandom = {}, arrayModes = {}, sliderRandom = {};
+  for (const [key, sec] of Object.entries(state)) {
+    if (!sec || typeof sec !== "object") continue;
+    if (sec.template_vars) Object.assign(tvarMap, sec.template_vars);
+    if (sec.section_random) secRandom[key] = true;
+    if (sec.slider_random) sliderRandom[key] = true;
+    if (sec.array_modes && typeof sec.array_modes === "object") {
+      arrayModes[key] = { ...sec.array_modes };
+    }
+  }
+  return { tvarMap, secRandom, arrayModes, sliderRandom };
+}
+
 // Combined decorator used by Pre-generate: highlight tvar injections AND
 // mark spans coming from random-rotated sections, plus return a summary
 // note about fragments and randomization.
+// state is v2 format: { secKey: { selected, slider, array_modes, template_vars, ... } }
 function decoratePromptOutput(text, registry, state) {
-  const tvarMap = state?.template_vars || {};
+  const { tvarMap, secRandom, arrayModes, sliderRandom } = _flattenV2State(state);
   const reg = registry?.registry || registry || {};
   const tvars = Object.entries(tvarMap)
     .map(([k, v]) => ({ key: k, value: String(v == null ? "" : v), kind: "tvar" }))
     .filter((e) => e.value.trim().length >= 2);
-  const randoms = collectRandomMarkers(reg, state?.section_random, state?.array_modes);
+  const randoms = collectRandomMarkers(reg, secRandom, arrayModes);
   const html = _decorateText(text, [...tvars, ...randoms]);
 
   // Fragment summary
@@ -148,25 +200,25 @@ function decoratePromptOutput(text, registry, state) {
       );
     }
   }
-  const sliderRandom = state?.slider_random || {};
-  const randomSlider = Object.entries(sliderRandom).filter(([, v]) => v).map(([k]) => k);
-  if (randomSlider.length) {
-    noteLines.push(`<div class="pregen-note-line"><span class="muted">random sliders:</span> ${randomSlider.map(escapeHtml).join(", ")}</div>`);
+  const randomSliderKeys = Object.keys(sliderRandom).filter((k) => sliderRandom[k]);
+  if (randomSliderKeys.length) {
+    noteLines.push(`<div class="pregen-note-line"><span class="muted">random sliders:</span> ${randomSliderKeys.map(escapeHtml).join(", ")}</div>`);
   }
-  const randomSecs = Object.entries(state?.section_random || {}).filter(([, v]) => v).map(([k]) => k);
+  const randomSecs = Object.keys(secRandom).filter((k) => secRandom[k]);
   if (randomSecs.length) {
     noteLines.push(`<div class="pregen-note-line"><span class="muted">random section items:</span> ${randomSecs.map(escapeHtml).join(", ")}</div>`);
   }
-  const randomArrays = [];
-  for (const [k, modes] of Object.entries(state?.array_modes || {})) {
+  const allModeEntries = [];
+  for (const [k, modes] of Object.entries(arrayModes)) {
     for (const [field, mode] of Object.entries(modes || {})) {
-      if (typeof mode === "string" && mode.startsWith("random:")) {
-        randomArrays.push(`${k}.${field} (${mode})`);
+      if (typeof mode === "string") {
+        allModeEntries.push({ key: `${k}.${field}`, mode });
       }
     }
   }
-  if (randomArrays.length) {
-    noteLines.push(`<div class="pregen-note-line"><span class="muted">random array picks:</span> ${randomArrays.map(escapeHtml).join(", ")}</div>`);
+  if (allModeEntries.length) {
+    const parts = allModeEntries.map(({ key, mode }) => `${escapeHtml(key)}: <em>${escapeHtml(mode)}</em>`);
+    noteLines.push(`<div class="pregen-note-line"><span class="muted">input strategies:</span> ${parts.join(", ")}</div>`);
   }
 
   const note = noteLines.length
@@ -330,25 +382,19 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   // Field types: text | textarea | lines (\n-split array) | bool | section-checks.
   const ITEM_SCHEMA = {
     base_context: [
-      { field: "name", label: "Name", type: "text" },
       { field: "text", label: "Always-shown text", type: "textarea" },
       { field: "fragments", label: "Conditional fragments", type: "fragments" },
-      { field: "items", label: "Pool items", type: "lines" },
     ],
     personas: [
       { field: "id", label: "ID", type: "text" },
       { field: "context", label: "Context", type: "textarea" },
-      { field: "base_directives", label: "Base Directives", type: "lines" },
     ],
     sentiment: [
       { field: "id", label: "ID", type: "text" },
-      { field: "context", label: "Context", type: "text" },
-      { field: "scale_emotion", label: "Scale Emotion", type: "text" },
-      { field: "nudges", label: "Nudges", type: "lines" },
-      { field: "examples", label: "Examples", type: "lines" },
+      { field: "context", label: "Context", type: "textarea" },
     ],
     static_injections: [
-      { field: "name", label: "Name", type: "text" },
+      { field: "id", label: "ID", type: "text" },
       { field: "text", label: "Text", type: "textarea" },
       { field: "items", label: "Pool items", type: "lines" },
     ],
@@ -356,7 +402,6 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       { field: "id", label: "ID", type: "text" },
       { field: "text", label: "Text", type: "textarea" },
       { field: "required", label: "Required", type: "bool" },
-      { field: "include_sections", label: "Include Sections", type: "section-checks" },
     ],
     output_prompt_directions: [
       { field: "name", label: "Name", type: "text" },
@@ -373,6 +418,37 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     ],
   };
 
+  const RUNTIME_INJECTED_VARS = new Set([
+    "memory_recall",
+    "system_summary",
+    "rule_ending",
+  ]);
+
+  function collectMissingTvars() {
+    if (!registry) return [];
+    const missing = [];
+    for (const [secKey, sec] of Object.entries(registry)) {
+      if (!sec || !Array.isArray(sec.template_vars)) continue;
+      for (const v of sec.template_vars) {
+        if (RUNTIME_INJECTED_VARS.has(v)) continue;
+        const val = (tvarValues[`${secKey}::${v}`] || "").trim();
+        if (!val) missing.push({ section: secKey, varName: v });
+      }
+    }
+    return missing;
+  }
+
+  function showTvarWarning(missing) {
+    const el = $("tvar-warning");
+    if (!el) return;
+    if (!missing.length) { el.hidden = true; el.innerHTML = ""; return; }
+    const items = missing.map(({ section, varName }) =>
+      `<span class="tvar-warning-item"><span class="tvar-warning-sec">${escapeHtml(section)}</span> · <code>${escapeHtml(varName)}</code></span>`
+    ).join("");
+    el.innerHTML = `<span class="tvar-warning-icon">⚠</span> Empty template vars: ${items}<button class="tvar-warning-dismiss" onclick="this.closest('.tvar-warning').hidden=true">×</button>`;
+    el.hidden = false;
+  }
+
   let registry = null;
   const tvarValues = {};
   // Per-section / per-array-field hydration mode: "all" | "random:K" | "index:I"
@@ -384,8 +460,12 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     if (!arrayModes[secKey]) arrayModes[secKey] = {};
     arrayModes[secKey][field] = mode;
   }
+  // Sections merged into prompt_endings — still parsed/serialized but not shown as UI controls
+  const HIDDEN_SECTIONS = new Set(["user_message"]);
+
   function sectionKeys() {
     return Object.keys(registry).filter((k) =>
+      !HIDDEN_SECTIONS.has(k) &&
       registry[k] && typeof registry[k] === "object" && Array.isArray(registry[k].items)
     );
   }
@@ -431,16 +511,19 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   }
 
 
-  // Only these array fields get a per-field runtime mode selector
-  // (the user explicitly asked for nudges/examples; pool-shaped sections
-  // store their list in `items`). Other arrays — base_directives,
-  // include_sections, runtime_variables — are not user-randomizable.
-  const ARRAY_MODE_FIELDS = new Set(["nudges", "examples", "items", "base_directives"]);
+  // v2: array mode fields are qualified keys.
+  // items with `groups: ["id1","id2"]` yield "groups[id1]", "groups[id2]".
+  // PromptEnding items with `items: [...]` yield "items".
   function arrayFieldsOf(item) {
     if (!item || typeof item !== "object") return [];
-    return Object.keys(item).filter(
-      (k) => ARRAY_MODE_FIELDS.has(k) && Array.isArray(item[k])
-    );
+    const fields = [];
+    if (Array.isArray(item.groups)) {
+      for (const gid of item.groups) {
+        if (typeof gid === "string") fields.push(`groups[${gid}]`);
+      }
+    }
+    if (Array.isArray(item.items)) fields.push("items");
+    return fields;
   }
 
   // ── Generation overrides (Tuning tab) ──────────────────────
@@ -541,6 +624,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       if (sec.required) {
         const sel = host.querySelector(`select[data-section="${key}"]`);
         const id = sel ? sel.value : null;
+        if (id === "__random__") { s[key] = null; continue; }
         s[key] = sec.items.find((it) => (it.id || it.name) === id) || null;
       } else {
         const checked = Array.from(
@@ -566,6 +650,13 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   // For multi-select sections we return the first matching item's array.
   function getSelectionArrayValues(sel, field) {
     if (!sel) return [];
+    const groupMatch = field.match(/^groups\[(.+)\]$/);
+    if (groupMatch) {
+      const gid = groupMatch[1];
+      const groupItems = (registry && registry.groups && registry.groups.items) || [];
+      const group = groupItems.find(it => (it.id || it.name) === gid);
+      return group && Array.isArray(group.items) ? group.items : [];
+    }
     if (Array.isArray(sel)) {
       for (const it of sel) if (Array.isArray(it[field])) return it[field];
       return [];
@@ -583,47 +674,54 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   //   • Random-selection checkbox
   //   • When Random is checked the dropdown row hides and a labeled count
   //     row appears: "Pick N random of M values"
+  function fieldDisplayLabel(field) {
+    const groupMatch = field.match(/^groups\[(.+)\]$/);
+    if (groupMatch) {
+      return groupMatch[1].replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    }
+    return field.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  }
+
   function arrayModeOptionsHtml(secKey, field, values) {
     if (!values || !values.length) return "";
     const cur = getArrayMode(secKey, field);
     const isRandom = cur.startsWith("random:");
-    const isIndex = cur.startsWith("index:");
+    const isSpecific = cur.startsWith("indices:");
     const isNone = cur === "none";
-    const isAll = !isRandom && !isIndex && !isNone;
-    const selIdx = isIndex ? parseInt(cur.slice(6), 10) : -1;
     const k = isRandom ? Math.max(1, parseInt(cur.slice(7), 10) || 1) : 1;
+    const specificSet = isSpecific
+      ? new Set(cur.slice(8).split(",").map(s => parseInt(s, 10)).filter(n => !isNaN(n)))
+      : new Set();
+    const label = fieldDisplayLabel(field);
 
-    const allOpt = `<option value="all"${isAll ? " selected" : ""}>(all values)</option>`;
-    const noneOpt = `<option value="none"${isNone ? " selected" : ""}>(none — skip)</option>`;
-    const itemOpts = values
-      .map(
-        (v, i) =>
-          `<option value="index:${i}"${
-            i === selIdx ? " selected" : ""
-          }>${escapeHtml(truncateForOption(v))}</option>`
+    const modeType = isRandom ? "random" : isSpecific ? "specific" : isNone ? "none" : "all";
+
+    const checkboxRows = values
+      .map((v, i) =>
+        `<label class="registry-mode-specific-item">` +
+        `<input type="checkbox" data-mode-control="specific-item" value="${i}"${specificSet.has(i) ? " checked" : ""}> ` +
+        `${escapeHtml(truncateForOption(v, 100))}` +
+        `</label>`
       )
       .join("");
 
     return (
-      `<div class="registry-mode-row" data-mode-row="${escapeHtml(secKey)}::${escapeHtml(
-        field
-      )}">` +
-      // Value picker row (hidden when Random is on)
-      `<div class="registry-mode-pick" data-pick-mode="value"${isRandom ? " hidden" : ""}>` +
-      `<span class="registry-mode-label">${escapeHtml(field)}:</span>` +
-      `<select data-mode-control="value">${allOpt}${noneOpt}${itemOpts}</select>` +
+      `<div class="registry-mode-row" data-mode-row="${escapeHtml(secKey)}::${escapeHtml(field)}">` +
+      `<div class="registry-mode-header">` +
+      `<span class="registry-mode-label">${escapeHtml(label)}:</span>` +
+      `<select data-mode-control="mode-type">` +
+      `<option value="all"${modeType === "all" ? " selected" : ""}>(all ${values.length})</option>` +
+      `<option value="none"${modeType === "none" ? " selected" : ""}>(none — skip)</option>` +
+      `<option value="specific"${modeType === "specific" ? " selected" : ""}>pick specific…</option>` +
+      `<option value="random"${modeType === "random" ? " selected" : ""}>random…</option>` +
+      `</select>` +
       `</div>` +
-      // Random-count row (shown when Random is on)
-      `<div class="registry-mode-pick" data-pick-mode="random"${isRandom ? "" : " hidden"}>` +
-      `<span class="registry-mode-label">${escapeHtml(field)}:</span>` +
+      `<div class="registry-mode-specific"${!isSpecific ? " hidden" : ""}>${checkboxRows}</div>` +
+      `<div class="registry-mode-pick" data-pick-mode="random"${!isRandom ? " hidden" : ""}>` +
       `<span class="registry-mode-rand-text">pick</span>` +
       `<input type="number" min="1" max="${values.length}" value="${k}" class="registry-mode-count" data-mode-control="count">` +
       `<span class="registry-mode-rand-text">random of ${values.length} at run time</span>` +
       `</div>` +
-      // Toggle
-      `<label class="registry-mode-rand"><input type="checkbox" data-mode-control="rand"${
-        isRandom ? " checked" : ""
-      }><span>Random selection</span></label>` +
       `</div>`
     );
   }
@@ -642,9 +740,14 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         itemId
       )}" data-edit-field="${escapeHtml(f.field)}" data-edit-type="${f.type}"`;
       if (f.type === "textarea") {
+        const sec = registry[sectionKey];
+        const hasTvars = sec && Array.isArray(sec.template_vars) && sec.template_vars.length > 0;
+        const preview = hasTvars
+          ? `<div class="tvar-preview" data-preview-section="${escapeHtml(sectionKey)}" data-preview-field="${escapeHtml(f.field)}"></div>`
+          : "";
         return `<label class="registry-add-row"><span>${escapeHtml(
           f.label
-        )}</span><textarea ${common} rows="3">${escapeHtml(v ?? "")}</textarea></label>`;
+        )}</span><textarea ${common} rows="3">${escapeHtml(v ?? "")}</textarea>${preview}</label>`;
       }
       if (f.type === "lines") {
         const arr = Array.isArray(v) ? v : [];
@@ -716,7 +819,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         )}"`
       : `data-frag-form="${escapeHtml(secKey)}"`;
     const rowHtml = (frag, i) => {
-      const ifVar = (frag && (frag.if_var || frag.var)) || "";
+      const ifVar = (frag && (frag.condition || frag.if_var || frag.var)) || "";
       const text = (frag && frag.text) || "";
       const opts = [`<option value="">always</option>`]
         .concat(
@@ -747,15 +850,15 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     );
   }
 
-  // Read fragments from a fragments-row container into [{if_var, text}].
+  // Read fragments from a fragments-row container into [{condition, text}].
   function readFragmentsFromRow(rowEl) {
     if (!rowEl) return [];
     return Array.from(rowEl.querySelectorAll(".registry-frag-row"))
       .map((r) => ({
-        if_var: (r.querySelector("[data-frag-var]") || {}).value || "",
+        condition: (r.querySelector("[data-frag-var]") || {}).value || "",
         text: (r.querySelector("[data-frag-text]") || {}).value || "",
       }))
-      .filter((f) => f.if_var || f.text);
+      .filter((f) => f.condition || f.text);
   }
 
   // Wire add / remove / change handlers on every fragments-row inside
@@ -848,6 +951,60 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     return renderItemEditor(sel, key);
   }
 
+  function _selectedScaleItem(key) {
+    const sec = registry && registry[key];
+    if (!sec || !Array.isArray(sec.items)) return null;
+    const host = containerFor(key);
+    const sel = host && host.querySelector(`select[data-section="${key}"]`);
+    const id = sel ? sel.value : null;
+    const item = (id && id !== "__random__") ? sec.items.find((it) => (it.id || it.name) === id) : sec.items[0];
+    return (item && typeof item.scale === "object" && item.scale) ? item : null;
+  }
+
+  function renderScaleFields(key) {
+    for (const host of bothContainers()) {
+      const el = host.querySelector(`[data-scale-fields="${key}"]`);
+      if (!el) continue;
+      const item = _selectedScaleItem(key);
+      if (!item) { el.innerHTML = ""; continue; }
+      const scale = item.scale;
+      const descRaw = scale.scale_descriptor;
+      const descVal = Array.isArray(descRaw) ? descRaw.join("\n") : (descRaw || "");
+      el.innerHTML =
+        `<details class="registry-scale-detail">` +
+        `<summary class="registry-scale-summary">Scale settings</summary>` +
+        `<div class="registry-scale-body">` +
+        `<label class="registry-scale-label">Descriptor <small class="muted">(one per line → random pick)</small></label>` +
+        `<textarea rows="3" class="registry-scale-input" data-scale-key="${escapeHtml(key)}" data-scale-item="${escapeHtml(item.id || item.name || "")}" data-scale-field="scale_descriptor">${escapeHtml(descVal)}</textarea>` +
+        `<label class="registry-scale-label">Template <small class="muted">{value} and {scale_descriptor}</small></label>` +
+        `<input type="text" class="registry-scale-input" data-scale-key="${escapeHtml(key)}" data-scale-item="${escapeHtml(item.id || item.name || "")}" data-scale-field="template" value="${escapeHtml(scale.template || "")}">` +
+        `<div class="registry-scale-nums">` +
+        `<label>Default<input type="number" step="0.5" class="registry-scale-input" data-scale-key="${escapeHtml(key)}" data-scale-item="${escapeHtml(item.id || item.name || "")}" data-scale-field="default_value" value="${scale.default_value ?? 5}"></label>` +
+        `<label>Min<input type="number" step="0.5" class="registry-scale-input" data-scale-key="${escapeHtml(key)}" data-scale-item="${escapeHtml(item.id || item.name || "")}" data-scale-field="min_value" value="${scale.min_value ?? 1}"></label>` +
+        `<label>Max<input type="number" step="0.5" class="registry-scale-input" data-scale-key="${escapeHtml(key)}" data-scale-item="${escapeHtml(item.id || item.name || "")}" data-scale-field="max_value" value="${scale.max_value ?? 10}"></label>` +
+        `</div>` +
+        `</div></details>`;
+      el.querySelectorAll(".registry-scale-input").forEach((input) => {
+        input.addEventListener("input", () => {
+          const sec = registry[input.dataset.scaleKey];
+          if (!sec) return;
+          const it = sec.items.find((x) => (x.id || x.name || "") === input.dataset.scaleItem);
+          if (!it || !it.scale) return;
+          const field = input.dataset.scaleField;
+          if (field === "scale_descriptor") {
+            const lines = input.value.split("\n").map((s) => s.trim()).filter(Boolean);
+            it.scale.scale_descriptor = lines.length > 1 ? lines : (lines[0] || "");
+          } else if (["default_value", "min_value", "max_value"].includes(field)) {
+            const n = parseFloat(input.value);
+            if (Number.isFinite(n)) it.scale[field] = n;
+          } else {
+            it.scale[field] = input.value;
+          }
+        });
+      });
+    }
+  }
+
   function refreshSectionPreviews() {
     if (!registry) return;
     const st = readState();
@@ -867,6 +1024,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
             writeEditValue(el);
             const f = el.dataset.editField;
             if (f === "id" || f === "name") buildControls();
+            if (el.tagName === "TEXTAREA") refreshTvarPreviews();
           });
         });
         ed.querySelectorAll("input[data-list-index]").forEach((inp) => {
@@ -911,27 +1069,43 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
           .join("");
         modes.querySelectorAll(".registry-mode-row").forEach((row) => {
           const [section, field] = row.dataset.modeRow.split("::");
-          const pickValue = row.querySelector("[data-pick-mode='value']");
-          const pickRandom = row.querySelector("[data-pick-mode='random']");
-          const valueSel = row.querySelector("[data-mode-control='value']");
-          const randCb = row.querySelector("[data-mode-control='rand']");
+          const modeTypeSel = row.querySelector("[data-mode-control='mode-type']");
+          const specificDiv = row.querySelector(".registry-mode-specific");
+          const randomDiv = row.querySelector("[data-pick-mode='random']");
           const countInp = row.querySelector("[data-mode-control='count']");
-          const recompute = () => {
-            if (randCb.checked) {
+
+          const applyMode = () => {
+            const mt = modeTypeSel.value;
+            if (mt === "random") {
               const n = Math.max(1, parseInt(countInp.value, 10) || 1);
               setArrayMode(section, field, `random:${n}`);
-              if (pickValue) pickValue.hidden = true;
-              if (pickRandom) pickRandom.hidden = false;
+              if (specificDiv) specificDiv.hidden = true;
+              if (randomDiv) randomDiv.hidden = false;
+            } else if (mt === "specific") {
+              const checked = [...row.querySelectorAll("[data-mode-control='specific-item']:checked")]
+                .map(cb => cb.value).join(",");
+              setArrayMode(section, field, checked ? `indices:${checked}` : "none");
+              if (specificDiv) specificDiv.hidden = false;
+              if (randomDiv) randomDiv.hidden = true;
             } else {
-              setArrayMode(section, field, valueSel.value);
-              if (pickValue) pickValue.hidden = false;
-              if (pickRandom) pickRandom.hidden = true;
+              setArrayMode(section, field, mt); // "all" or "none"
+              if (specificDiv) specificDiv.hidden = true;
+              if (randomDiv) randomDiv.hidden = true;
             }
           };
-          valueSel.addEventListener("change", recompute);
-          randCb.addEventListener("change", recompute);
-          countInp.addEventListener("input", recompute);
+
+          modeTypeSel.addEventListener("change", applyMode);
+          countInp.addEventListener("input", applyMode);
+          row.querySelectorAll("[data-mode-control='specific-item']").forEach(cb => {
+            cb.addEventListener("change", applyMode);
+          });
         });
+      }
+
+      // Refresh scale fields for the selected item whenever selections change.
+      if (registry[key] && Array.isArray(registry[key].items) &&
+          registry[key].items.some((it) => it && typeof it.scale === "object")) {
+        renderScaleFields(key);
       }
     }
   }
@@ -961,38 +1135,29 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       if (!hasItems) {
         inputHtml = `<small class="muted">No items defined.</small>`;
       } else if (key === "runtime_injections") {
-        // Per-injection: enable checkbox + sub-checkboxes for which other
-        // sections to include in the output when this injection is active.
-        const otherSecs = sectionKeys().filter((k) => k !== "runtime_injections");
         inputHtml =
-          `<div class="registry-rti-list">` +
+          `<div class="registry-checks">` +
           sec.items
             .map((it, idx) => {
               const id = it.id || it.name || `item_${idx}`;
-              const includes = Array.isArray(it.include_sections)
-                ? it.include_sections
-                : [];
+              const itemVars = Array.isArray(it.template_vars) ? it.template_vars : [];
+              const itemVarsHtml = itemVars
+                .map((v) => {
+                  const k = `runtime_injections::${v}`;
+                  const val = tvarValues[k] || "";
+                  return (
+                    `<div class="registry-tvar-row">` +
+                    `<span class="registry-tvar-name">{${escapeHtml(v)}}</span>` +
+                    `<input type="text" data-tvar="${escapeHtml(k)}" value="${escapeHtml(val)}" placeholder="value">` +
+                    `</div>`
+                  );
+                })
+                .join("");
               return (
-                `<div class="registry-rti-row">` +
-                `<label class="registry-check registry-rti-enable"><input type="checkbox" data-section="${escapeHtml(
-                  key
-                )}" value="${escapeHtml(id)}"><span><strong>${escapeHtml(
-                  id
-                )}</strong></span></label>` +
-                `<div class="registry-rti-includes">` +
-                `<small class="muted">Include only these sections when active:</small>` +
-                `<div class="registry-checks">` +
-                otherSecs
-                  .map(
-                    (sk) =>
-                      `<label class="registry-check"><input type="checkbox" data-rti-include="${escapeHtml(
-                        id
-                      )}::${escapeHtml(sk)}"${
-                        includes.includes(sk) ? " checked" : ""
-                      }><span>${escapeHtml(SECTION_LABELS[sk] || sk)}</span></label>`
-                  )
-                  .join("") +
-                `</div></div></div>`
+                `<div class="registry-check-group">` +
+                `<label class="registry-check"><input type="checkbox" data-section="${escapeHtml(key)}" value="${escapeHtml(id)}"><span>${escapeHtml(id)}</span></label>` +
+                (itemVarsHtml ? `<div class="registry-rti-tvars">${itemVarsHtml}</div>` : "") +
+                `</div>`
               );
             })
             .join("") +
@@ -1010,8 +1175,14 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
             .join("") +
           `</div>`;
       } else {
+        const itemCount = Array.isArray(sec.items) ? sec.items.length : 0;
+        const showRandom = sectionRandomEligible(key) && itemCount > 1;
+        const randomOpt = showRandom
+          ? `<option value="__random__"${sectionRandom[key] ? " selected" : ""}>— random at run time —</option>`
+          : "";
         inputHtml =
           `<select data-section="${escapeHtml(key)}">` +
+          randomOpt +
           sec.items
             .map((it, idx) => {
               const id = it.id || it.name || `item_${idx}`;
@@ -1021,36 +1192,24 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
           `</select>`;
       }
 
-      // Section-level "random 1" toggle for required, non-base_context.
-      let randomHtml = "";
-      if (sectionRandomEligible(key) && hasItems) {
-        randomHtml =
-          `<label class="registry-random-row"><input type="checkbox" data-random-section="${escapeHtml(
-            key
-          )}"${sectionRandom[key] ? " checked" : ""}><span>Pick a random ${escapeHtml(
-            label.toLowerCase()
-          )} at run time</span></label>`;
-      }
+      const randomHtml = "";
 
-      // Sentiment intensity slider + scale_template — drives the `sentiment.scale` token.
+      // Scale slider — shown for any section whose selected item has a `scale` field.
+      // Drives the `section.scale` assembly token.
       let sliderHtml = "";
-      if (key === "sentiment") {
+      const hasScale = Array.isArray(sec.items) && sec.items.some(
+        (it) => it && typeof it.scale === "object" && it.scale !== null
+      );
+      if (hasScale) {
         const cur = sectionSliders[key] != null ? sectionSliders[key] : 5;
         const isRand = !!sectionSliderRandom[key];
-        const scaleTmpl = (sec.scale_template) || "";
         sliderHtml =
           `<div class="registry-slider-row">` +
-          `<label>Intensity: <span data-slider-value="${escapeHtml(key)}">${cur}</span> / 10</label>` +
+          `<label>Scale: <span data-slider-value="${escapeHtml(key)}">${cur}</span> / 10</label>` +
           `<input type="range" min="1" max="10" value="${cur}" data-slider="${escapeHtml(key)}"${isRand ? " disabled" : ""}>` +
           `<label class="registry-slider-rand"><input type="checkbox" data-slider-random="${escapeHtml(key)}"${isRand ? " checked" : ""}><span>Random at run time</span></label>` +
           `</div>` +
-          `<details class="registry-scale-details">` +
-          `<summary class="registry-scale-summary">Scale settings</summary>` +
-          `<label class="registry-scale-label">Scale template` +
-          `<span class="registry-scale-hint">use <code>{value}</code> and <code>{emotion}</code></span></label>` +
-          `<input type="text" class="registry-scale-tmpl" data-scale-template value="${escapeHtml(scaleTmpl)}" ` +
-          `placeholder="On a scale of 1-10, intensity is {value} on {emotion}.">` +
-          `</details>`;
+          `<div data-scale-fields="${escapeHtml(key)}"></div>`;
       }
 
       // Always render the template-vars block so users can add even when
@@ -1065,6 +1224,14 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         `</div>` +
         (sec.template_vars || [])
           .map((v) => {
+            if (RUNTIME_INJECTED_VARS.has(v)) {
+              return (
+                `<div class="registry-tvar-row registry-tvar-row--runtime">` +
+                `<span class="registry-tvar-name">${escapeHtml(v)}</span>` +
+                `<span class="registry-tvar-runtime-badge">runtime</span>` +
+                `</div>`
+              );
+            }
             const k = `${key}::${v}`;
             const val = tvarValues[k] || "";
             return (
@@ -1102,11 +1269,20 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
 
     for (const host of bothContainers()) {
       host.querySelectorAll("select[data-section], input[data-section]").forEach((el) => {
-        el.addEventListener("change", refreshSectionPreviews);
+        el.addEventListener("change", () => {
+          if (el.tagName === "SELECT" && el.value === "__random__") {
+            sectionRandom[el.dataset.section] = true;
+          } else if (el.tagName === "SELECT") {
+            sectionRandom[el.dataset.section] = false;
+          }
+          refreshSectionPreviews();
+        });
       });
       host.querySelectorAll("input[data-tvar]").forEach((el) => {
         el.addEventListener("input", () => {
           tvarValues[el.dataset.tvar] = el.value;
+          refreshTvarPreviews();
+          showTvarWarning(collectMissingTvars());
         });
       });
       host.querySelectorAll("[data-tvar-add]").forEach((btn) => {
@@ -1133,11 +1309,6 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
           buildControls();
         });
       });
-      host.querySelectorAll("input[data-random-section]").forEach((el) => {
-        el.addEventListener("change", () => {
-          sectionRandom[el.dataset.randomSection] = el.checked;
-        });
-      });
       host.querySelectorAll("input[data-slider]").forEach((el) => {
         el.addEventListener("input", () => {
           const k = el.dataset.slider;
@@ -1145,21 +1316,6 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
           sectionSliders[k] = v;
           const display = host.querySelector(`[data-slider-value="${k}"]`);
           if (display) display.textContent = String(v);
-        });
-      });
-      host.querySelectorAll("input[data-rti-include]").forEach((el) => {
-        el.addEventListener("change", () => {
-          const [id, sk] = el.dataset.rtiInclude.split("::");
-          const items =
-            (registry.runtime_injections && registry.runtime_injections.items) || [];
-          const item = items.find((it) => (it.id || it.name) === id);
-          if (!item) return;
-          if (!Array.isArray(item.include_sections)) item.include_sections = [];
-          if (el.checked) {
-            if (!item.include_sections.includes(sk)) item.include_sections.push(sk);
-          } else {
-            item.include_sections = item.include_sections.filter((s) => s !== sk);
-          }
         });
       });
       host.querySelectorAll("input[data-slider-random]").forEach((el) => {
@@ -1200,21 +1356,38 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     Object.keys(sectionSliderRandom).forEach((k) => delete sectionSliderRandom[k]);
 
     const bakedSelections = defaultSelectionsForRegistry();
+
+    // Helper: apply a v2 SectionState dict into internal state vars.
+    function _applyV2SectionState(k, ss) {
+      if (!ss || typeof ss !== "object") return;
+      if (ss.selected !== undefined && ss.selected !== null) bakedSelections[k] = ss.selected;
+      if (typeof ss.section_random === "boolean") sectionRandom[k] = ss.section_random;
+      if (ss.array_modes && typeof ss.array_modes === "object") arrayModes[k] = { ...ss.array_modes };
+      if (typeof ss.slider === "number") sectionSliders[k] = ss.slider;
+      if (typeof ss.slider_random === "boolean") sectionSliderRandom[k] = ss.slider_random;
+      if (ss.template_vars && typeof ss.template_vars === "object") {
+        for (const [v, val] of Object.entries(ss.template_vars)) {
+          if (val == null) continue;
+          tvarValues[`${k}::${v}`] = String(val);
+        }
+      }
+    }
+
+    // v2: read from registry.default_state.sections
+    const defaultState = registry.default_state;
+    if (defaultState && typeof defaultState === "object") {
+      for (const [k, ss] of Object.entries(defaultState)) {
+        _applyV2SectionState(k, ss);
+      }
+    }
+
     for (const k of sectionKeys()) {
       const sec = registry[k];
       if (!sec) continue;
-      if (sec.selected !== undefined && sec.selected !== null) {
-        bakedSelections[k] = sec.selected;
-      }
-      if (typeof sec.section_random === "boolean") sectionRandom[k] = sec.section_random;
-      if (sec.array_modes && typeof sec.array_modes === "object") {
-        arrayModes[k] = { ...sec.array_modes };
-      }
-      if (typeof sec.slider === "number") sectionSliders[k] = sec.slider;
-      if (typeof sec.slider_random === "boolean") sectionSliderRandom[k] = sec.slider_random;
+      // template_var_defaults always provide fallback values
       if (sec.template_var_defaults && typeof sec.template_var_defaults === "object") {
         for (const [v, val] of Object.entries(sec.template_var_defaults)) {
-          if (val == null) continue;
+          if (val == null || tvarValues[`${k}::${v}`] != null) continue;
           tvarValues[`${k}::${v}`] = String(val);
         }
       }
@@ -1230,30 +1403,10 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         registry.output_policy = { ...(registry.output_policy || {}), ...rootPolicy };
       }
 
-      const rootArrayModes = parsed.arrayModes || parsed.array_modes;
-      if (rootArrayModes && typeof rootArrayModes === "object") {
-        for (const [k, modes] of Object.entries(rootArrayModes)) {
-          if (modes && typeof modes === "object") arrayModes[k] = { ...modes };
-        }
-      }
-      const rootSectionRandom = parsed.sectionRandom || parsed.section_random;
-      if (rootSectionRandom && typeof rootSectionRandom === "object") {
-        Object.assign(sectionRandom, rootSectionRandom);
-      }
-      const rootSectionSliders = parsed.sectionSliders || parsed.section_sliders || parsed.sliders;
-      if (rootSectionSliders && typeof rootSectionSliders === "object") {
-        Object.assign(sectionSliders, rootSectionSliders);
-      }
-      const rootSliderRandom =
-        parsed.sectionSliderRandom || parsed.section_slider_random || parsed.slider_random;
-      if (rootSliderRandom && typeof rootSliderRandom === "object") {
-        Object.assign(sectionSliderRandom, rootSliderRandom);
-      }
-      const rootTvarValues = parsed.tvarValues || parsed.templateVars || parsed.template_vars;
-      if (rootTvarValues && typeof rootTvarValues === "object") {
-        for (const [k, val] of Object.entries(rootTvarValues)) {
-          if (val == null) continue;
-          tvarValues[k] = String(val);
+      const rootState = parsed.state;
+      if (rootState && typeof rootState === "object" && !Array.isArray(rootState)) {
+        for (const [k, ss] of Object.entries(rootState)) {
+          _applyV2SectionState(k, ss);
         }
       }
     }
@@ -1265,11 +1418,13 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     applyGenOverridesToInputs(registry.generation || {});
     populatePolicyEditor(registry.output_policy || {});
     buildControls();
-    const loadedSelections = { ...bakedSelections, ...(parsed.selections || parsed.selected || {}) };
+    const loadedSelections = { ...bakedSelections };
     defaultArrayModesForSelection(loadedSelections);
     applySelections(loadedSelections);
     refreshSectionPreviews();
     refreshMemoryUI();
+    _memorySessionId = null;
+    fetch("/api/memory/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }).catch(() => {});
   }
 
   function consumeBuilderHandoff() {
@@ -1345,12 +1500,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       name: base.name || title,
       savedAt: new Date().toISOString(),
       registry: snap.registry,
-      selections: snap.selections,
-      arrayModes: snap.arrayModes,
-      sectionRandom: snap.sectionRandom,
-      sectionSliders: snap.sectionSliders,
-      sectionSliderRandom: snap.sectionSliderRandom,
-      tvarValues: snap.tvarValues,
+      state: snap.state,
       ...(snap.output_policy ? { output_policy: snap.output_policy } : {}),
     };
   }
@@ -1407,16 +1557,13 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     examplesList.innerHTML = `<div class="muted" style="padding:8px">Loading…</div>`;
     examplesModal.hidden = false;
     try {
-      const manifests = await Promise.allSettled([
-        fetchExampleManifest("/static/examples/index.json", "/static/examples", "Studio"),
-        fetchExampleManifest("/static/builder-examples/index.json", "/static/builder-examples", "Builder"),
-      ]);
-      const examples = manifests.flatMap((result) =>
-        result.status === "fulfilled" ? result.value : []
+      const examples = await fetchExampleManifest(
+        "/static/builder-examples/index.json",
+        "/static/builder-examples",
+        "Example"
       );
       if (!examples.length) {
-        const err = manifests.find((result) => result.status === "rejected")?.reason;
-        throw new Error(err?.message || "No examples shipped.");
+        throw new Error("No examples found.");
       }
       const items = examples.map((ex, i) => {
         const name = escapeHtml(ex.name || ex.file || `example_${i}`);
@@ -1550,7 +1697,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         });
       } else if (val != null) {
         const sel = host.querySelector(`select[data-section="${key}"]`);
-        if (sel) sel.value = val;
+        if (sel) sel.value = sectionRandom[key] ? "__random__" : val;
       }
     }
   }
@@ -1565,16 +1712,32 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       name,
       savedAt: new Date().toISOString(),
       registry: reg,
-      selections: captureSelections(),
-      arrayModes: JSON.parse(JSON.stringify(arrayModes)),
-      sectionRandom: JSON.parse(JSON.stringify(sectionRandom)),
-      sectionSliders: JSON.parse(JSON.stringify(sectionSliders)),
-      sectionSliderRandom: JSON.parse(JSON.stringify(sectionSliderRandom)),
-      tvarValues: JSON.parse(JSON.stringify(tvarValues)),
+      state: snapshotActiveState(),
     };
     const policy = readPolicyEditor();
     if (policy) snap.output_policy = policy;
     return snap;
+  }
+
+  // Restore internal state vars from a v2 state sections dict.
+  function _applyV2StateToVars(stateDict) {
+    if (!stateDict || typeof stateDict !== "object") return;
+    const sels = {};
+    for (const [key, ss] of Object.entries(stateDict)) {
+      if (!ss || typeof ss !== "object") continue;
+      if (ss.selected !== undefined && ss.selected !== null) sels[key] = ss.selected;
+      if (typeof ss.section_random === "boolean") sectionRandom[key] = ss.section_random;
+      if (ss.array_modes && typeof ss.array_modes === "object") arrayModes[key] = { ...ss.array_modes };
+      if (typeof ss.slider === "number") sectionSliders[key] = ss.slider;
+      if (typeof ss.slider_random === "boolean") sectionSliderRandom[key] = ss.slider_random;
+      if (ss.template_vars && typeof ss.template_vars === "object") {
+        for (const [v, val] of Object.entries(ss.template_vars)) {
+          if (val == null) continue;
+          tvarValues[`${key}::${v}`] = String(val);
+        }
+      }
+    }
+    return sels;
   }
 
   function restoreSnapshot(snap) {
@@ -1582,15 +1745,15 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     clearLoadedExample();
     registry = JSON.parse(JSON.stringify(snap.registry));
     Object.keys(arrayModes).forEach((k) => delete arrayModes[k]);
-    Object.assign(arrayModes, snap.arrayModes || {});
     Object.keys(sectionRandom).forEach((k) => delete sectionRandom[k]);
-    Object.assign(sectionRandom, snap.sectionRandom || {});
     Object.keys(sectionSliders).forEach((k) => delete sectionSliders[k]);
-    Object.assign(sectionSliders, snap.sectionSliders || {});
     Object.keys(sectionSliderRandom).forEach((k) => delete sectionSliderRandom[k]);
-    Object.assign(sectionSliderRandom, snap.sectionSliderRandom || {});
     Object.keys(tvarValues).forEach((k) => delete tvarValues[k]);
-    Object.assign(tvarValues, snap.tvarValues || {});
+
+    let selections = {};
+    if (snap.state && typeof snap.state === "object") {
+      selections = _applyV2StateToVars(snap.state) || {};
+    }
 
     const title = registry.title || "registry";
     const ver = registry.version != null ? ` v${registry.version}` : "";
@@ -1599,7 +1762,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     applyGenOverridesToInputs(registry.generation || snap.generation || {});
     populatePolicyEditor(snap.output_policy || registry.output_policy || {});
     buildControls();
-    applySelections(snap.selections || {});
+    applySelections(selections);
     refreshSectionPreviews();
     refreshMemoryUI();
 
@@ -1719,7 +1882,8 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
 
       if (sec.required) {
         const selEl = host.querySelector(`select[data-section="${key}"]`);
-        out[key].selected = selEl ? selEl.value : null;
+        const selVal = selEl ? selEl.value : null;
+        out[key].selected = (selVal === "__random__") ? null : selVal;
       } else {
         out[key].selected = Array.from(
           host.querySelectorAll(`input[data-section="${key}"]:checked`)
@@ -1842,18 +2006,57 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   }
 
   function snapshotActiveState() {
-    return {
-      selections: registry ? captureSelections() : {},
-      array_modes: arrayModes,
-      section_random: sectionRandom,
-      sliders: sectionSliders,
-      slider_random: sectionSliderRandom,
-      template_vars: tvarValues,
-    };
+    const sels = registry ? captureSelections() : {};
+    const sections = {};
+    const allKeys = new Set([
+      ...Object.keys(sels),
+      ...Object.keys(arrayModes),
+      ...Object.keys(sectionRandom),
+      ...Object.keys(sectionSliders),
+      ...Object.keys(sectionSliderRandom),
+    ]);
+    // also add any section that has template var values
+    for (const k of Object.keys(tvarValues)) {
+      const sep = k.indexOf("::");
+      if (sep > 0) allKeys.add(k.slice(0, sep));
+    }
+    for (const key of allKeys) {
+      const sec = {};
+      const sel = sels[key];
+      if (sel !== undefined && sel !== null) sec.selected = sel;
+      if (sectionSliders[key] != null) sec.slider = sectionSliders[key];
+      if (sectionSliderRandom[key]) sec.slider_random = true;
+      if (sectionRandom[key]) sec.section_random = true;
+      const modes = arrayModes[key];
+      if (modes && Object.keys(modes).length) sec.array_modes = { ...modes };
+      const prefix = key + "::";
+      const tvars = {};
+      for (const [k, v] of Object.entries(tvarValues)) {
+        if (k.startsWith(prefix)) tvars[k.slice(prefix.length)] = v;
+      }
+      if (Object.keys(tvars).length) sec.template_vars = tvars;
+      if (Object.keys(sec).length) sections[key] = sec;
+    }
+    return sections;
   }
 
-  async function backendHydrate() {
-    const state = snapshotActiveState();
+  function placeholderState(state) {
+    // Deep-clone state and replace every empty template var with its {name}
+    // literal so the prompt preview shows placeholders instead of blank gaps.
+    const out = JSON.parse(JSON.stringify(state));
+    for (const sec of Object.values(out)) {
+      if (!sec || typeof sec !== "object") continue;
+      const tv = sec.template_vars;
+      if (!tv || typeof tv !== "object") continue;
+      for (const k of Object.keys(tv)) {
+        if (tv[k] === "" || tv[k] == null) tv[k] = `{${k}}`;
+      }
+    }
+    return out;
+  }
+
+  async function backendHydrate(usePlaceholders = false) {
+    const state = usePlaceholders ? placeholderState(snapshotActiveState()) : snapshotActiveState();
     const resp = await fetch("/api/registry/hydrate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1885,25 +2088,51 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     );
   }
 
+  function isMemoryRecallSelected() {
+    if (!registry || !registry.memory_recall) return false;
+    const host = $("registry-controls");
+    if (!host) return false;
+    const sel = host.querySelector('select[data-section="memory_recall"]');
+    if (sel) return !!sel.value && sel.value !== "__random__";
+    return host.querySelectorAll('input[data-section="memory_recall"]:checked').length > 0;
+  }
+
   function refreshMemoryUI() {
-    const memInputBar      = $("memory-input-bar");
     const memPipeline      = $("memory-pipeline");
     const normalOutput     = $("output-rendered");
     const rawOutput        = $("output-raw");
     const viewToggle       = $("output-view-toggle");
     const resetBtn         = $("memory-reset-btn");
     const memCfgFieldset   = $("memory-config-fieldset");
+    const infoPanelEl      = $("memory-info-panel");
     const active           = hasMemoryRules();
 
-    if (memInputBar)    memInputBar.hidden    = !active;
     if (memPipeline)    memPipeline.hidden    = !active;
     if (normalOutput)   normalOutput.hidden   =  active;
     if (rawOutput)      rawOutput.hidden      =  true;
     if (viewToggle)     viewToggle.hidden     =  active;
     if (resetBtn)       resetBtn.hidden       = !active;
     if (memCfgFieldset) memCfgFieldset.hidden = !active;
-    if (active) populateMemoryConfigPanel();
+    if (infoPanelEl)    infoPanelEl.hidden    = !active;
+    if (active) { populateMemoryConfigPanel(); refreshMemoryInfoPanel(); }
     if (!active) _memorySessionId = null;
+  }
+
+  function refreshMemoryInfoPanel() {
+    const cfg = registry?.memory_config || {};
+    const clfUrl   = cfg.classifier_url   || "http://localhost:11434";
+    const clfModel = cfg.classifier_model || "—";
+    const embUrl   = cfg.embed_url        || clfUrl;
+    const embModel = cfg.embed_model      || "nomic-embed-text";
+    const useClf   = cfg.use_classifier !== false;
+
+    const infoClf = $("mem-info-classifier");
+    const infoEmb = $("mem-info-embedder");
+    const infoToggle = $("mem-info-use-classifier");
+
+    if (infoClf) infoClf.textContent = `${clfModel} @ ${clfUrl}`;
+    if (infoEmb) infoEmb.textContent = `${embModel} @ ${embUrl}`;
+    if (infoToggle) infoToggle.checked = useClf;
   }
 
   function populateMemoryConfigPanel() {
@@ -1911,6 +2140,11 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     const set = (id, val) => { const el = $(id); if (el && val != null) el.value = val; };
     set("studio-mem-classifier-url",   cfg.classifier_url);
     set("studio-mem-classifier-model", cfg.classifier_model);
+    const hasEmbedUrl = !!cfg.embed_url;
+    const embedCb = $("studio-mem-use-embed-url");
+    if (embedCb) embedCb.checked = hasEmbedUrl;
+    const embedSec = $("studio-mem-embed-url-section");
+    if (embedSec) embedSec.hidden = !hasEmbedUrl;
     set("studio-mem-embed-url",        cfg.embed_url);
     set("studio-mem-embed-model",      cfg.embed_model);
     set("studio-mem-top-k",            cfg.top_k);
@@ -1924,12 +2158,19 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     const cfg = {};
     const cu = read("studio-mem-classifier-url");   if (cu) cfg.classifier_url   = cu;
     const cm = read("studio-mem-classifier-model"); if (cm) cfg.classifier_model = cm;
-    const eu = read("studio-mem-embed-url");        if (eu) cfg.embed_url        = eu;
-    const em = read("studio-mem-embed-model");      if (em) cfg.embed_model      = em;
+    const useEmbedUrl = $("studio-mem-use-embed-url")?.checked;
+    if (useEmbedUrl) {
+      const eu = read("studio-mem-embed-url"); if (eu) cfg.embed_url = eu;
+    }
+    const em = read("studio-mem-embed-model"); if (em) cfg.embed_model = em;
     const tk = readNum("studio-mem-top-k");         if (tk) cfg.top_k            = tk;
     const pk = readNum("studio-mem-prune-keep");    if (pk != null) cfg.prune_keep = pk;
+    const ucEl = $("mem-info-use-classifier");
+    if (ucEl) cfg.use_classifier = ucEl.checked;
     // preserve other keys (store_path, personality_file) from registry
-    registry.memory_config = { ...(registry.memory_config || {}), ...cfg };
+    const merged = { ...(registry.memory_config || {}), ...cfg };
+    if (!useEmbedUrl) delete merged.embed_url;
+    registry.memory_config = merged;
   }
 
   // Wire memory config panel inputs to sync back into registry on change
@@ -1937,6 +2178,15 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
    "studio-mem-embed-model","studio-mem-top-k","studio-mem-prune-keep"].forEach((id) => {
     $(id)?.addEventListener("change", syncMemoryConfigFromPanel);
   });
+
+  $("studio-mem-use-embed-url")?.addEventListener("change", () => {
+    const cb = $("studio-mem-use-embed-url");
+    const sec = $("studio-mem-embed-url-section");
+    if (sec) sec.hidden = !cb?.checked;
+    syncMemoryConfigFromPanel();
+  });
+
+  $("mem-info-use-classifier")?.addEventListener("change", syncMemoryConfigFromPanel);
 
   const studioMemFetchBtn = $("studio-mem-fetch-btn");
   if (studioMemFetchBtn) {
@@ -2258,15 +2508,14 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   if (generateBtn) {
     generateBtn.addEventListener("click", async () => {
       if (!registry) return;
+      const missingTvars = collectMissingTvars();
+      showTvarWarning(missingTvars);
+      if (missingTvars.length) return;
 
       // — Memory pipeline path —
       if (hasMemoryRules()) {
-        const userInput = $("memory-user-input")?.value?.trim();
-        if (!userInput) {
-          const emptyEl = $("memory-pipeline-empty");
-          if (emptyEl) { emptyEl.hidden = false; emptyEl.textContent = "Type a message first."; }
-          return;
-        }
+        const userInputKey = Object.keys(tvarValues).find(k => k.endsWith("::user_input"));
+        const userInput = userInputKey ? (tvarValues[userInputKey] || "").trim() : "";
 
         // Show loading state in pipeline
         const pipelineEmptyEl = $("memory-pipeline-empty");
@@ -2309,6 +2558,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
               },
               session_id: _memorySessionId,
               generation_overrides: overrides,
+              skip_retrieval: !isMemoryRecallSelected(),
             }),
           });
           if (!resp.ok) throw new Error(await resp.text());
@@ -2326,6 +2576,8 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
             stage.querySelectorAll(".stage-empty, .stage-empty-root").forEach((el) => (el.hidden = true));
             const stageBanner = stage.querySelector(".stage-banner .muted");
             if (stageBanner) stageBanner.textContent = "Memory-resolved prompt — assembled after classifier + rule mutations.";
+            const memNote = $("stage-memory-note");
+            if (memNote) memNote.hidden = true;
           }
           const stageBadge = $("stage-tab-badge");
           if (stageBadge) stageBadge.hidden = false;
@@ -2384,18 +2636,22 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       setOutput("(building prompt…)");
 
       let prompt;
-      try {
-        prompt = await backendHydrate();
-      } catch (e) {
-        setOutput(`error building prompt: ${e.message}`);
-        return;
-      }
-
       const ta = $("input-text");
-      if (ta) {
-        ta.value = prompt;
-        ta.dispatchEvent(new Event("input", { bubbles: true }));
-        ta.dispatchEvent(new Event("change", { bubbles: true }));
+      if (ta && ta.dataset.fromPregen === "1" && ta.value.trim()) {
+        prompt = ta.value;
+        delete ta.dataset.fromPregen;
+      } else {
+        try {
+          prompt = await backendHydrate();
+        } catch (e) {
+          setOutput(`error building prompt: ${e.message}`);
+          return;
+        }
+        if (ta) {
+          ta.value = prompt;
+          ta.dispatchEvent(new Event("input", { bubbles: true }));
+          ta.dispatchEvent(new Event("change", { bubbles: true }));
+        }
       }
       setOutput("(generating…)");
 
@@ -2482,6 +2738,9 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       "click",
       async (e) => {
         if (!registry) return;
+        const missingTvars = collectMissingTvars();
+        showTvarWarning(missingTvars);
+        if (missingTvars.length) return;
         e.stopImmediatePropagation();
         e.preventDefault();
 
@@ -2517,7 +2776,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
 
         let text;
         try {
-          text = await backendHydrate();
+          text = await backendHydrate(true);
         } catch (e) {
           showInStage(`error building prompt: ${e.message}`, true);
           return;
@@ -2525,9 +2784,13 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
 
         showInStage(text || "(empty — no tokens resolved)");
 
+        const memNote = $("stage-memory-note");
+        if (memNote) memNote.hidden = !hasMemoryRules();
+
         const ta = $("input-text");
         if (ta) {
           ta.value = text;
+          ta.dataset.fromPregen = "1";
           ta.dispatchEvent(new Event("input", { bubbles: true }));
           ta.dispatchEvent(new Event("change", { bubbles: true }));
         }
@@ -2589,6 +2852,31 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
           <li><strong>Config</strong> — connection details and generation overrides actually used.</li>
           <li><strong>Attempts / Usage</strong> — response text and token usage from Ollama.</li>
         </ul>`,
+    },
+    embedding: {
+      title: "Embedding Layer",
+      body: `<p>The embedding layer converts conversation text into vectors for semantic memory search. When a new message arrives, it's embedded and compared against stored conversation history to surface the most relevant past context — this becomes the <code>{memory_recall}</code> variable in your prompt.</p>
+        <h4>Do I need a separate embed URL?</h4>
+        <p>No. If unchecked, embedding runs against the same server as your classifier (<code>classifier_url</code>). Ollama serves both chat and embedding models on the same port, so one server is usually sufficient.</p>
+        <p>Enable this only if you want a dedicated embedding server — e.g. a different machine, a specialized service, or a separate Ollama instance with a faster embedding model.</p>
+        <h4>Getting an embedding model (Ollama)</h4>
+        <pre style="background:var(--panel-2);padding:8px 12px;border-radius:6px;font-size:12px;margin:8px 0">ollama pull nomic-embed-text</pre>
+        <p>Then run <code>ollama serve</code>. Default Ollama port is <strong>11434</strong>.</p>
+        <h4>Common embedding models</h4>
+        <ul>
+          <li><code>nomic-embed-text</code> — fast, good general-purpose embeddings</li>
+          <li><code>mxbai-embed-large</code> — higher quality, larger model</li>
+          <li><code>all-minilm</code> — very small and quick</li>
+        </ul>
+        <h4>CORS</h4>
+        <p>Your Ollama / llama.cpp server needs to allow the Studio origin. Without it the browser's CORS check silently blocks the request and you'll see a "Can't reach server" failure that isn't actually a network problem.</p>
+        <div class="cors-tab-bar">
+          <button type="button" id="cors-btn-win" class="cors-tab-btn cors-tab-active" onclick="switchCorsTab('win')">Windows (PowerShell)</button>
+          <button type="button" id="cors-btn-nix" class="cors-tab-btn" onclick="switchCorsTab('nix')">Linux / macOS</button>
+        </div>
+        <pre id="cors-tab-win" class="cors-pre">$env:OLLAMA_ORIGINS="${window.location.origin}"
+ollama serve</pre>
+        <pre id="cors-tab-nix" class="cors-pre" hidden>OLLAMA_ORIGINS=${window.location.origin} ollama serve</pre>`,
     },
   };
 

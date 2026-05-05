@@ -22,10 +22,10 @@ from pydantic import BaseModel, Field
 
 from promptlibretto import (
     Engine,
-    HydrateState,
     MockProvider,
     OllamaProvider,
     Registry,
+    RegistryState,
 )
 
 router = APIRouter(prefix="/api/registry")
@@ -49,18 +49,9 @@ class LoadRequest(BaseModel):
     registry: dict[str, Any] = Field(..., description="Registry JSON (wrapped or bare).")
 
 
-class StateBody(BaseModel):
-    selections: dict[str, Any] = Field(default_factory=dict)
-    array_modes: dict[str, dict[str, str]] = Field(default_factory=dict)
-    section_random: dict[str, bool] = Field(default_factory=dict)
-    sliders: dict[str, float] = Field(default_factory=dict)
-    slider_random: dict[str, bool] = Field(default_factory=dict)
-    template_vars: dict[str, str] = Field(default_factory=dict)
-
-
 class HydrateRequest(BaseModel):
     registry: dict[str, Any]
-    state: StateBody = Field(default_factory=StateBody)
+    state: dict[str, Any] = Field(default_factory=dict)
     route: Optional[str] = None
     seed: Optional[int] = None
 
@@ -114,7 +105,7 @@ def load(req: LoadRequest) -> dict[str, Any]:
 def hydrate(req: HydrateRequest) -> dict[str, Any]:
     try:
         eng = Engine(req.registry)
-        state = HydrateState.from_dict(req.state.model_dump())
+        state = RegistryState.from_dict(req.state)
         prompt = eng.hydrate(state, route=req.route, seed=req.seed)
     except Exception as e:
         raise HTTPException(400, f"hydrate failed: {e}")
@@ -125,7 +116,7 @@ def hydrate(req: HydrateRequest) -> dict[str, Any]:
 async def generate(req: GenerateRequest) -> dict[str, Any]:
     try:
         eng = Engine(req.registry, provider=_build_provider())
-        state = HydrateState.from_dict(req.state.model_dump())
+        state = RegistryState.from_dict(req.state)
         result = await eng.run(state, route=req.route, seed=req.seed)
     except Exception as e:
         raise HTTPException(500, f"generate failed: {e}")

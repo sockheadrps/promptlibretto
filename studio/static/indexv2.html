@@ -14,10 +14,10 @@
     <div class="header-brand">
       <h1>promptlibretto</h1>
       <nav class="header-page-nav">
+        <a href="/builder" class="header-page-link">Builder</a>
         <span class="header-page-link active">Studio</span>
+        <a href="/ensemble" class="header-page-link">Ensemble</a>
       </nav>
-      <a href="/builder" class="header-nav-btn">Builder</a>
-      <a href="/ensemble" class="header-nav-btn">Ensemble</a>
       <button id="snapshots-btn" type="button" class="header-nav-btn">Snapshots</button>
       <span id="snapshot-indicator" class="snapshot-indicator" hidden>
         <span id="snapshot-name" class="snapshot-name"></span>
@@ -63,6 +63,15 @@
           <div id="registry-controls" class="registry-controls"></div>
           <div id="registry-empty" class="muted registry-empty">
             Import a registry JSON (from the Model Registry Builder) to fill the inputs from its <code>sections</code> + <code>assembly_order</code>.
+          </div>
+        </fieldset>
+
+        <fieldset class="field memory-info-panel" id="memory-info-panel" hidden>
+          <legend class="field-label">Memory</legend>
+          <div class="memory-info-rows">
+            <div class="memory-info-row"><span class="memory-info-key">Classifier</span><span id="mem-info-classifier" class="memory-info-val muted">—</span></div>
+            <div class="memory-info-row"><span class="memory-info-key">Embedder</span><span id="mem-info-embedder" class="memory-info-val muted">—</span></div>
+            <label class="memory-info-row memory-info-toggle"><span class="memory-info-key">use_classifier</span><input id="mem-info-use-classifier" type="checkbox" checked /></label>
           </div>
         </fieldset>
 
@@ -144,10 +153,13 @@
                 <button id="studio-mem-fetch-btn" type="button" class="ghost small" title="Fetch available models from classifier_url">↺</button>
               </div>
             </label>
-            <label><span>embed_url</span><input id="studio-mem-embed-url" type="text" placeholder="http://localhost:11434" /></label>
+            <label class="mem-embed-toggle-label"><input type="checkbox" id="studio-mem-use-embed-url" /> <span>Use Additional Embedding URL? <span class="label-hint">if unchecked, uses classifier_url</span></span><button type="button" class="help" data-help="embedding">?</button></label>
+            <div id="studio-mem-embed-url-section" hidden>
+              <label><span>embed_url</span><input id="studio-mem-embed-url" type="text" placeholder="http://localhost:11434" /></label>
+            </div>
             <label><span>embed_model</span><input id="studio-mem-embed-model" type="text" placeholder="nomic-embed-text" /></label>
             <label><span>top_k</span><input id="studio-mem-top-k" type="number" min="1" step="1" placeholder="5" /></label>
-            <label><span>prune_keep</span><input id="studio-mem-prune-keep" type="number" min="0" step="10" placeholder="200" /></label>
+            <label><span>prune_keep</span><input id="studio-mem-prune-keep" type="number" min="1" step="1" max="10" placeholder="10" /></label>
           </div>
         </fieldset>
       </div>
@@ -178,6 +190,7 @@
           </div>
         </div>
       </header>
+      <div id="tvar-warning" class="tvar-warning" hidden></div>
       <nav class="output-tabs" role="tablist">
         <div class="output-tab" data-output-tab="output" role="tab" aria-selected="true">Output</div>
         <div class="output-tab" data-output-tab="stage" role="tab" aria-selected="false">Pre-generate <span id="stage-tab-badge" class="muted" hidden>· staged</span></div>
@@ -203,12 +216,8 @@
           <textarea id="output-raw" class="output-text output-raw-edit" hidden readonly>(no generation yet)</textarea>
 
           <!-- Memory pipeline — shown instead of the above when memory rules are active -->
-          <div id="memory-input-bar" class="memory-input-bar" hidden>
-            <label for="memory-user-input" class="memory-input-label">User message</label>
-            <textarea id="memory-user-input" class="memory-user-input" rows="2" placeholder="Type the user's message — Generate will run the full memory pipeline…"></textarea>
-          </div>
           <div id="memory-pipeline" class="memory-pipeline" hidden>
-            <div id="memory-pipeline-empty" class="pipeline-empty">Type a message above and hit <strong>Generate</strong> to run the memory pipeline.</div>
+            <div id="memory-pipeline-empty" class="pipeline-empty">Hit <strong>Generate</strong> to run the memory pipeline.</div>
             <div id="memory-pipeline-track" class="pipeline-track" hidden>
 
               <div class="pipeline-step" id="pipe-input-step">
@@ -303,6 +312,7 @@
               <span class="spacer"></span>
               <button id="stage-reset" type="button" class="ghost small" title="Discard and re-run Pre-generate">Reset</button>
             </div>
+            <div id="stage-memory-note" class="stage-memory-note" hidden>Memory vars (memory_recall, system_summary, rule_ending) are empty here — run <strong>Generate</strong> to see the memory-resolved prompt.</div>
             <div class="stage-empty-root muted" hidden>Click <strong>Pre-generate</strong> to resolve the current prompt.</div>
             <div class="stage-group" data-group="user">
               <div class="stage-list" data-list="user"></div>

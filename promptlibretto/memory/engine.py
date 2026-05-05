@@ -68,11 +68,13 @@ class MemoryEngine:
         system_summary_every_n_turns: int = 3,
         system_summary_max_tokens: int = 300,
         system_summary_skip_section_keys: Optional[list[str]] = None,
+        use_classifier: bool = True,
     ) -> None:
         self._engine = engine
         self._store = store
         self._classifier = classifier
         self._router = router
+        self._use_classifier = use_classifier
         self._personality = personality
         self.session_id = session_id or str(uuid.uuid4())
         self._top_k = top_k
@@ -92,7 +94,13 @@ class MemoryEngine:
         self._system_summary = system_summary
         self._system_summary_every_n = max(1, int(system_summary_every_n_turns))
         self._system_summary_max_tokens = int(system_summary_max_tokens)
-        self._system_summary_skip = list(system_summary_skip_section_keys or ["output_prompt_directions"])
+        self._system_summary_skip = list(system_summary_skip_section_keys or [
+            "output_prompt_directions",
+            "base_context",
+            "personas",
+            "sentiment",
+            "static_injections",
+        ])
         self._system_summary_last_at = 0  # model-turn counter at last summary update
         self._system_summary_model_turns = 0  # counts ONLY model-turns we summarized for
 
@@ -117,9 +125,15 @@ class MemoryEngine:
             state = base_state
 
         chunks = await self._store.retrieve(user_input, top_k=self._top_k)
-        clf_result = await self._classifier.extract_tags(
-            user_input, chunks, self._router.known_tags
-        )
+        known_tags = self._router.known_tags
+        if self._use_classifier and known_tags:
+            clf_result = await self._classifier.extract_tags(
+                user_input, chunks, known_tags,
+                tag_descriptions=self._router.tag_descriptions or None,
+            )
+        else:
+            from .classifier import ClassifierResult
+            clf_result = ClassifierResult(model=self._classifier._model)
         tags = clf_result.tags
         mutated = self._router.mutate(state, tags)
         applied: list[str] = getattr(mutated, "_applied_rules", [])
@@ -127,13 +141,18 @@ class MemoryEngine:
         if self._personality is not None:
             mutated = self._personality.merge_into_state(mutated)
 
-        history = self._store.recent_turns(self.session_id, limit=self._history_window)
+        # If a system summary exists, it covers the older history — only keep
+        # the last 2 turns as immediate context so the prompt stays compact.
+        summary_text = self._system_summary.text.strip() if self._system_summary else ""
+        recent_limit = 2 if summary_text else self._history_window
+        history = self._store.recent_turns(self.session_id, limit=recent_limit)
         notes_text = self._working_notes.text if self._working_notes is not None else ""
         recall_text = _format_recall(
             history,
             chunks,
             current_session_id=self.session_id,
             working_notes=notes_text,
+            system_summary=summary_text,
         )
 
         # "What I think of the other speaker" — second retrieval keyed by the
@@ -148,8 +167,8 @@ class MemoryEngine:
             )
 
         for sec_key, sec in self._engine.registry.sections.items():
-            # Collect all template_vars declared by any item in this section
-            all_vars: set[str] = set()
+            # Collect template_vars declared at the section level or on any item.
+            all_vars: set[str] = set(sec.template_vars or [])
             for item in sec.items:
                 all_vars.update(item.get("template_vars") or [])
             if not all_vars:
@@ -167,6 +186,10 @@ class MemoryEngine:
                 sec_state.template_vars["thoughts_about_other"] = thoughts_about_other
             if "working_notes" in all_vars:
                 sec_state.template_vars["working_notes"] = notes_text
+            if "system_summary" in all_vars:
+                sec_state.template_vars["system_summary"] = ""  # now embedded in recall_text
+            if "rule_ending" in all_vars:
+                sec_state.template_vars["rule_ending"] = getattr(mutated, "_rule_ending_text", "")
 
         # Cache a "who you are" context using the SELECTED persona for this
         # turn — used by the next working-notes update so notes stay in-voice.
@@ -209,23 +232,25 @@ class MemoryEngine:
         ):
             count = len(self._session_turns)
             if count - self._notes_last_update_at >= self._notes_every_n:
-                self._notes_last_update_at = count
-                try:
-                    persona = self._build_persona_context()
-                    await self._working_notes.update(
-                        self._session_turns,
-                        self._notes_provider,
-                        self._notes_model,
-                        max_tokens=self._notes_max_tokens,
-                        persona=persona,
-                        self_name=self._participant_name or "you",
-                        other_name=self._last_other_name or "the other person",
-                        about_me_prompt=self._notes_about_me_prompt,
-                        about_other_prompt=self._notes_about_other_prompt,
-                    )
-                except Exception:
-                    # Notes are best-effort; never fail a turn over them.
-                    pass
+                roles_present = {t.role for t in self._session_turns}
+                if "user" in roles_present and "assistant" in roles_present:
+                    self._notes_last_update_at = count
+                    try:
+                        persona = self._build_persona_context()
+                        await self._working_notes.update(
+                            self._session_turns,
+                            self._notes_provider,
+                            self._notes_model,
+                            max_tokens=self._notes_max_tokens,
+                            persona=persona,
+                            self_name=self._participant_name or "you",
+                            other_name=self._last_other_name or "the other person",
+                            about_me_prompt=self._notes_about_me_prompt,
+                            about_other_prompt=self._notes_about_other_prompt,
+                        )
+                    except Exception:
+                        # Notes are best-effort; never fail a turn over them.
+                        pass
 
         return turn
 
@@ -408,19 +433,22 @@ def _format_recall(
     current_session_id: str,
     max_chunks: int = 3,
     working_notes: str = "",
+    system_summary: str = "",
 ) -> str:
     """Render the participant's memory context block.
 
     Layout, in order:
+      System summary:       compressed snapshot of earlier prompt context.
       Working notes:        running summary maintained periodically.
-                            Compresses everything OLDER than recent turns.
       Recent conversation:  last N turns from THIS session, oldest-first.
-                            (history is already trimmed by history_window)
       Relevant past notes:  retrieved chunks from OTHER sessions (dedup'd).
 
     Returns "" when nothing is available, so the section renders empty.
     """
     sections: list[str] = []
+
+    if system_summary and system_summary.strip():
+        sections.append(system_summary.strip())
 
     if working_notes and working_notes.strip():
         sections.append("Working notes (your running summary):\n" + working_notes.strip())

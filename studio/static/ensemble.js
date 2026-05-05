@@ -2,128 +2,29 @@ const SNAPSHOT_KEY = "pl-registry-snapshots-v1";
 const REGISTRY_KEY = "pl-registry-v2";
 const CONN_KEY = "promptlibretto.connection.v1";
 
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
 let activeReader = null;
 let activeSessionId = null;
 const participantState = { a: null, b: null };
+let hasRun = false;
 
-// Pre-built ensemble-ready presets — each one points to a builder-example
-// JSON and ships a HydrateState that picks a sensible starting persona +
-// sentiment so the conversation runs in-character on the first turn.
-const ENSEMBLE_PRESETS = [
-  {
-    name: "Conspiracy Theorist",
-    file: "conspiracy_theorist",
-    group: "Conspiracy talk",
-    selections: { base_context: "scene", personas: "preaching", sentiment: "fired_up",
-                  output_prompt_directions: "rules", prompt_endings: "endings",
-                  memory_recall: "recall", user_message: "incoming",
-                  static_injections: [], runtime_injections: [] },
-    sliders: { sentiment: 8 },
-  },
-  {
-    name: "Patient Friend",
-    file: "patient_friend",
-    group: "Conspiracy talk",
-    selections: { base_context: "scene", personas: "curious", sentiment: "warm",
-                  output_prompt_directions: "rules", prompt_endings: "endings",
-                  memory_recall: "recall", user_message: "incoming",
-                  static_injections: [] },
-    sliders: { sentiment: 6 },
-  },
-  {
-    name: "Detective",
-    file: "detective",
-    group: "Interrogation",
-    selections: { base_context: "scene", personas: "rapport", sentiment: "interested",
-                  output_prompt_directions: "rules", prompt_endings: "endings",
-                  memory_recall: "recall", user_message: "incoming",
-                  static_injections: [] },
-    sliders: { sentiment: 5 },
-  },
-  {
-    name: "Suspect",
-    file: "suspect",
-    group: "Interrogation",
-    selections: { base_context: "scene", personas: "rehearsed", sentiment: "composed",
-                  output_prompt_directions: "rules", prompt_endings: "endings",
-                  memory_recall: "recall", user_message: "incoming" },
-    sliders: { sentiment: 7 },
-  },
-  {
-    name: "Date — fake Architect",
-    file: "first_date_architect",
-    group: "First date (mutual lies)",
-    selections: { base_context: "scene", personas: "smooth", sentiment: "playful",
-                  output_prompt_directions: "rules", prompt_endings: "endings",
-                  memory_recall: "recall", user_message: "incoming",
-                  static_injections: [] },
-    sliders: { sentiment: 7 },
-  },
-  {
-    name: "Date — fake Doctor",
-    file: "first_date_doctor",
-    group: "First date (mutual lies)",
-    selections: { base_context: "scene", personas: "warm_pro", sentiment: "open",
-                  output_prompt_directions: "rules", prompt_endings: "endings",
-                  memory_recall: "recall", user_message: "incoming",
-                  static_injections: [] },
-    sliders: { sentiment: 7 },
-  },
-  {
-    name: "Wizard Tech Support",
-    file: "wizard_tech_support",
-    group: "Wizard spellbook support",
-    selections: { base_context: "scene", personas: "fresh_grad_apprentice", sentiment: "nervous_helpful",
-                  output_prompt_directions: "rules", prompt_endings: "endings",
-                  memory_recall: "recall", user_message: "incoming",
-                  static_injections: [], runtime_injections: [] },
-    arrayModes: { personas: { base_directives: "random:1" },
-                  sentiment: { nudges: "random:1" },
-                  prompt_endings: { items: "random:1" } },
-    sliders: { sentiment: 6 },
-    templateVars: { "user_message::other_name": "Merlin" },
-  },
-  {
-    name: "Merlin With the Wrong Spellbook",
-    file: "merlin_spellbook",
-    group: "Wizard spellbook support",
-    selections: { base_context: "scene", personas: "imperious_archmage", sentiment: "grandiose",
-                  output_prompt_directions: "rules", prompt_endings: "endings",
-                  memory_recall: "recall", user_message: "incoming",
-                  static_injections: ["wrong_book_details"], runtime_injections: [] },
-    arrayModes: { personas: { base_directives: "random:1" },
-                  sentiment: { nudges: "random:1" },
-                  prompt_endings: { items: "random:1" } },
-    sliders: { sentiment: 8 },
-    templateVars: { "user_message::other_name": "Support" },
-  },
-  {
-    name: "Lost Time Traveler",
-    file: "lost_time_traveler",
-    group: "Light scene",
-    selections: { base_context: "scene", personas: "cautious", sentiment: "curious",
-                  output_prompt_directions: "rules", prompt_endings: "endings",
-                  memory_recall: "recall", user_message: "incoming" },
-    arrayModes: { personas: { base_directives: "random:1" },
-                  sentiment: { nudges: "random:1" },
-                  prompt_endings: { items: "random:1" } },
-    sliders: { sentiment: 5 },
-    templateVars: { "user_message::other_name": "Local" },
-  },
-  {
-    name: "Helpful Local",
-    file: "helpful_local",
-    group: "Light scene",
-    selections: { base_context: "scene", personas: "neighborly", sentiment: "easygoing",
-                  output_prompt_directions: "rules", prompt_endings: "endings",
-                  memory_recall: "recall", user_message: "incoming" },
-    arrayModes: { personas: { base_directives: "random:1" },
-                  sentiment: { nudges: "random:1" },
-                  prompt_endings: { items: "random:1" } },
-    sliders: { sentiment: 6 },
-    templateVars: { "user_message::other_name": "Traveler" },
-  },
-];
+// Examples loaded dynamically from builder-examples/index.json.
+let _exampleIndex = null;
+async function getExampleIndex() {
+  if (_exampleIndex) return _exampleIndex;
+  try {
+    const res = await fetch("/static/builder-examples/index.json", { cache: "no-cache" });
+    if (!res.ok) return [];
+    const data = await res.json();
+    _exampleIndex = data.examples || [];
+  } catch (_) { _exampleIndex = []; }
+  return _exampleIndex;
+}
 
 // ── connection ────────────────────────────────────────────────────
 
@@ -152,31 +53,27 @@ function renderConnChip() {
 
 // ── snapshots ─────────────────────────────────────────────────────
 
-function loadSnapshots() {
+async function loadSnapshots() {
   const raw = localStorage.getItem(SNAPSHOT_KEY);
   let snaps = [];
   try { snaps = JSON.parse(raw) || []; } catch (_) {}
 
   const current = localStorage.getItem(REGISTRY_KEY);
-
-  // Group presets by their `group` field so they show under <optgroup>s.
-  const presetGroups = {};
-  for (const p of ENSEMBLE_PRESETS) {
-    (presetGroups[p.group] ||= []).push(p);
-  }
+  const examples = await getExampleIndex();
 
   for (const side of ["a", "b"]) {
     const sel = document.getElementById(`${side}-snapshot`);
-    sel.innerHTML = '<option value="">— select —</option>';
+    sel.innerHTML = '<option value="">Load Snapshot or Example…</option>';
 
-    // Built-in presets — always available, scenario-grouped.
-    for (const [group, items] of Object.entries(presetGroups)) {
+    // Builder examples — loaded from index.json.
+    if (examples.length) {
       const og = document.createElement("optgroup");
-      og.label = group;
-      for (const p of items) {
+      og.label = "Examples";
+      for (const ex of examples) {
+        const file = (ex.file || "").replace(/\.json$/, "");
         const opt = document.createElement("option");
-        opt.value = `__preset__:${p.file}`;
-        opt.textContent = p.name;
+        opt.value = `__example__:${file}`;
+        opt.textContent = ex.name || file;
         og.appendChild(opt);
       }
       sel.appendChild(og);
@@ -196,7 +93,7 @@ function loadSnapshots() {
     // User-saved snapshots from localStorage.
     if (snaps.length) {
       const og = document.createElement("optgroup");
-      og.label = "Saved snapshots";
+      og.label = "Saved";
       for (const snap of snaps) {
         const opt = document.createElement("option");
         opt.value = snap.name;
@@ -210,15 +107,46 @@ function loadSnapshots() {
   return snaps;
 }
 
-function snapToHydrateState(snap) {
-  return {
-    selections:     snap.selections       || {},
-    array_modes:    snap.arrayModes       || {},
-    section_random: snap.sectionRandom    || {},
-    sliders:        snap.sectionSliders   || {},
-    slider_random:  snap.sectionSliderRandom || {},
-    template_vars:  snap.tvarValues       || {},
-  };
+// Convert v22-style flat state fields into v2 sections dict.
+function _legacyToV2State(selections, sliders, arrayModes, sliderRandom, sectionRandom, templateVars) {
+  const sections = {};
+  const allKeys = new Set([
+    ...Object.keys(selections || {}),
+    ...Object.keys(sliders || {}),
+    ...Object.keys(arrayModes || {}),
+    ...Object.keys(sectionRandom || {}),
+    ...Object.keys(sliderRandom || {}),
+  ]);
+  for (const k of Object.keys(templateVars || {})) {
+    const sep = k.indexOf("::");
+    if (sep > 0) allKeys.add(k.slice(0, sep));
+  }
+  for (const key of allKeys) {
+    const sec = {};
+    const sel = selections?.[key];
+    if (sel !== undefined && sel !== null) sec.selected = sel;
+    if (sliders?.[key] != null) sec.slider = sliders[key];
+    if (sliderRandom?.[key]) sec.slider_random = true;
+    if (sectionRandom?.[key]) sec.section_random = true;
+    const modes = arrayModes?.[key];
+    if (modes && Object.keys(modes).length) sec.array_modes = { ...modes };
+    const prefix = key + "::";
+    const tvars = {};
+    for (const [k, v] of Object.entries(templateVars || {})) {
+      if (k.startsWith(prefix)) tvars[k.slice(prefix.length)] = v;
+    }
+    if (Object.keys(tvars).length) sec.template_vars = tvars;
+    if (Object.keys(sec).length) sections[key] = sec;
+  }
+  return sections;
+}
+
+function snapToV2State(snap) {
+  if (snap.state && typeof snap.state === "object" && !Array.isArray(snap.state)) return snap.state;
+  return _legacyToV2State(
+    snap.selections, snap.sectionSliders, snap.arrayModes,
+    snap.sectionSliderRandom, snap.sectionRandom, snap.tvarValues
+  );
 }
 
 async function loadSnapshot(side) {
@@ -230,18 +158,15 @@ async function loadSnapshot(side) {
   let snap = null;
   let preset = null;
 
-  if (val.startsWith("__preset__:")) {
-    const file = val.slice("__preset__:".length);
-    preset = ENSEMBLE_PRESETS.find((p) => p.file === file);
-    if (preset) {
-      try {
-        const resp = await fetch(`/static/builder-examples/${file}.json`);
-        if (!resp.ok) throw new Error(`failed to fetch preset: ${resp.status}`);
-        registry = await resp.json();
-      } catch (e) {
-        setStatus(`preset load failed: ${e.message}`);
-        return;
-      }
+  if (val.startsWith("__example__:")) {
+    const file = val.slice("__example__:".length);
+    try {
+      const resp = await fetch(`/static/builder-examples/${file}.json`);
+      if (!resp.ok) throw new Error(`failed to fetch example: ${resp.status}`);
+      registry = await resp.json();
+    } catch (e) {
+      setStatus(`example load failed: ${e.message}`);
+      return;
     }
   } else if (val === "__current__") {
     const raw = localStorage.getItem(REGISTRY_KEY);
@@ -261,33 +186,92 @@ async function loadSnapshot(side) {
 
   document.getElementById(`${side}-registry`).value = JSON.stringify(registry, null, 2);
 
-  // hydrate state — from preset if available, else from snapshot
-  if (preset) {
-    participantState[side] = {
-      selections:     preset.selections     || {},
-      array_modes:    preset.arrayModes     || {},
-      section_random: preset.sectionRandom  || {},
-      sliders:        preset.sliders        || {},
-      slider_random:  preset.sliderRandom   || {},
-      template_vars:  preset.templateVars   || {},
-    };
-    // Auto-fill participant name if it's still the default A/B.
+  // hydrate state — merge snap.state (live user values) over reg.default_state
+  const reg = registry?.registry ?? registry;
+  if (reg?.default_state && typeof reg.default_state === "object") {
+    const baseState = reg.default_state;
+    const liveState = (snap?.state && typeof snap.state === "object") ? snap.state : {};
+    const merged = {};
+    for (const key of new Set([...Object.keys(baseState), ...Object.keys(liveState)])) {
+      const b = baseState[key] || {};
+      const l = liveState[key] || {};
+      merged[key] = { ...b, ...l, template_vars: { ...(b.template_vars || {}), ...(l.template_vars || {}) } };
+    }
+    participantState[side] = merged;
+    // Auto-fill participant name from registry title if still the default A/B.
     const nameEl = document.getElementById(`${side}-name`);
-    if (nameEl && /^[AB]$/i.test(nameEl.value.trim())) {
-      nameEl.value = preset.name;
+    if (nameEl && /^[AB]$/i.test(nameEl.value.trim()) && reg.title) {
+      nameEl.value = reg.title;
     }
   } else if (snap) {
-    participantState[side] = snapToHydrateState(snap);
+    participantState[side] = snapToV2State(snap);
   } else {
     participantState[side] = null;
   }
 
   // prefer model from registry generation config, fall back to studio connection model
-  const reg = registry?.registry ?? registry;
   const model = reg?.generation?.model || getStudioConnection()?.model;
   if (model) document.getElementById(`${side}-model`).value = model;
 
+  renderTvarInputs(side, reg);
   refreshSummary(side);
+}
+
+const ENSEMBLE_RUNTIME_VARS = new Set(["memory_recall", "other_name", "thoughts_about_other", "working_notes", "system_summary", "rule_ending"]);
+
+function rerenderTvars(side) {
+  const raw = document.getElementById(`${side}-registry`)?.value?.trim();
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    const reg = parsed?.registry ?? parsed;
+    renderTvarInputs(side, reg);
+  } catch (_) {}
+}
+
+function renderTvarInputs(side, reg) {
+  const container = document.getElementById(`${side}-tvars`);
+  if (!container) return;
+
+  const inputs = [];
+  if (reg && typeof reg === "object") {
+    for (const [secKey, sec] of Object.entries(reg)) {
+      if (!sec || !Array.isArray(sec.template_vars)) continue;
+      for (const v of sec.template_vars) {
+        if (ENSEMBLE_RUNTIME_VARS.has(v)) continue;
+        if (v === "user_input") continue;
+        const existing = participantState[side]?.[secKey]?.template_vars?.[v];
+        inputs.push({ secKey, varName: v, value: existing || "" });
+      }
+    }
+  }
+
+  if (!inputs.length) { container.innerHTML = ""; return; }
+
+  const rows = inputs.map(({ secKey, varName, value }) =>
+    `<label class="pcard-tvar-row">` +
+    `<span class="pcard-tvar-label"><span class="pcard-tvar-sec">${escapeHtml(secKey)}</span> · <code>${escapeHtml(varName)}</code></span>` +
+    `<input type="text" class="pcard-tvar-input" value="${escapeHtml(value)}" ` +
+    `data-tvar-side="${escapeHtml(side)}" data-tvar-sec="${escapeHtml(secKey)}" data-tvar-var="${escapeHtml(varName)}" ` +
+    `placeholder="${escapeHtml(varName)}">` +
+    `</label>`
+  ).join("");
+
+  container.innerHTML =
+    `<details class="pcard-tvars-detail" open>` +
+    `<summary class="pcard-tvars-summary">Template vars</summary>` +
+    `<div class="pcard-tvars-body">${rows}</div>` +
+    `</details>`;
+
+  container.querySelectorAll(".pcard-tvar-input").forEach((inp) => {
+    inp.addEventListener("input", () => {
+      const { tvarSide, tvarSec, tvarVar } = inp.dataset;
+      if (!participantState[tvarSide]) participantState[tvarSide] = {};
+      if (!participantState[tvarSide][tvarSec]) participantState[tvarSide][tvarSec] = {};
+      if (!participantState[tvarSide][tvarSec].template_vars) participantState[tvarSide][tvarSec].template_vars = {};
+      participantState[tvarSide][tvarSec].template_vars[tvarVar] = inp.value;
+    });
+  });
 }
 
 function refreshSummary(side) {
@@ -380,6 +364,10 @@ async function startEnsemble() {
     const aboutOther = text(`${side}-notes_about_other_prompt`);
     if (aboutMe)    out.notes_about_me_prompt    = aboutMe;
     if (aboutOther) out.notes_about_other_prompt = aboutOther;
+    const embedUrl  = text(`${side}-embed_url`);
+    const embedPath = text(`${side}-embed_path`);
+    if (embedUrl)  out.embed_url  = embedUrl;
+    if (embedPath) out.embed_path = embedPath;
     return out;
   };
 
@@ -409,7 +397,6 @@ async function startEnsemble() {
   }
 
   const seed = document.getElementById("seed").value.trim();
-  if (!seed) { setStatus("seed message is required"); return; }
 
   const conn = getStudioConnection();
   if (!conn || !conn.baseUrl) {
@@ -432,7 +419,7 @@ async function startEnsemble() {
   const modelB = document.getElementById("b-model").value.trim() || conn.model || "llama3";
 
   clearConversation();
-  showSeed(seed);
+  if (seed) showSeed(seed);
   setRunning(true);
   setStatus("connecting…");
 
@@ -497,6 +484,8 @@ async function startEnsemble() {
     }
   } finally {
     activeReader = null;
+    hasRun = true;
+    updateSeedVisibility();
     setRunning(false);
   }
 }
@@ -678,7 +667,8 @@ function speakIfEnabled(side, text, bubbleEl, onReveal) {
     const match = _voicesCache.find((v) => v.name === voiceName);
     if (match) u.voice = match;
   }
-  u.rate  = side === "a" ? 1.0 : 1.05;
+  const speedEl = document.getElementById(`${side}-tts-speed`);
+  u.rate  = speedEl ? parseFloat(speedEl.value) || 1.0 : 1.0;
   u.pitch = side === "a" ? 1.0 : 0.95;
   // Blur the bubble until its TTS actually starts playing.
   if (bubbleEl) {
@@ -771,6 +761,50 @@ async function viewStore(side) {
   } catch (e) {
     closeMemView();
     setStatus(`view memory failed: ${e.message}`);
+  }
+}
+
+async function viewPrompt(side) {
+  let registry;
+  try { registry = parseRegistry(side); }
+  catch (e) { setStatus(e.message); return; }
+  const name = document.getElementById(`${side}-name`).value.trim() || side.toUpperCase();
+  openMemView(`${name} — prompt structure`, "building…", "");
+  try {
+    // Build a state where every template var is its own {placeholder} literal.
+    const reg = registry.registry || registry;
+    // Start from the loaded participant state (preserves selections, injections,
+    // persona etc.), fall back to default_state, then placeholder all template vars.
+    const base = participantState[side] || reg.default_state || {};
+    const state = JSON.parse(JSON.stringify(base));
+    for (const [secKey, sec] of Object.entries(reg)) {
+      if (!sec || typeof sec !== "object" || !Array.isArray(sec.items)) continue;
+      const vars = new Set();
+      for (const item of sec.items) {
+        for (const v of (item.template_vars || [])) vars.add(v);
+        for (const v of (sec.template_vars || [])) vars.add(v);
+      }
+      if (!vars.size) continue;
+      if (!state[secKey]) state[secKey] = {};
+      if (!state[secKey].template_vars) state[secKey].template_vars = {};
+      for (const v of vars) {
+        state[secKey].template_vars[v] = `{${v}}`;
+      }
+    }
+    const resp = await fetch("/api/registry/hydrate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ registry, state }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    const m = document.getElementById("memview-meta");
+    const b = document.getElementById("memview-body");
+    if (m) m.textContent = "";
+    if (b) b.innerHTML = `<pre class="memview-prompt-pre">${escHtml(data.prompt || "")}</pre>`;
+  } catch (e) {
+    closeMemView();
+    setStatus(`view prompt failed: ${e.message}`);
   }
 }
 
@@ -934,6 +968,7 @@ function stopEnsemble() {
 
 let currentBubble = null;
 let turnCount = 0;
+const _sidesSpoken = new Set();
 
 function handleEvent(event, nameA, nameB) {
   if (event.type === "memory_status") {
@@ -980,6 +1015,7 @@ function handleEvent(event, nameA, nameB) {
     setStatus(`turn ${turnCount} / ${document.getElementById("turns").value}`);
     // Speak the just-finalized turn if TTS is on for that participant.
     const speakerSide = event.speaker === nameA ? "a" : "b";
+    _sidesSpoken.add(speakerSide);
     const gate = getTurnGate(event.turn);
     const reveal = () => revealTurnGate(event.turn);
     if (event.text && bubbleRef) {
@@ -1090,6 +1126,7 @@ function clearConversation() {
   currentBubble = null;
   turnCount = 0;
   _turnGates.clear();
+  _sidesSpoken.clear();
   for (const side of ["a", "b"]) {
     const meBody = document.querySelector(`#side-${side}-self .thoughts-pane-body`);
     const otBody = document.querySelector(`#side-${side}-other .thoughts-pane-body`);
@@ -1209,10 +1246,15 @@ function renderSidePanel(side, speakerName, trace) {
     }
   }
   if (otherBody) {
-    if (thoughts.other) {
+    const otherSide = side === "a" ? "b" : "a";
+    const otherHasSpoken = _sidesSpoken.has(otherSide);
+    if (thoughts.other && otherHasSpoken) {
       otherBody.innerHTML = renderMd(thoughts.other);
     } else {
-      otherBody.innerHTML = `<div class="side-panel-empty">${updateCount === 0 ? "no notes yet" : `(no notes about ${escHtml(otherName)} in latest update)`}</div>`;
+      const msg = !otherHasSpoken
+        ? `waiting for ${escHtml(otherName)} to speak…`
+        : updateCount === 0 ? "no notes yet" : `(no notes about ${escHtml(otherName)} in latest update)`;
+      otherBody.innerHTML = `<div class="side-panel-empty">${msg}</div>`;
     }
   }
 
@@ -1465,18 +1507,25 @@ function decorateSystemPrompt(text, side, trace) {
   const tvarMap = { ...(state.template_vars || {}) };
 
   // Dynamic injections that ensemble adds at run-time, sourced from the
-  // prepare_trace payload. Search every section's declared template_vars
-  // and assign the runtime values; this matches MemoryEngine.prepare's
-  // injection pattern and lights up wherever they landed.
+  // prepare_trace payload. resolved_tvars carries the actual substituted
+  // values keyed as "section::var" so the decorator can highlight them.
+  const resolved = trace?.resolved_tvars || {};
+  for (const [fullKey, val] of Object.entries(resolved)) {
+    if (val && String(val).trim()) tvarMap[fullKey] = String(val);
+  }
+  // Fallbacks for user_input / other_name when not in resolved_tvars.
   for (const [secKey, sec] of Object.entries(reg)) {
     if (!sec || typeof sec !== "object" || !Array.isArray(sec.template_vars)) continue;
     for (const v of sec.template_vars) {
       const fullKey = `${secKey}::${v}`;
-      if (v === "user_input" && trace?.user_input)        tvarMap[fullKey] = trace.user_input;
-      if (v === "other_name" && trace?.other_name)        tvarMap[fullKey] = trace.other_name;
-      if (v === "memory_recall" && trace?.memory_recall)  tvarMap[fullKey] = trace.memory_recall;
+      if (fullKey in tvarMap) continue;
+      if (v === "user_input" && trace?.user_input)   tvarMap[fullKey] = trace.user_input;
+      if (v === "other_name" && trace?.other_name)   tvarMap[fullKey] = trace.other_name;
     }
   }
+  // Highlight system_summary text directly if present.
+  const ssText = trace?.system_summary?.text?.trim();
+  if (ssText) tvarMap["__system_summary__"] = ssText;
 
   const tvars = Object.entries(tvarMap)
     .map(([k, v]) => ({ key: k, value: String(v == null ? "" : v), kind: "tvar" }))
@@ -1565,6 +1614,13 @@ function renderMdInline(s) {
 
 // ── init ──────────────────────────────────────────────────────────
 
+function updateSeedVisibility() {
+  const humanA = document.getElementById("a-human")?.checked || false;
+  const humanB = document.getElementById("b-human")?.checked || false;
+  const seedEl = document.getElementById("seed");
+  if (seedEl) seedEl.hidden = !(hasRun && (humanA || humanB));
+}
+
 function syncHumanUI() {
   const humanA = document.getElementById("a-human")?.checked || false;
   const humanB = document.getElementById("b-human")?.checked || false;
@@ -1587,16 +1643,18 @@ function syncHumanUI() {
   // Hide all model-related fields on the participant's card when human-driven.
   document.getElementById("card-a")?.classList.toggle("is-human", humanA);
   document.getElementById("card-b")?.classList.toggle("is-human", humanB);
+  updateSeedVisibility();
 }
 
 // ── Per-participant settings persistence ─────────────────────────
 const PARTICIPANT_SETTINGS_KEY = "pl-ensemble-participant-settings.v1";
 
 const PERSISTED_FIELDS = {
-  text:   ["name", "model", "notes_about_me_prompt", "notes_about_other_prompt", "tts-voice"],
+  text:   ["name", "model", "notes_about_me_prompt", "notes_about_other_prompt", "tts-voice", "embed_url", "embed_path"],
   number: ["history_window", "top_k", "working_notes_every_n_turns", "working_notes_max_tokens",
            "system_summary_every_n_turns", "system_summary_max_tokens",
-           "gen-temperature", "gen-top_p", "gen-top_k", "gen-max_tokens", "gen-repeat_penalty", "gen-retries"],
+           "gen-temperature", "gen-top_p", "gen-top_k", "gen-max_tokens", "gen-repeat_penalty", "gen-retries",
+           "tts-speed"],
   bool:   ["human", "memory", "working_notes_enabled", "system_summary_enabled", "tts"],
 };
 
@@ -1619,6 +1677,17 @@ function loadParticipantSettings() {
   let payload;
   try { payload = JSON.parse(localStorage.getItem(PARTICIPANT_SETTINGS_KEY) || "{}"); }
   catch (_) { return; }
+  const NOTE_DEFAULTS = {
+    notes_about_me_prompt:
+      "How I'm feeling, my mood, my state, decisions I've made about how to handle this. " +
+      "Use markdown — short bullets for distinct thoughts, **bold** for things I've decided, " +
+      "*italic* for emotional texture.",
+    notes_about_other_prompt:
+      "My read on them — what they want, how they're behaving, my opinion of them. " +
+      "Use markdown — short bullets for distinct observations, **bold** for things I'm sure of, " +
+      "*italic* for hunches I'm not yet certain about.",
+  };
+
   for (const side of ["a", "b"]) {
     const data = payload[side] || {};
     for (const k of [...PERSISTED_FIELDS.text, ...PERSISTED_FIELDS.number]) {
@@ -1629,6 +1698,15 @@ function loadParticipantSettings() {
       const el = document.getElementById(`${side}-${k}`);
       if (el && data[k] != null) el.checked = !!data[k];
     }
+    // Seed note-prompt fields with defaults if still empty after restore.
+    for (const [k, def] of Object.entries(NOTE_DEFAULTS)) {
+      const el = document.getElementById(`${side}-${k}`);
+      if (el && !el.value.trim()) el.value = def;
+    }
+    // Sync speed display span after restore.
+    const speedEl = document.getElementById(`${side}-tts-speed`);
+    const speedValEl = document.getElementById(`${side}-tts-speed-val`);
+    if (speedEl && speedValEl) speedValEl.textContent = parseFloat(speedEl.value).toFixed(1);
   }
 }
 
@@ -1655,6 +1733,7 @@ window.addEventListener("load", () => {
   bindSettingsAutosave();
   document.getElementById("a-human")?.addEventListener("change", syncHumanUI);
   document.getElementById("b-human")?.addEventListener("change", syncHumanUI);
+  updateSeedVisibility();
 
   for (const side of ["a", "b"]) {
     for (const id of [`${side}-name`, `${side}-model`, `${side}-human`, `${side}-memory`]) {
@@ -1664,6 +1743,16 @@ window.addEventListener("load", () => {
         el.addEventListener("input", () => refreshSummary(side));
       }
     }
+    // Re-render tvars whenever the model is confirmed (datalist pick fires input, manual entry fires change).
+    const modelEl = document.getElementById(`${side}-model`);
+    if (modelEl) {
+      const onModelInteract = () => rerenderTvars(side);
+      modelEl.addEventListener("change", onModelInteract);
+      modelEl.addEventListener("input", onModelInteract);
+    }
+    // Re-render tvars if the user directly edits the registry textarea JSON.
+    const regEl = document.getElementById(`${side}-registry`);
+    if (regEl) regEl.addEventListener("change", () => rerenderTvars(side));
     refreshSummary(side);
   }
 

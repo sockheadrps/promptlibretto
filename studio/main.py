@@ -7,17 +7,41 @@ server is intentionally thin.
 """
 from __future__ import annotations
 
+import uuid as _uuid_mod
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
 
+from .config import MULTI_TENANT, USER_ID_COOKIE
 from .registry_routes import router as registry_router
 from .ensemble_routes import router as ensemble_router
 from .memory_routes import router as memory_router
 
 app = FastAPI(title="promptlibretto studio")
+
+
+class _UserIdMiddleware(BaseHTTPMiddleware):
+    """Assign a persistent anonymous user ID cookie when MULTI_TENANT is on."""
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response = await call_next(request)
+        if MULTI_TENANT and USER_ID_COOKIE not in request.cookies:
+            response.set_cookie(
+                USER_ID_COOKIE,
+                str(_uuid_mod.uuid4()),
+                max_age=60 * 60 * 24 * 365,
+                httponly=True,
+                samesite="lax",
+            )
+        return response
+
+
+if MULTI_TENANT:
+    app.add_middleware(_UserIdMiddleware)
+
 app.include_router(registry_router)
 app.include_router(ensemble_router)
 app.include_router(memory_router)
@@ -35,7 +59,6 @@ def index() -> FileResponse:
 
 
 @app.get("/builder")
-@app.get("/templatebuilder")  # legacy bookmark — redirect-equivalent
 def builder() -> FileResponse:
     return FileResponse(_static_dir / "templatebuilder.html")
 
@@ -43,6 +66,11 @@ def builder() -> FileResponse:
 @app.get("/ensemble")
 def ensemble() -> FileResponse:
     return FileResponse(_static_dir / "ensemble.html")
+
+
+@app.get("/api/config")
+def config() -> JSONResponse:
+    return JSONResponse({"multi_tenant": MULTI_TENANT})
 
 
 @app.get("/health")

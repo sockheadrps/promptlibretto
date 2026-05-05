@@ -33,7 +33,7 @@ PRIMARY_FIELD: dict[str, str] = {
 }
 
 # Fields whose list items get a ``pre_context`` heading when rendered.
-PRE_CONTEXT_FIELDS: frozenset[str] = frozenset({"items", "examples"})
+PRE_CONTEXT_FIELDS: frozenset[str] = frozenset({"items"})
 
 # These sections never participate in the pre_context-merge rule.
 NO_MERGE_SECTIONS: frozenset[str] = frozenset({"prompt_endings"})
@@ -42,8 +42,6 @@ _BRACKET_RE = re.compile(r"^([a-z_]+)\[([^\]]+)\]$", re.IGNORECASE)
 _FIELD_BRACKET_RE = re.compile(r"^([a-z_]+)\[([^\]]+)\]$", re.IGNORECASE)
 _COLLAPSE_BLANKS = re.compile(r"\n{3,}")
 
-# Backward-compat alias: keep HydrateState pointing at RegistryState so
-# existing call sites continue to work during migration.
 HydrateState = RegistryState
 
 
@@ -94,6 +92,12 @@ def _apply_array_mode(arr: list, mode: Optional[str], rng: _random.Random) -> li
         if 0 <= i < len(arr):
             return [arr[i]]
         return []
+    if mode.startswith("indices:"):
+        try:
+            indices = [int(s) for s in mode[8:].split(",") if s.strip()]
+        except ValueError:
+            indices = []
+        return [arr[i] for i in indices if 0 <= i < len(arr)]
     return list(arr)
 
 
@@ -197,8 +201,7 @@ def _render_fragments(
     for f in item.get("fragments") or []:
         if not isinstance(f, dict):
             continue
-        # ``condition`` is v2; ``if_var``/``var`` kept for v22 compat.
-        condition = f.get("condition") or f.get("if_var") or f.get("var") or ""
+        condition = f.get("condition") or ""
         if condition:
             val = state.get(sec_key).template_vars.get(condition, "")
             if not val or not str(val).strip():
@@ -207,6 +210,29 @@ def _render_fragments(
         if text.strip():
             pieces.append(text)
     return " ".join(pieces).strip()
+
+
+def _resolve_item_with_items(
+    item: dict[str, Any],
+    sec_key: str,
+    state: RegistryState,
+    rng: _random.Random,
+) -> Optional[dict[str, Any]]:
+    """Render an item that has an ``items`` array, optionally prefixed by its ``text`` field.
+
+    Used for ``prompt_endings`` items where a preamble (user message, system
+    summary) lives in ``text`` and the response-label pool lives in ``items``.
+    """
+    list_s = _list_struct(item["items"], _get_pre_context(item), sec_key, "items", state, rng)
+    item_text = item.get("text")
+    if isinstance(item_text, str) and item_text.strip():
+        text_rendered = _apply_template_vars(item_text, sec_key, state).strip()
+        if text_rendered:
+            if list_s:
+                combined = text_rendered + "\n\n" + _struct_to_text(list_s)
+                return {"kind": "plain", "text": combined, "section": sec_key}
+            return {"kind": "plain", "text": text_rendered, "section": sec_key}
+    return list_s
 
 
 def _field_struct(
@@ -240,14 +266,19 @@ def _combine_structs(
     structs = [s for s in structs if s]
     if not structs:
         return None
+    if len(structs) == 1:
+        return structs[0]
     if all(s["kind"] == "list" for s in structs):
-        items: list[str] = []
-        pc: Optional[str] = None
-        for s in structs:
-            items.extend(s["items"])
-            if pc is None and s.get("pre_context"):
-                pc = s["pre_context"]
-        return {"kind": "list", "items": items, "pre_context": pc, "section": sec_key}
+        pre_contexts = {s.get("pre_context") for s in structs}
+        if len(pre_contexts) == 1:
+            # All share the same pre_context (including all-None) — merge into one list.
+            items: list[str] = []
+            for s in structs:
+                items.extend(s["items"])
+            return {"kind": "list", "items": items, "pre_context": structs[0].get("pre_context"), "section": sec_key}
+        # Different pre_contexts — keep each block distinct.
+        text = "\n\n".join(_struct_to_text(s) for s in structs)
+        return {"kind": "plain", "text": text, "section": sec_key} if text.strip() else None
     text = "\n\n".join(_struct_to_text(s) for s in structs)
     return (
         {"kind": "plain", "text": text, "section": sec_key} if text.strip() else None
@@ -299,10 +330,17 @@ def _resolve_groups_struct(
     items_to_render = sel if isinstance(sel, list) else ([sel] if sel else [])
     group_structs: list[dict[str, Any]] = []
     for item in items_to_render:
-        for gid in (item.get("groups") or []):
+        for gid_or_obj in (item.get("groups") or []):
+            if isinstance(gid_or_obj, dict):
+                # Inline group object — owns its own definition
+                group_item: Optional[dict[str, Any]] = gid_or_obj
+                gid = gid_or_obj.get("id") or gid_or_obj.get("name") or ""
+            else:
+                # String ID — look up in the top-level groups index
+                gid = gid_or_obj
+                group_item = group_index.get(gid)
             if group_filter and gid != group_filter:
                 continue
-            group_item = group_index.get(gid)
             if not group_item:
                 continue
             mode = state.get(sec_key).array_modes.get(f"groups[{gid}]")
@@ -323,20 +361,22 @@ def _resolve_scale_struct(
     if not sel or isinstance(sel, list):
         return None
     scale_dict: dict[str, Any] = sel.get("scale") or {}
-    label = scale_dict.get("label") or "Intensity"
-    # scale_emotion kept for v22 backward compat
-    descriptor = (
+    label = scale_dict.get("label") or "Scale"
+    raw_descriptor = (
         scale_dict.get("scale_descriptor")
-        or sel.get("scale_emotion")
         or sel.get("id")
         or "feeling"
     )
+    if isinstance(raw_descriptor, list):
+        descriptor = rng.choice(raw_descriptor) if raw_descriptor else "feeling"
+    else:
+        descriptor = raw_descriptor
     min_val = float(scale_dict.get("min_value") or 1)
     max_val = float(scale_dict.get("max_value") or 10)
     default_val = float(scale_dict.get("default_value") or 5)
     tmpl = (
         scale_dict.get("template")
-        or "On a scale of 1-10, intensity is {value} on {scale_descriptor}."
+        or "{label}: {value}/{max_value} — {scale_descriptor}."
     )
     sec_state = state.get("sentiment")
     if sec_state.slider_random or scale_dict.get("randomize"):
@@ -351,8 +391,6 @@ def _resolve_scale_struct(
         .replace("{scale_descriptor}", descriptor)
         .replace("{label}", label)
         .replace("{max_value}", str(int(max_val)))
-        # v22 compat placeholder
-        .replace("{emotion}", descriptor)
     )
     return {"kind": "plain", "text": text, "section": "sentiment"}
 
@@ -397,6 +435,14 @@ def _resolve_token_struct(
         )
         if not match:
             return None
+        # For the groups section, honour state.groups.selected when set.
+        # sel=None  → no preference, render unconditionally.
+        # sel=[]    → nothing selected, suppress all.
+        # sel=[ids] → render only listed ids.
+        if sec_key == "groups":
+            sel = state.get(sec_key).selected
+            if sel is not None and (not sel or inner_expr not in (sel if isinstance(sel, list) else [sel])):
+                return None
         if isinstance(match.get("items"), list):
             return _list_struct(
                 match["items"], _get_pre_context(match), sec_key, "items", state, rng
@@ -419,9 +465,7 @@ def _resolve_token_struct(
             return _combine_structs(structs, sec_key)
         if sel:
             if isinstance(sel.get("items"), list):
-                return _list_struct(
-                    sel["items"], _get_pre_context(sel), sec_key, "items", state, rng
-                )
+                return _resolve_item_with_items(sel, sec_key, state, rng)
             return _field_struct(sel, PRIMARY_FIELD.get(sec_key, "text"), sec_key, state, rng)
         return None
 
@@ -457,13 +501,11 @@ def _resolve_token_struct(
     )
     if pool:
         if isinstance(pool.get("items"), list):
-            return _list_struct(
-                pool["items"], _get_pre_context(pool), sec_key, "items", state, rng
-            )
+            return _resolve_item_with_items(pool, sec_key, state, rng)
         return _field_struct(pool, PRIMARY_FIELD.get(sec_key, "text"), sec_key, state, rng)
     # fallback: pool-shaped selected item
     if sel and not isinstance(sel, list) and isinstance(sel.get("items"), list):
-        return _list_struct(sel["items"], _get_pre_context(sel), sec_key, "items", state, rng)
+        return _resolve_item_with_items(sel, sec_key, state, rng)
     if isinstance(sel, list):
         pool_structs = []
         for it in sel:
@@ -544,20 +586,12 @@ def hydrate(
         if isinstance(evaluated.get("runtime_injections"), list)
         else []
     )
-    allowed: Optional[set[str]] = None
-    if active:
-        allowed = {"runtime_injections"}
-        for inj in active:
-            for s in inj.get("include_sections") or []:
-                allowed.add(s)
 
     # Resolve tokens
     resolved: list[dict[str, Any]] = []
     injections_in_order = any(t == "injections" for t in order)
     for tok in order:
         sec = _token_section(tok, reg)
-        if allowed is not None and tok != "injections" and sec not in allowed:
-            continue
         s = _resolve_token_struct(tok, reg, rs, evaluated, rng, group_index, active)
         if not s:
             continue

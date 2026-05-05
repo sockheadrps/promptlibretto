@@ -42,6 +42,18 @@ function commit(next) {
   }
 }
 
+// ── CORS tab helper (used by connection modal and embedding help modals) ──
+window.switchCorsTab = function switchCorsTab(which) {
+  const win = document.getElementById("cors-tab-win");
+  const nix = document.getElementById("cors-tab-nix");
+  const btnWin = document.getElementById("cors-btn-win");
+  const btnNix = document.getElementById("cors-btn-nix");
+  if (win) win.hidden = which !== "win";
+  if (nix) nix.hidden = which !== "nix";
+  if (btnWin) btnWin.classList.toggle("cors-tab-active", which === "win");
+  if (btnNix) btnNix.classList.toggle("cors-tab-active", which === "nix");
+};
+
 // ── Modal UI ──────────────────────────────────────────────────────
 
 function ensureModal() {
@@ -63,7 +75,14 @@ function ensureModal() {
         <p class="hint">The studio sends prompt construction instructions to your browser, which then calls your local model directly. Nothing flows through the studio server.</p>
         <div class="conn-cors-warning">
           <strong>Heads up — CORS.</strong>
-          If this studio is hosted on a different origin than your LLM (e.g. <code>https://studio.example.com</code> calling your local <code>http://localhost:11434</code>), your Ollama / llama.cpp server needs to allow that origin. Set <code>OLLAMA_ORIGINS=<span class="conn-origin-hint">&lt;studio origin&gt;</span></code> before starting Ollama (or <code>*</code> if you don't care). Without it the browser's CORS check silently blocks the request and you'll see a "Can't reach server" failure that isn't actually a network problem.
+          If this studio is hosted on a different origin than your LLM, your Ollama / llama.cpp server needs to allow that origin. Without it the browser's CORS check silently blocks the request and you'll see a "Can't reach server" failure that isn't actually a network problem.
+          <div class="cors-tab-bar">
+            <button type="button" id="cors-btn-win" class="cors-tab-btn cors-tab-active" onclick="switchCorsTab('win')">Windows (PowerShell)</button>
+            <button type="button" id="cors-btn-nix" class="cors-tab-btn" onclick="switchCorsTab('nix')">Linux / macOS</button>
+          </div>
+          <pre id="cors-tab-win" class="cors-pre">$env:OLLAMA_ORIGINS="${window.location.origin}"
+ollama serve</pre>
+          <pre id="cors-tab-nix" class="cors-pre" hidden>OLLAMA_ORIGINS=${window.location.origin} ollama serve</pre>
         </div>
         <div class="dialog-form">
           <label>Base URL
@@ -208,8 +227,6 @@ export function openConnectionModal() {
   const modal = ensureModal();
   writeForm(state);
   setStatus("");
-  const originEl = modal.querySelector(".conn-origin-hint");
-  if (originEl) originEl.textContent = window.location.origin;
   modal.hidden = false;
   // If we already have a URL, try to fetch models in the background.
   if (state.baseUrl) doTest({ manual: false });

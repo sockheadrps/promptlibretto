@@ -10,7 +10,7 @@ COPY pyproject.toml README.md ./
 COPY promptlibretto ./promptlibretto
 COPY studio ./studio
 
-RUN pip install --upgrade pip && pip install ".[studio,ollama]"
+RUN pip install --upgrade pip && pip install ".[studio,ollama,memory]"
 
 EXPOSE 8000
 

@@ -71,13 +71,13 @@ def _display_from_dict(data: dict[str, Any]) -> Display:
 class Scale:
     """Reusable scale configuration for ScalableMixin items."""
 
-    label: str = "Intensity"
+    label: str = "Scale"
     scale_descriptor: str = ""
     min_value: float = 1.0
     max_value: float = 10.0
     default_value: float = 5.0
     randomize: bool = False
-    template: str = "{label}: {value}/{max_value} - {scale_descriptor}."
+    template: str = "{label}: {value}/{max_value} — {scale_descriptor}."
 
 
 # ── Fragment ──────────────────────────────────────────────────────────
@@ -272,8 +272,14 @@ class StaticInjection(BaseItem):
 
 
 @dataclass
-class OutputDirection(BaseItem, DynamicMixin):
-    """Item for the ``output_prompt_directions`` section."""
+class OutputDirection(BaseItem, DynamicMixin, ScalableMixin):
+    """Item for the ``output_prompt_directions`` section.
+
+    The optional scale injects a descriptive linguistic register into the prompt —
+    e.g. Scale(scale_descriptor="clinical and detached", template="Register: {value}/10 — {scale_descriptor}.")
+    The slider actuates the descriptor, shaping the model's voice, not a mechanical output parameter.
+    Use ``output_prompt_directions.scale`` in assembly_order to render it.
+    """
 
     text: str = ""
     groups: list[str] = field(default_factory=list)
@@ -281,6 +287,7 @@ class OutputDirection(BaseItem, DynamicMixin):
     def to_dict(self) -> dict[str, Any]:
         out = self._base_dict()
         out.update(self._dynamic_dict())
+        out.update(self._scale_dict())
         if self.text:
             out["text"] = self.text
         if self.groups:
@@ -354,6 +361,7 @@ class Section:
     display: Display = field(default_factory=Display)
     items: list[dict[str, Any]] = field(default_factory=list)
     required: bool = True
+    template_vars: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.items = [_normalize_item(it) for it in (self.items or [])]
@@ -363,6 +371,8 @@ class Section:
             "required": self.required,
             "items": [dict(it) for it in self.items],
         }
+        if self.template_vars:
+            out["template_vars"] = list(self.template_vars)
         if self.label:
             out["label"] = self.label
         d = _display_dict(self.display)
@@ -379,6 +389,7 @@ class Section:
             display=_display_from_dict(display_data) if display_data else Display(),
             items=[dict(it) for it in (data.get("items") or [])],
             required=bool(data.get("required", True)),
+            template_vars=[str(v) for v in (data.get("template_vars") or [])],
         )
 
 

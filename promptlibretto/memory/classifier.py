@@ -40,6 +40,18 @@ Relevant past exchanges:
 
 Which tags apply? Reply with a JSON array only."""
 
+_USER_TMPL_WITH_DESC = """\
+Known tags and what each one means:
+{tag_lines}
+
+User message:
+{input}
+
+Relevant past exchanges:
+{chunks}
+
+Which tags apply? Reply with a JSON array only."""
+
 
 class Classifier:
     """Extracts memory tags from retrieved chunks via a small LLM call."""
@@ -59,6 +71,7 @@ class Classifier:
         user_input: str,
         chunks: list[MemoryChunk],
         known_tags: list[str],
+        tag_descriptions: Optional[dict[str, str]] = None,
     ) -> ClassifierResult:
         if not known_tags:
             return ClassifierResult(model=self._model, error="no known_tags configured (registry has no memory_rules)")
@@ -67,11 +80,22 @@ class Classifier:
             f"[{c.turn.role}] {c.turn.text}" for c in chunks[:6]
         ) or "(none)"
 
-        prompt = _USER_TMPL.format(
-            tags=", ".join(known_tags),
-            input=user_input.strip(),
-            chunks=chunk_text,
-        )
+        if tag_descriptions:
+            tag_lines = "\n".join(
+                f"- {t}: {tag_descriptions[t]}" if t in tag_descriptions else f"- {t}"
+                for t in known_tags
+            )
+            prompt = _USER_TMPL_WITH_DESC.format(
+                tag_lines=tag_lines,
+                input=user_input.strip(),
+                chunks=chunk_text,
+            )
+        else:
+            prompt = _USER_TMPL.format(
+                tags=", ".join(known_tags),
+                input=user_input.strip(),
+                chunks=chunk_text,
+            )
 
         request = ProviderRequest(
             model=self._model,

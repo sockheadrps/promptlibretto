@@ -13,75 +13,136 @@ import json
 
 from promptlibretto import (
     ContextItem,
-    ExampleGroup,
     Fragment,
-    HydrateState,
+    Group,
     OutputDirection,
     Persona,
     PromptEnding,
     Registry,
+    RegistryState,
     Route,
     RuntimeInjection,
+    Scale,
     Section,
-    SentimentItem,
+    SectionState,
+    Sentiment,
     StaticInjection,
     hydrate,
 )
 
 
 def build_registry() -> Registry:
-    """Create a complete schema-v22 registry with typed Python classes."""
+    """Create a complete schema-v2 registry with typed Python classes."""
+
+    # ── Groups ──────────────────────────────────────────────────────────
+    # All snippet collections live here; items reference them by id.
+
+    groups = Section(
+        id="groups",
+        required=False,
+        items=[
+            # Persona directive groups
+            Group(
+                id="curator_voice_directives",
+                label="Curator Voice — Directives",
+                items=[
+                    "Explain one historical detail before acknowledging the weird part.",
+                    "Use careful institutional language.",
+                    "Offer reassurance that sounds slightly too rehearsed.",
+                ],
+            ),
+            Group(
+                id="haunted_docent_directives",
+                label="Haunted Docent — Directives",
+                items=[
+                    "Treat supernatural activity like a known building maintenance issue.",
+                    "Politely direct visitors away from the exhibit.",
+                    "Make the warning sound like standard museum etiquette.",
+                ],
+            ),
+            Group(
+                id="overconfident_intern_directives",
+                label="Overconfident Intern — Directives",
+                items=[
+                    "Use one museum term slightly wrong.",
+                    "Over-explain the obvious.",
+                    "Sound proud that you are handling the incident.",
+                ],
+            ),
+            # Sentiment nudge groups
+            Group(
+                id="elegant_alarm_nudges",
+                items=[
+                    "Avoid saying danger directly.",
+                    "Make the warning sound like a refined courtesy.",
+                    "Use one phrase that belongs in a museum placard.",
+                ],
+            ),
+            Group(
+                id="academic_denial_nudges",
+                items=[
+                    "Call the strange event an interpretive feature.",
+                    "Reference provenance or conservation.",
+                    "Avoid admitting that the artifact moved.",
+                ],
+            ),
+            Group(
+                id="quiet_panic_nudges",
+                items=[
+                    "Keep the sentence short.",
+                    "Mention staff without explaining why.",
+                    "End with a practical instruction.",
+                ],
+            ),
+            # Shared tone examples
+            Group(
+                id="normal_examples",
+                pre_context="Tone references, if useful:",
+                items=[
+                    "Visitors are invited to continue breathing normally.",
+                    "The museum asks that guests refrain from making eye contact with the reliquary.",
+                    "This gallery is best enjoyed without sudden promises to ancient objects.",
+                    "Please keep all personal reflections inside your own reflection.",
+                ],
+            ),
+        ],
+    )
+
+    # ── Base context ─────────────────────────────────────────────────────
 
     base_context = Section(
+        id="base_context",
         required=True,
-        template_vars=["gallery", "artifact", "visitor_behavior", "weird_detail"],
-        template_var_defaults={
-            "gallery": "the nocturnal antiquities wing",
-            "artifact": "a bronze mask with no eye holes",
-            "visitor_behavior": "a visitor is whispering back to the exhibit",
-            "weird_detail": "the shadow is moving half a second late",
-        },
         items=[
             ContextItem(
-                name="tour_stop",
+                id="tour_stop",
                 text=(
                     "You are the official audio guide narrator for a prestigious "
                     "museum. You must sound calm, polished, and educational, even "
                     "when the exhibit appears to be doing something it should not do."
                 ),
-                runtime_variables=[
-                    "gallery",
-                    "artifact",
-                    "visitor_behavior",
-                    "weird_detail",
-                ],
+                template_vars=["gallery", "artifact", "visitor_behavior", "weird_detail"],
+                template_defaults={
+                    "gallery": "the nocturnal antiquities wing",
+                    "artifact": "a bronze mask with no eye holes",
+                    "visitor_behavior": "a visitor is whispering back to the exhibit",
+                    "weird_detail": "the shadow is moving half a second late",
+                },
                 fragments=[
-                    Fragment(
-                        if_var="gallery",
-                        text="Current gallery: {gallery}.",
-                    ),
-                    Fragment(
-                        if_var="artifact",
-                        text="Featured artifact: {artifact}.",
-                    ),
-                    Fragment(
-                        if_var="visitor_behavior",
-                        text="Visitor situation: {visitor_behavior}.",
-                    ),
-                    Fragment(
-                        if_var="weird_detail",
-                        text="Unverified detail: {weird_detail}.",
-                    ),
+                    Fragment(id="frag_gallery",   condition="gallery",          text="Current gallery: {gallery}."),
+                    Fragment(id="frag_artifact",  condition="artifact",         text="Featured artifact: {artifact}."),
+                    Fragment(id="frag_behavior",  condition="visitor_behavior", text="Visitor situation: {visitor_behavior}."),
+                    Fragment(id="frag_weird",     condition="weird_detail",     text="Unverified detail: {weird_detail}."),
                 ],
             )
         ],
-        selected="tour_stop",
     )
 
+    # ── Personas ─────────────────────────────────────────────────────────
+
     personas = Section(
+        id="personas",
         required=True,
-        selected="curator_voice",
-        array_modes={"base_directives": "random:1"},
         items=[
             Persona(
                 id="curator_voice",
@@ -89,11 +150,7 @@ def build_registry() -> Registry:
                     "You are a composed museum narrator. You refuse to admit panic, "
                     "but your word choices reveal you have noticed the problem."
                 ),
-                base_directives=[
-                    "Explain one historical detail before acknowledging the weird part.",
-                    "Use careful institutional language.",
-                    "Offer reassurance that sounds slightly too rehearsed.",
-                ],
+                groups=["curator_voice_directives"],
             ),
             Persona(
                 id="haunted_docent",
@@ -101,11 +158,7 @@ def build_registry() -> Registry:
                     "You are a museum docent who has seen this happen before and is "
                     "trying not to make the visitors run."
                 ),
-                base_directives=[
-                    "Treat supernatural activity like a known building maintenance issue.",
-                    "Politely direct visitors away from the exhibit.",
-                    "Make the warning sound like standard museum etiquette.",
-                ],
+                groups=["haunted_docent_directives"],
             ),
             Persona(
                 id="overconfident_intern",
@@ -113,80 +166,59 @@ def build_registry() -> Registry:
                     "You are the new intern recording emergency audio-guide updates. "
                     "You are underqualified, excited, and pretending this is fine."
                 ),
-                base_directives=[
-                    "Use one museum term slightly wrong.",
-                    "Over-explain the obvious.",
-                    "Sound proud that you are handling the incident."
-                ],
+                groups=["overconfident_intern_directives"],
             ),
         ],
     )
+
+    # ── Sentiment ────────────────────────────────────────────────────────
 
     sentiment = Section(
+        id="sentiment",
         required=True,
-        selected="elegant_alarm",
-        slider=7,
-        slider_random=True,
-        scale_template="Composure: {value}/10 - {emotion}.",
-        array_modes={
-            "nudges": "random:1",
-            "examples": "random:1",
-        },
         items=[
-            SentimentItem(
+            Sentiment(
                 id="elegant_alarm",
                 context="You are alarmed, but in a velvet-rope museum voice.",
-                scale_emotion="polished concern",
-                nudges=[
-                    "Avoid saying danger directly.",
-                    "Make the warning sound like a refined courtesy.",
-                    "Use one phrase that belongs in a museum placard.",
-                ],
-                examples=[
-                    "For your comfort, please admire the artifact from a generous distance.",
-                    "The museum recommends a slower pace through this room.",
-                    "Guests may notice a brief interpretive anomaly.",
-                ],
+                scale=Scale(
+                    scale_descriptor="polished concern",
+                    template="Composure: {value}/10 — {scale_descriptor}.",
+                    default_value=7,
+                    randomize=True,
+                ),
+                groups=["elegant_alarm_nudges"],
             ),
-            SentimentItem(
+            Sentiment(
                 id="academic_denial",
                 context="You explain everything as scholarship, even when that is absurd.",
-                scale_emotion="scholarly denial",
-                nudges=[
-                    "Call the strange event an interpretive feature.",
-                    "Reference provenance or conservation.",
-                    "Avoid admitting that the artifact moved.",
-                ],
-                examples=[
-                    "This motion should be understood as part of the viewing experience.",
-                    "The object's uncertain provenance invites multiple readings.",
-                    "Please do not interpret the whispering as a curatorial position.",
-                ],
+                scale=Scale(
+                    scale_descriptor="scholarly denial",
+                    template="Composure: {value}/10 — {scale_descriptor}.",
+                    default_value=6,
+                ),
+                groups=["academic_denial_nudges"],
             ),
-            SentimentItem(
+            Sentiment(
                 id="quiet_panic",
                 context="Your calm is cracking, but only around the edges.",
-                scale_emotion="barely contained panic",
-                nudges=[
-                    "Keep the sentence short.",
-                    "Mention staff without explaining why.",
-                    "End with a practical instruction.",
-                ],
-                examples=[
-                    "Please step away from the display case now.",
-                    "A gallery attendant is already on the way.",
-                    "Do not answer the mask if it uses your name.",
-                ],
+                scale=Scale(
+                    scale_descriptor="barely contained panic",
+                    template="Composure: {value}/10 — {scale_descriptor}.",
+                    default_value=4,
+                ),
+                groups=["quiet_panic_nudges"],
             ),
         ],
     )
 
+    # ── Static injections ────────────────────────────────────────────────
+
     static_injections = Section(
+        id="static_injections",
         required=False,
-        selected=["house_rules"],
         items=[
             StaticInjection(
-                name="house_rules",
+                id="house_rules",
                 memory_tag="unsafe_curiosity",
                 text=(
                     "Museum policy: guests should not touch artifacts, repeat phrases "
@@ -194,7 +226,7 @@ def build_registry() -> Registry:
                 ),
             ),
             StaticInjection(
-                name="incident_history",
+                id="incident_history",
                 memory_tag="artifact_recurs",
                 text=(
                     "Internal note: this artifact has previously caused cold spots, "
@@ -205,16 +237,16 @@ def build_registry() -> Registry:
         ],
     )
 
+    # ── Runtime injections ───────────────────────────────────────────────
+
     runtime_injections = Section(
+        id="runtime_injections",
         required=False,
-        template_vars=["staff_name"],
-        template_var_defaults={"staff_name": "Marisol"},
-        selected=[],
         items=[
             RuntimeInjection(
                 id="staff_arrival",
-                name="staff_arrival",
-                runtime_variables=["staff_name"],
+                template_vars=["staff_name"],
+                template_defaults={"staff_name": "Marisol"},
                 include_sections=["base_context", "personas", "sentiment"],
                 memory_tag="staff_called",
                 text=(
@@ -224,7 +256,6 @@ def build_registry() -> Registry:
             ),
             RuntimeInjection(
                 id="artifact_addressed_visitor",
-                name="artifact_addressed_visitor",
                 include_sections=["base_context", "sentiment", "static_injections"],
                 memory_tag="artifact_speaks",
                 text=(
@@ -235,25 +266,29 @@ def build_registry() -> Registry:
         ],
     )
 
+    # ── Memory recall ─────────────────────────────────────────────────────
+
     memory_recall = Section(
+        id="memory_recall",
         required=False,
-        template_vars=["memory_recall"],
-        template_var_defaults={"memory_recall": ""},
-        selected=["recall"],
         items=[
             {
-                "name": "recall",
+                "id": "recall",
                 "text": "{memory_recall}",
+                "template_vars": ["memory_recall"],
+                "template_defaults": {"memory_recall": ""},
             }
         ],
     )
 
+    # ── Output directions ─────────────────────────────────────────────────
+
     output_prompt_directions = Section(
+        id="output_prompt_directions",
         required=True,
-        selected="audio_guide_rules",
         items=[
             OutputDirection(
-                name="audio_guide_rules",
+                id="audio_guide_rules",
                 text=(
                     "Write one museum audio-guide line in polished prose. "
                     "Use 1-3 complete sentences. No headings, no bullet lists. "
@@ -264,31 +299,14 @@ def build_registry() -> Registry:
         ],
     )
 
-    examples = Section(
-        required=False,
-        selected=["normal_examples"],
-        array_modes={"items": "random:1"},
-        items=[
-            ExampleGroup(
-                name="normal_examples",
-                pre_context="Tone references, if useful:",
-                items=[
-                    "Visitors are invited to continue breathing normally.",
-                    "The museum asks that guests refrain from making eye contact with the reliquary.",
-                    "This gallery is best enjoyed without sudden promises to ancient objects.",
-                    "Please keep all personal reflections inside your own reflection.",
-                ],
-            )
-        ],
-    )
+    # ── Prompt endings ────────────────────────────────────────────────────
 
     prompt_endings = Section(
+        id="prompt_endings",
         required=True,
-        selected="endings",
-        array_modes={"items": "random:1"},
         items=[
             PromptEnding(
-                name="endings",
+                id="endings",
                 items=[
                     "Audio guide:",
                     "Museum narration:",
@@ -298,45 +316,64 @@ def build_registry() -> Registry:
         ],
     )
 
+    # ── Default state ─────────────────────────────────────────────────────
+    # What's selected when no explicit state is passed.
+
+    default_state = RegistryState(sections={
+        "base_context":             SectionState(selected="tour_stop"),
+        "personas":                 SectionState(selected="curator_voice",
+                                                 array_modes={"groups[curator_voice_directives]": "random:1"}),
+        "sentiment":                SectionState(selected="elegant_alarm",
+                                                 slider=7, slider_random=True,
+                                                 array_modes={"groups[elegant_alarm_nudges]": "random:1"}),
+        "static_injections":        SectionState(selected=["house_rules"]),
+        "runtime_injections":       SectionState(selected=[]),
+        "memory_recall":            SectionState(selected=["recall"]),
+        "groups":                   SectionState(selected=["normal_examples"]),
+        "output_prompt_directions": SectionState(selected="audio_guide_rules"),
+        "prompt_endings":           SectionState(selected="endings",
+                                                 array_modes={"items": "random:1"}),
+    })
+
     return Registry(
         title="Haunted Museum Audio Guide",
         description=(
-            "A complete Promptlibretto registry built with Python classes. "
+            "A complete Promptlibretto v2 registry built with Python classes. "
             "Generates calm museum narration for exhibits behaving incorrectly."
         ),
         assembly_order=[
             "output_prompt_directions",
             "base_context.text",
             "personas.context",
-            "personas.base_directives",
+            "personas.groups",
             "sentiment.context",
-            "sentiment.nudges",
+            "sentiment.groups",
             "sentiment.scale",
             "injections",
             "memory_recall.text",
-            "examples.normal_examples",
-            "sentiment.examples",
-            "prompt_endings.endings",
+            "groups[normal_examples]",
+            "prompt_endings",
         ],
         sections={
-            "base_context": base_context,
-            "personas": personas,
-            "sentiment": sentiment,
-            "static_injections": static_injections,
-            "runtime_injections": runtime_injections,
-            "memory_recall": memory_recall,
+            "base_context":             base_context,
+            "personas":                 personas,
+            "sentiment":                sentiment,
+            "static_injections":        static_injections,
+            "runtime_injections":       runtime_injections,
+            "memory_recall":            memory_recall,
             "output_prompt_directions": output_prompt_directions,
-            "examples": examples,
-            "prompt_endings": prompt_endings,
+            "groups":                   groups,
+            "prompt_endings":           prompt_endings,
         },
         routes={
             "short_advisory": Route(
+                id="short_advisory",
                 assembly_order=[
                     "output_prompt_directions",
                     "base_context.text",
                     "sentiment.context",
                     "injections",
-                    "prompt_endings.endings",
+                    "prompt_endings",
                 ],
                 generation={"max_tokens": 80, "temperature": 0.85},
                 output_policy={"max_length": 280},
@@ -354,32 +391,20 @@ def build_registry() -> Registry:
             "min_length": 30,
             "max_length": 500,
             "collapse_whitespace": True,
-            "forbidden_substrings": [
-                "As an AI",
-                "I cannot help",
-                "I'm an AI",
-            ],
+            "forbidden_substrings": ["As an AI", "I cannot help", "I'm an AI"],
         },
         memory_rules=[
             {
                 "tag": "unsafe_curiosity",
                 "actions": [
-                    {
-                        "type": "inject",
-                        "section": "static_injections",
-                        "item": "house_rules",
-                    },
+                    {"type": "inject", "section": "static_injections", "item": "house_rules"},
                     {"type": "sentiment", "value": "elegant_alarm"},
                 ],
             },
             {
                 "tag": "artifact_recurs",
                 "actions": [
-                    {
-                        "type": "inject",
-                        "section": "static_injections",
-                        "item": "incident_history",
-                    },
+                    {"type": "inject", "section": "static_injections", "item": "incident_history"},
                     {"type": "persona", "value": "haunted_docent"},
                     {"type": "sentiment", "value": "academic_denial"},
                 ],
@@ -387,22 +412,14 @@ def build_registry() -> Registry:
             {
                 "tag": "artifact_speaks",
                 "actions": [
-                    {
-                        "type": "inject",
-                        "section": "runtime_injections",
-                        "item": "artifact_addressed_visitor",
-                    },
+                    {"type": "inject", "section": "runtime_injections", "item": "artifact_addressed_visitor"},
                     {"type": "sentiment", "value": "quiet_panic"},
                 ],
             },
             {
                 "tag": "staff_called",
                 "actions": [
-                    {
-                        "type": "inject",
-                        "section": "runtime_injections",
-                        "item": "staff_arrival",
-                    },
+                    {"type": "inject", "section": "runtime_injections", "item": "staff_arrival"},
                     {"type": "persona", "value": "curator_voice"},
                 ],
             },
@@ -421,42 +438,40 @@ def build_registry() -> Registry:
             "working_notes_max_tokens": 220,
             "system_summary_enabled": False,
         },
+        default_state=default_state,
     )
 
 
-def build_demo_state() -> HydrateState:
-    """A sample state showing selections, sliders, and template variables."""
-
-    return HydrateState.from_dict(
-        {
-            "selections": {
-                "personas": "haunted_docent",
-                "sentiment": "elegant_alarm",
-                "static_injections": ["house_rules", "incident_history"],
-                "runtime_injections": [],
-                "memory_recall": ["recall"],
-                "examples": ["normal_examples"],
-                "output_prompt_directions": "audio_guide_rules",
-                "prompt_endings": "endings",
+def build_demo_state() -> RegistryState:
+    """An explicit runtime state overriding the registry defaults."""
+    return RegistryState(sections={
+        "personas": SectionState(
+            selected="haunted_docent",
+            array_modes={"groups[haunted_docent_directives]": "index:0"},
+        ),
+        "sentiment": SectionState(
+            selected="elegant_alarm",
+            slider=8,
+            array_modes={"groups[elegant_alarm_nudges]": "index:1"},
+        ),
+        "base_context": SectionState(
+            selected="tour_stop",
+            template_vars={
+                "gallery":          "the closed Egyptian wing",
+                "artifact":         "a mirror that reflects yesterday's visitors",
+                "visitor_behavior": "someone asked the mirror for directions",
+                "weird_detail":     "the reflection pointed toward the basement",
             },
-            "array_modes": {
-                "personas": {"base_directives": "index:0"},
-                "sentiment": {"nudges": "index:1", "examples": "index:0"},
-                "examples": {"items": "index:1"},
-                "prompt_endings": {"items": "index:0"},
-            },
-            "sliders": {"sentiment": 8},
-            "template_vars": {
-                "base_context::gallery": "the closed Egyptian wing",
-                "base_context::artifact": "a mirror that reflects yesterday's visitors",
-                "base_context::visitor_behavior": "someone asked the mirror for directions",
-                "base_context::weird_detail": "the reflection pointed toward the basement",
-                "memory_recall::memory_recall": (
-                    "Earlier, a guest said the mirror repeated their name."
-                ),
-            },
-        }
-    )
+        ),
+        "memory_recall": SectionState(
+            selected=["recall"],
+            template_vars={"memory_recall": "Earlier, a guest said the mirror repeated their name."},
+        ),
+        "static_injections":        SectionState(selected=["house_rules", "incident_history"]),
+        "runtime_injections":       SectionState(selected=[]),
+        "output_prompt_directions": SectionState(selected="audio_guide_rules"),
+        "prompt_endings":           SectionState(selected="endings", array_modes={"items": "index:0"}),
+    })
 
 
 def main() -> None:

@@ -6,11 +6,13 @@ import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from promptlibretto import Engine, OllamaProvider, Registry, load_registry
+from .config import MULTI_TENANT, USER_ID_COOKIE
+
+from promptlibretto import Engine, OllamaProvider, Registry, RegistryState, load_registry
 from ensemble.engine import EnsembleEngine, Participant
 
 router = APIRouter(prefix="/api/ensemble")
@@ -24,10 +26,15 @@ def _safe_name(s: str) -> str:
     return "".join(c if c in _SAFE_CHARS else "_" for c in s) or "default"
 
 
-def _stores_dir() -> Path:
-    d = Path.home() / ".promptlibretto" / "memory_stores"
+def _stores_dir(user_id: str = "") -> Path:
+    base = Path.home() / ".promptlibretto" / "memory_stores"
+    d = (base / _safe_name(user_id)) if (MULTI_TENANT and user_id) else base
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _get_user_id(request: Request) -> str:
+    return request.cookies.get(USER_ID_COOKIE, "")
 
 
 async def _build_memory(
@@ -39,6 +46,7 @@ async def _build_memory(
     payload_shape: str,
     main_model: str,
     overrides: Optional[dict] = None,
+    user_id: str = "",
 ):
     """Construct a per-participant MemoryEngine + return its closeables.
 
@@ -74,8 +82,6 @@ async def _build_memory(
     pf_setting = cfg.get("personality_file") or ""
     notes_on   = bool(cfg.get("working_notes_enabled"))
     sysum_on   = bool(cfg.get("system_summary_enabled"))
-    if not has_rules and not pf_setting and not notes_on and not sysum_on:
-        return None, []
 
     classifier_url   = cfg.get("classifier_url")  or base_url
     embed_url        = cfg.get("embed_url")       or classifier_url
@@ -89,34 +95,41 @@ async def _build_memory(
     notes_about_oth  = cfg.get("notes_about_other_prompt") or None
     sysum_every_n    = int(cfg.get("system_summary_every_n_turns", 3))
     sysum_max_tokens = int(cfg.get("system_summary_max_tokens", 300))
-    sysum_skip_keys  = list(cfg.get("system_summary_skip_section_keys") or ["output_prompt_directions"])
+    sysum_skip_keys  = list(cfg.get("system_summary_skip_section_keys") or [
+        "output_prompt_directions",
+        "base_context",
+        "personas",
+        "sentiment",
+        "static_injections",
+    ])
 
     # Per-participant store path: <title>_<participant>.db so two
     # participants using the same registry still get separate stores.
     title = _safe_name(reg.title or "ensemble")
-    store_path = str(_stores_dir() / f"{title}_{_safe_name(participant_name)}.db")
+    sd = _stores_dir(user_id)
+    store_path = str(sd / f"{title}_{_safe_name(participant_name)}.db")
 
-    # Per-participant personality file: respect config if set, else default.
-    if pf_setting:
+    # Per-participant personality file: respect config if set (single-tenant only), else default.
+    if pf_setting and not MULTI_TENANT:
         pf_path = (
             pf_setting
             if Path(pf_setting).is_absolute()
-            else str(_stores_dir() / pf_setting)
+            else str(sd / pf_setting)
         )
     else:
-        pf_path = str(_stores_dir() / f"{title}_{_safe_name(participant_name)}_personality.json")
+        pf_path = str(sd / f"{title}_{_safe_name(participant_name)}_personality.json")
 
     # Working notes file lives next to the personality + store for the same
     # participant — auto path unless overridden.
     notes_setting = cfg.get("working_notes_file") or ""
-    if notes_setting:
+    if notes_setting and not MULTI_TENANT:
         notes_path = (
             notes_setting
             if Path(notes_setting).is_absolute()
-            else str(_stores_dir() / notes_setting)
+            else str(sd / notes_setting)
         )
     else:
-        notes_path = str(_stores_dir() / f"{title}_{_safe_name(participant_name)}_notes.json")
+        notes_path = str(sd / f"{title}_{_safe_name(participant_name)}_notes.json")
 
     embedder = OllamaEmbedder(
         base_url=embed_url, model=embed_model,
@@ -151,7 +164,7 @@ async def _build_memory(
         working_notes = WorkingNotesLayer(notes_path)
         working_notes.load()
     if sysum_on:
-        sysum_path = str(_stores_dir() / f"{title}_{_safe_name(participant_name)}_sysum.json")
+        sysum_path = str(sd / f"{title}_{_safe_name(participant_name)}_sysum.json")
         system_summary = SystemSummaryLayer(sysum_path)
         system_summary.load()
 
@@ -204,13 +217,13 @@ class ResetStoreRequest(BaseModel):
     participant_name: str
 
 
-def _participant_paths(reg, participant_name: str) -> dict[str, str]:
+def _participant_paths(reg, participant_name: str, user_id: str = "") -> dict[str, str]:
     """Resolve all per-participant memory file paths used at run-time, so
     reset/view operate on the same files the engine reads/writes."""
     cfg = reg.memory_config or {}
     title = _safe_name(reg.title or "ensemble")
     name  = _safe_name(participant_name)
-    base  = _stores_dir()
+    base  = _stores_dir(user_id)
     pf_setting = cfg.get("personality_file") or ""
     if pf_setting:
         pf = pf_setting if Path(pf_setting).is_absolute() else str(base / pf_setting)
@@ -230,7 +243,7 @@ def _participant_paths(reg, participant_name: str) -> dict[str, str]:
 
 
 @router.post("/reset_store")
-async def reset_store(req: ResetStoreRequest) -> dict[str, Any]:
+async def reset_store(req: ResetStoreRequest, request: Request) -> dict[str, Any]:
     """Wipe ALL per-participant memory artifacts: turns DB, personality file,
     working-notes file, and system-summary file. Without this the agent
     'remembers' across resets via personality/notes even though turns are gone.
@@ -242,7 +255,7 @@ async def reset_store(req: ResetStoreRequest) -> dict[str, Any]:
     try:
         engine = load_registry(req.registry)
         cfg = engine.registry.memory_config or {}
-        paths = _participant_paths(engine.registry, req.participant_name)
+        paths = _participant_paths(engine.registry, req.participant_name, _get_user_id(request))
 
         cleared_turns = 0
         if Path(paths["store"]).exists():
@@ -287,7 +300,7 @@ class ViewStoreRequest(BaseModel):
 
 
 @router.post("/view_store")
-async def view_store(req: ViewStoreRequest) -> dict[str, Any]:
+async def view_store(req: ViewStoreRequest, request: Request) -> dict[str, Any]:
     """Return everything we know about this participant's persistent memory:
     a tail of recorded turns, personality profile, working notes, system
     summary. Used by the 'View memory' button in the ensemble UI."""
@@ -304,7 +317,7 @@ async def view_store(req: ViewStoreRequest) -> dict[str, Any]:
     try:
         engine = load_registry(req.registry)
         cfg = engine.registry.memory_config or {}
-        paths = _participant_paths(engine.registry, req.participant_name)
+        paths = _participant_paths(engine.registry, req.participant_name, _get_user_id(request))
 
         turns: list[dict[str, Any]] = []
         turn_count = 0
@@ -412,7 +425,7 @@ class ParticipantConfig(BaseModel):
 class EnsembleRequest(BaseModel):
     a: ParticipantConfig
     b: ParticipantConfig
-    seed: str
+    seed: str = ""
     # Cap is intentionally large — humans run open-ended; UI surfaces a Stop
     # button. Models without humans typically use 4–20 turns.
     turns: int = Field(default=8, ge=1, le=10000)
@@ -423,8 +436,9 @@ class EnsembleRequest(BaseModel):
 
 
 @router.post("/run")
-async def run_ensemble(req: EnsembleRequest) -> StreamingResponse:
+async def run_ensemble(req: EnsembleRequest, request: Request) -> StreamingResponse:
     session_id = str(uuid.uuid4())
+    _user_id = _get_user_id(request)
 
     async def generate() -> AsyncGenerator[str, None]:
         queue: asyncio.Queue[dict] = asyncio.Queue()
@@ -526,6 +540,7 @@ async def run_ensemble(req: EnsembleRequest) -> StreamingResponse:
                         payload_shape=conn.payload_shape,
                         main_model=req.a.model,
                         overrides=req.a.memory_overrides or None,
+                        user_id=_user_id,
                     )
                     cleanups.extend(ca)
                 if req.b.memory_enabled and engine_b is not None:
@@ -537,6 +552,7 @@ async def run_ensemble(req: EnsembleRequest) -> StreamingResponse:
                         payload_shape=conn.payload_shape,
                         main_model=req.b.model,
                         overrides=req.b.memory_overrides or None,
+                        user_id=_user_id,
                     )
                     cleanups.extend(cb)
 
@@ -547,7 +563,7 @@ async def run_ensemble(req: EnsembleRequest) -> StreamingResponse:
                     ollama_url=conn.base_url,
                     chat_path=conn.chat_path,
                     payload_shape=conn.payload_shape,
-                    state=req.a.state,
+                    state=RegistryState.from_dict(req.a.state) if req.a.state else None,
                     human=req.a.human,
                     memory=mem_a,
                 )
@@ -558,7 +574,7 @@ async def run_ensemble(req: EnsembleRequest) -> StreamingResponse:
                     ollama_url=conn.base_url,
                     chat_path=conn.chat_path,
                     payload_shape=conn.payload_shape,
-                    state=req.b.state,
+                    state=RegistryState.from_dict(req.b.state) if req.b.state else None,
                     human=req.b.human,
                     memory=mem_b,
                 )

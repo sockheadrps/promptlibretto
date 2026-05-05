@@ -9,8 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+
+from .config import MULTI_TENANT, USER_ID_COOKIE
 
 router = APIRouter(prefix="/api/memory")
 
@@ -27,6 +29,32 @@ def _default_store_path(title: str) -> str:
     return str(stores_dir / f"{_safe_name(title)}.db")
 
 
+def _get_user_id(request: Request) -> str:
+    return request.cookies.get(USER_ID_COOKIE, "anonymous")
+
+
+def _tenant_stores_dir(user_id: str) -> Path:
+    d = Path.home() / ".promptlibretto" / "memory_stores" / _safe_name(user_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _resolve_store_path(request: Request, title: str, cfg: dict) -> str:
+    if MULTI_TENANT:
+        return str(_tenant_stores_dir(_get_user_id(request)) / f"{_safe_name(title)}.db")
+    return cfg.get("store_path") or _default_store_path(title)
+
+
+def _resolve_personality_path(request: Request, registry_dict: dict) -> str:
+    from promptlibretto import Registry
+    inner = dict(registry_dict.get("registry") or registry_dict)
+    reg = Registry.from_dict({"registry": inner})
+    if MULTI_TENANT:
+        d = _tenant_stores_dir(_get_user_id(request))
+        return str(d / f"{_safe_name(reg.title)}_personality.json")
+    return _personality_path(registry_dict)
+
+
 class ConnectionConfig(BaseModel):
     base_url: str = "http://localhost:11434"
     chat_path: str = "/api/chat"
@@ -34,24 +62,16 @@ class ConnectionConfig(BaseModel):
     model: str = "default"
 
 
-class StateBody(BaseModel):
-    selections: dict[str, Any] = Field(default_factory=dict)
-    array_modes: dict[str, dict[str, str]] = Field(default_factory=dict)
-    section_random: dict[str, bool] = Field(default_factory=dict)
-    sliders: dict[str, float] = Field(default_factory=dict)
-    slider_random: dict[str, bool] = Field(default_factory=dict)
-    template_vars: dict[str, str] = Field(default_factory=dict)
-
-
 class MemoryGenerateRequest(BaseModel):
     registry: dict[str, Any]
-    state: StateBody = Field(default_factory=StateBody)
+    state: dict[str, Any] = Field(default_factory=dict)
     user_input: str
     connection: ConnectionConfig = Field(default_factory=ConnectionConfig)
     session_id: Optional[str] = None
     route: Optional[str] = None
     seed: Optional[int] = None
     generation_overrides: dict[str, Any] = Field(default_factory=dict)
+    skip_retrieval: bool = False
 
 
 class MemoryResetRequest(BaseModel):
@@ -84,14 +104,14 @@ def _personality_path(registry_dict: dict[str, Any]) -> str:
 
 
 @router.post("/personality")
-async def personality_load(req: PersonalityRequest) -> dict[str, Any]:
+async def personality_load(req: PersonalityRequest, request: Request) -> dict[str, Any]:
     """Return the personality profile for this registry (empty profile if file doesn't exist)."""
     try:
         from promptlibretto.memory import PersonalityLayer
     except ImportError as e:
         raise HTTPException(503, f"memory deps not installed: {e}")
     try:
-        path = _personality_path(req.registry)
+        path = _resolve_personality_path(request, req.registry)
         layer = PersonalityLayer(path)
         profile = layer.load()
         return {"profile": profile.to_dict(), "path": path}
@@ -102,14 +122,14 @@ async def personality_load(req: PersonalityRequest) -> dict[str, Any]:
 
 
 @router.post("/personality/save")
-async def personality_save(req: PersonalitySaveRequest) -> dict[str, Any]:
+async def personality_save(req: PersonalitySaveRequest, request: Request) -> dict[str, Any]:
     """Overwrite the personality profile with the provided data."""
     try:
         from promptlibretto.memory import PersonalityLayer, PersonalityProfile
     except ImportError as e:
         raise HTTPException(503, f"memory deps not installed: {e}")
     try:
-        path = _personality_path(req.registry)
+        path = _resolve_personality_path(request, req.registry)
         layer = PersonalityLayer(path)
         layer._profile = PersonalityProfile.from_dict(req.profile)
         layer.save()
@@ -121,14 +141,14 @@ async def personality_save(req: PersonalitySaveRequest) -> dict[str, Any]:
 
 
 @router.post("/personality/clear")
-async def personality_clear(req: PersonalityRequest) -> dict[str, Any]:
+async def personality_clear(req: PersonalityRequest, request: Request) -> dict[str, Any]:
     """Reset personality to an empty profile (keeps the file, wipes amendments and seed)."""
     try:
         from promptlibretto.memory import PersonalityLayer, PersonalityProfile
     except ImportError as e:
         raise HTTPException(503, f"memory deps not installed: {e}")
     try:
-        path = _personality_path(req.registry)
+        path = _resolve_personality_path(request, req.registry)
         layer = PersonalityLayer(path)
         layer._profile = PersonalityProfile()
         layer.save()
@@ -140,7 +160,7 @@ async def personality_clear(req: PersonalityRequest) -> dict[str, Any]:
 
 
 @router.post("/reset")
-async def memory_reset(req: MemoryResetRequest) -> dict[str, Any]:
+async def memory_reset(req: MemoryResetRequest, request: Request) -> dict[str, Any]:
     """Delete all turns from the store for this registry and return a fresh session id."""
     try:
         from promptlibretto import Registry
@@ -156,7 +176,7 @@ async def memory_reset(req: MemoryResetRequest) -> dict[str, Any]:
         embed_model = cfg.get("embed_model", "nomic-embed-text")
         embed_path  = cfg.get("embed_path") or "/api/embed"
         embed_shape = cfg.get("embed_payload_shape") or "auto"
-        store_path  = cfg.get("store_path") or _default_store_path(reg.title)
+        store_path  = _resolve_store_path(request, reg.title, cfg)
 
         embedder = OllamaEmbedder(
             base_url=embed_url, model=embed_model,
@@ -174,9 +194,9 @@ async def memory_reset(req: MemoryResetRequest) -> dict[str, Any]:
 
 
 @router.post("/generate")
-async def memory_generate(req: MemoryGenerateRequest) -> dict[str, Any]:
+async def memory_generate(req: MemoryGenerateRequest, request: Request) -> dict[str, Any]:
     try:
-        from promptlibretto import Engine, HydrateState, OllamaProvider, Registry
+        from promptlibretto import Engine, OllamaProvider, Registry, RegistryState
         from promptlibretto.memory import (
             Classifier,
             MemoryEngine,
@@ -213,10 +233,11 @@ async def memory_generate(req: MemoryGenerateRequest) -> dict[str, Any]:
         # honoring an explicit chat_path; default to Ollama's /api/chat.
         classifier_chat_path    = cfg.get("classifier_chat_path") or "/api/chat"
         classifier_payload_shape = cfg.get("classifier_payload_shape") or "auto"
-        top_k           = int(cfg.get("top_k",    5))
+        top_k           = 0 if (req.skip_retrieval or not req.user_input.strip()) else int(cfg.get("top_k", 5))
+        use_classifier  = bool(cfg.get("use_classifier", True))
         history_window  = int(cfg.get("history_window", 6))
         prune_keep      = int(cfg.get("prune_keep", 200))
-        store_path      = cfg.get("store_path") or _default_store_path(reg.title)
+        store_path      = _resolve_store_path(request, reg.title, cfg)
 
         main_provider = OllamaProvider(
             base_url=req.connection.base_url,
@@ -232,7 +253,7 @@ async def memory_generate(req: MemoryGenerateRequest) -> dict[str, Any]:
         # Always resolve a personality path the same way the save/load endpoints
         # do, so a saved personality is automatically picked up even when
         # memory_config.personality_file is omitted from the registry.
-        pf_path = _personality_path(reg_raw)
+        pf_path = _resolve_personality_path(request, reg_raw)
         personality = PersonalityLayer(pf_path)
         personality.load()
 
@@ -256,9 +277,10 @@ async def memory_generate(req: MemoryGenerateRequest) -> dict[str, Any]:
             session_id=req.session_id,
             top_k=top_k,
             history_window=history_window,
+            use_classifier=use_classifier,
         )
 
-        state  = HydrateState.from_dict(req.state.model_dump())
+        state  = RegistryState.from_dict(req.state)
         result = await mem_engine.run(
             req.user_input,
             base_state=state,

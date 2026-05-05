@@ -54,17 +54,26 @@ class OllamaEmbedder:
                 f"Server unreachable? Check memory_config.embed_url."
             ) from e
         data = resp.json()
-        # Both Ollama (`embeddings: [[...]]`, `embedding: [...]`) and OpenAI
-        # (`data: [{embedding: [...]}, ...]`) shapes are handled here.
+        # OpenAI: {"data": [{"embedding": [...]}]}
         if isinstance(data.get("data"), list) and data["data"]:
             emb = data["data"][0].get("embedding")
-            if isinstance(emb, list):
+            if isinstance(emb, list) and emb:
                 return emb
-        embeddings = data.get("embeddings") or data.get("embedding")
-        if isinstance(embeddings, list) and embeddings:
-            first = embeddings[0]
-            return first if isinstance(first, list) else embeddings
-        raise ValueError(f"unexpected embed response shape from {url}: {list(data.keys())}")
+        # Ollama new: {"embeddings": [[...]]} or flat {"embeddings": [...]}
+        if "embeddings" in data:
+            embs = data["embeddings"]
+            if isinstance(embs, list) and embs:
+                first = embs[0]
+                return first if isinstance(first, list) else embs
+        # Ollama old: {"embedding": [...]}
+        if "embedding" in data:
+            emb = data["embedding"]
+            if isinstance(emb, list) and emb:
+                return emb
+        raise ValueError(
+            f"unexpected embed response shape from {url}: {list(data.keys())}. "
+            f"Response: {str(data)[:200]}"
+        )
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         return [await self.embed(t) for t in texts]

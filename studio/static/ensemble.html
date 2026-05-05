@@ -15,8 +15,8 @@
   <div class="header-brand">
     <h1>promptlibretto</h1>
     <nav class="header-page-nav">
-      <a href="/" class="header-page-link">Studio</a>
       <a href="/builder" class="header-page-link">Builder</a>
+      <a href="/" class="header-page-link">Studio</a>
       <span class="header-page-link active">Ensemble</span>
     </nav>
   </div>
@@ -43,8 +43,8 @@
       <div class="pcard-body">
         <div class="pcard-row">
           <label class="pfield"><span>Name</span><input type="text" id="a-name" value="A" /></label>
-          <label class="pfield model-only"><span>Snapshot</span>
-            <select id="a-snapshot" onchange="loadSnapshot('a')"><option value="">— select —</option></select>
+          <label class="pfield model-only"><span>Registry</span>
+            <select id="a-snapshot" onchange="loadSnapshot('a')"><option value="">Load Snapshot or Example…</option></select>
           </label>
           <label class="pfield model-only"><span>Model</span>
             <span class="model-row">
@@ -58,12 +58,18 @@
           <label class="inline-toggle model-only"><input type="checkbox" id="a-memory" checked /><span>Memory pipeline</span></label>
           <button type="button" class="btn-view-store model-only" onclick="viewStore('a')">View memory</button>
           <button type="button" class="btn-reset-store model-only" onclick="resetStore('a')">Reset memory</button>
+          <button type="button" class="btn-view-store model-only" onclick="viewPrompt('a')">View prompt</button>
         </div>
         <div class="pcard-row pcard-tts-row">
           <label class="inline-toggle"><input type="checkbox" id="a-tts" /><span>Speak responses (TTS)</span></label>
           <label class="pfield pcard-tts-voice">
             <span>voice</span>
             <select id="a-tts-voice"><option value="">— default —</option></select>
+          </label>
+          <label class="pfield pcard-tts-speed">
+            <span>speed <span id="a-tts-speed-val">1.0</span>×</span>
+            <input type="range" id="a-tts-speed" min="0.5" max="2.5" step="0.1" value="1.0"
+              oninput="document.getElementById('a-tts-speed-val').textContent=parseFloat(this.value).toFixed(1)" />
           </label>
         </div>
         <details class="pcard-tuning model-only">
@@ -88,6 +94,8 @@
             <label class="inline-toggle pfield-toggle"><input type="checkbox" id="a-system_summary_enabled" /><span>Summarize system prompt</span></label>
             <label class="pfield"><span>summary every N</span><input type="number" min="1" step="1" id="a-system_summary_every_n_turns" placeholder="3" /></label>
             <label class="pfield"><span>summary max tokens</span><input type="number" min="50" step="10" id="a-system_summary_max_tokens" placeholder="300" /></label>
+            <label class="pfield pfield-wide"><span>embed_url</span><input type="text" id="a-embed_url" placeholder="defaults to classifier_url" /></label>
+            <label class="pfield pfield-wide"><span>embed_path</span><input type="text" id="a-embed_path" placeholder="/api/embed  (Ollama)  or  /v1/embeddings  (llama.cpp / LM Studio)" /></label>
           </div>
         </details>
         <details class="pcard-tuning model-only">
@@ -103,8 +111,9 @@
             </label>
           </div>
         </details>
+        <div id="a-tvars" class="pcard-tvars model-only"></div>
         <details class="pcard-json model-only">
-          <summary>Registry JSON <span class="muted small">— filled by snapshot</span></summary>
+          <summary>Registry JSON <span class="muted small">— filled by snapshot or example</span></summary>
           <textarea id="a-registry" placeholder='{"registry": { ... }}'></textarea>
         </details>
       </div>
@@ -122,8 +131,8 @@
       <div class="pcard-body">
         <div class="pcard-row">
           <label class="pfield"><span>Name</span><input type="text" id="b-name" value="B" /></label>
-          <label class="pfield model-only"><span>Snapshot</span>
-            <select id="b-snapshot" onchange="loadSnapshot('b')"><option value="">— select —</option></select>
+          <label class="pfield model-only"><span>Registry</span>
+            <select id="b-snapshot" onchange="loadSnapshot('b')"><option value="">Load Snapshot or Example…</option></select>
           </label>
           <label class="pfield model-only"><span>Model</span>
             <span class="model-row">
@@ -137,12 +146,18 @@
           <label class="inline-toggle model-only"><input type="checkbox" id="b-memory" checked /><span>Memory pipeline</span></label>
           <button type="button" class="btn-view-store model-only" onclick="viewStore('b')">View memory</button>
           <button type="button" class="btn-reset-store model-only" onclick="resetStore('b')">Reset memory</button>
+          <button type="button" class="btn-view-store model-only" onclick="viewPrompt('b')">View prompt</button>
         </div>
         <div class="pcard-row pcard-tts-row">
           <label class="inline-toggle"><input type="checkbox" id="b-tts" /><span>Speak responses (TTS)</span></label>
           <label class="pfield pcard-tts-voice">
             <span>voice</span>
             <select id="b-tts-voice"><option value="">— default —</option></select>
+          </label>
+          <label class="pfield pcard-tts-speed">
+            <span>speed <span id="b-tts-speed-val">1.0</span>×</span>
+            <input type="range" id="b-tts-speed" min="0.5" max="2.5" step="0.1" value="1.0"
+              oninput="document.getElementById('b-tts-speed-val').textContent=parseFloat(this.value).toFixed(1)" />
           </label>
         </div>
         <details class="pcard-tuning model-only">
@@ -167,6 +182,8 @@
             <label class="inline-toggle pfield-toggle"><input type="checkbox" id="b-system_summary_enabled" /><span>Summarize system prompt</span></label>
             <label class="pfield"><span>summary every N</span><input type="number" min="1" step="1" id="b-system_summary_every_n_turns" placeholder="3" /></label>
             <label class="pfield"><span>summary max tokens</span><input type="number" min="50" step="10" id="b-system_summary_max_tokens" placeholder="300" /></label>
+            <label class="pfield pfield-wide"><span>embed_url</span><input type="text" id="b-embed_url" placeholder="defaults to classifier_url" /></label>
+            <label class="pfield pfield-wide"><span>embed_path</span><input type="text" id="b-embed_path" placeholder="/api/embed  (Ollama)  or  /v1/embeddings  (llama.cpp / LM Studio)" /></label>
           </div>
         </details>
         <details class="pcard-tuning model-only">
@@ -182,8 +199,9 @@
             </label>
           </div>
         </details>
+        <div id="b-tvars" class="pcard-tvars model-only"></div>
         <details class="pcard-json model-only">
-          <summary>Registry JSON <span class="muted small">— filled by snapshot</span></summary>
+          <summary>Registry JSON <span class="muted small">— filled by snapshot or example</span></summary>
           <textarea id="b-registry" placeholder='{"registry": { ... }}'></textarea>
         </details>
       </div>
@@ -222,7 +240,7 @@
     <div class="conversation-area" id="conversation">
       <div class="empty-state" id="empty-state">
         <div class="empty-state-icon">⇄</div>
-        <div>Configure two participants, write a seed, hit Run</div>
+        <div>Configure two participants and hit Run</div>
       </div>
     </div>
 
@@ -256,7 +274,7 @@
 
   <!-- sticky action bar -->
   <div class="action-bar">
-    <input type="text" id="seed" class="seed-input" placeholder="Opening message sent to participant A…" />
+    <input type="text" id="seed" class="seed-input" placeholder="Opening message for next run…" hidden />
     <label class="action-turns"><span>turns</span><input type="text" id="turns" value="8" /></label>
     <label class="action-toggle" title="When off, each turn waits for you to click Next"><input type="checkbox" id="auto-run" checked /><span>auto</span></label>
     <button class="btn-run" id="btn-run" onclick="startEnsemble()">Run</button>

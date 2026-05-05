@@ -1039,6 +1039,19 @@ textarea {
   margin: 0;
   color: var(--dim);
 }
+.memview-prompt-pre {
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin: 0;
+  color: var(--text);
+  line-height: 1.6;
+}
 .memview-turn {
   display: flex;
   flex-direction: column;
@@ -1249,6 +1262,20 @@ textarea {
 .pcard-tts-voice select {
   font-family: var(--mono);
   font-size: 11px;
+}
+.pcard-tts-speed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 120px;
+}
+.pcard-tts-speed span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.pcard-tts-speed input[type=range] {
+  width: 100%;
+  accent-color: var(--accent, #6b8cff);
 }
 
 /* Wider side panels (~50% bigger) for thought visibility. */

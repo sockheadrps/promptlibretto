@@ -8,7 +8,7 @@ from typing import Any, Awaitable, Callable, Optional
 from promptlibretto.providers.base import ProviderMessage, ProviderRequest
 from promptlibretto.providers.ollama import OllamaProvider
 from promptlibretto.registry.engine import Engine
-from promptlibretto.registry.hydrate import HydrateState
+from promptlibretto.registry.state import RegistryState
 
 try:
     from promptlibretto.memory import MemoryEngine
@@ -24,7 +24,7 @@ class Participant:
     ollama_url: str = "http://localhost:11434"
     chat_path: str = "/api/chat"
     payload_shape: str = "auto"
-    state: dict = field(default_factory=dict)
+    state: Optional[RegistryState] = None
     human: bool = False  # if True, run loop pauses and awaits external input
     memory: Optional["MemoryEngine"] = None  # per-participant memory pipeline
     _provider: Optional[OllamaProvider] = field(default=None, init=False, repr=False)
@@ -76,7 +76,7 @@ class EnsembleEngine:
         self,
         speaker: Participant,
         new_input: str,
-        state: Optional[HydrateState],
+        state: Optional[RegistryState],
         *,
         scene_context: str = "",
         other_name: str = "the other participant",
@@ -85,7 +85,7 @@ class EnsembleEngine:
             system_prompt = speaker.engine.hydrate(state, seed=speaker._hydrate_seed)
         else:
             system_prompt = speaker.engine.hydrate(
-                speaker.state or None, seed=speaker._hydrate_seed
+                speaker.state, seed=speaker._hydrate_seed
             )
         if scene_context:
             system_prompt = (
@@ -152,12 +152,12 @@ class EnsembleEngine:
 
             # Build the system prompt — through memory pipeline if enabled,
             # otherwise from the speaker's static state.
-            mutated_state: Optional[HydrateState] = None
+            mutated_state: Optional[RegistryState] = None
             prepared = None
             if speaker.memory is not None and not speaker.human:
                 prepared = await speaker.memory.prepare(
                     current_input,
-                    base_state=speaker.state or None,
+                    base_state=speaker.state,
                     other_name=other.name,
                 )
                 mutated_state = prepared.state
@@ -223,6 +223,16 @@ class EnsembleEngine:
                                 "ms":     prepared.clf.ms,
                                 "tokens": prepared.clf.tokens,
                             }
+                        # Surface resolved template var values so the UI can
+                        # highlight where memory/rule content landed in the prompt.
+                        for sec_key, sec_state in (prepared.state.sections or {}).items():
+                            tv = getattr(sec_state, "template_vars", {}) or {}
+                            for var_name, var_val in tv.items():
+                                if var_val and isinstance(var_val, str) and var_val.strip():
+                                    trace.setdefault("resolved_tvars", {})[f"{sec_key}::{var_name}"] = var_val
+                        rule_ending = getattr(prepared.state, "_rule_ending_text", "")
+                        if rule_ending:
+                            trace.setdefault("resolved_tvars", {})["rule_ending"] = rule_ending
                     # Surface working notes (running summary) when present.
                     if speaker.memory is not None:
                         wn = getattr(speaker.memory, "_working_notes", None)

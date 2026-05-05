@@ -42,16 +42,25 @@ class MemoryAction:
 class MemoryRule:
     tag: str
     actions: list[MemoryAction] = field(default_factory=list)
+    description: str = ""
+    ending_text: str = ""  # injected into prompt_endings as {rule_ending} when this rule fires
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "MemoryRule":
         return cls(
             tag=d["tag"],
             actions=[MemoryAction.from_dict(a) for a in (d.get("actions") or [])],
+            description=str(d.get("description") or ""),
+            ending_text=str(d.get("ending_text") or ""),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"tag": self.tag, "actions": [a.to_dict() for a in self.actions]}
+        out: dict[str, Any] = {"tag": self.tag, "actions": [a.to_dict() for a in self.actions]}
+        if self.description:
+            out["description"] = self.description
+        if self.ending_text:
+            out["ending_text"] = self.ending_text
+        return out
 
 
 class Router:
@@ -68,6 +77,10 @@ class Router:
     @property
     def known_tags(self) -> list[str]:
         return list(self._known_tags)
+
+    @property
+    def tag_descriptions(self) -> dict[str, str]:
+        return {r.tag: r.description for r in self._rules if r.description}
 
     def mutate(self, base_state: RegistryState, tags: list[str]) -> RegistryState:
         if not tags:
@@ -134,8 +147,11 @@ class Router:
                     _sec(sec_id).template_vars[var] = action.value
                     applied.append(f"{rule.tag} → tvar:{sec_id}.{var}={action.value}")
 
+        ending_texts = [r.ending_text for r in active_rules if r.ending_text]
+
         new_state = RegistryState(sections=new_sections)
         new_state._applied_rules = applied  # type: ignore[attr-defined]
+        new_state._rule_ending_text = "\n\n".join(ending_texts)  # type: ignore[attr-defined]
         return new_state
 
     @classmethod
