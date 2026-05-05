@@ -56,6 +56,8 @@ const DEFAULT_ASSEMBLY_ORDER = [
 let registryState = createEmptyRegistryState();
 let currentModalContext = null;
 let activeBuilderTab = "sections";
+let _setupPhase = "meta"; // 'meta' | 'memory-choice' | 'memory-config' | 'ready'
+let _useMemory = false;
 
 function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
@@ -1201,6 +1203,7 @@ function applyRegistryJson(json) {
   }
 
   initApp();
+  _bypassSetup();
 }
 
 async function loadBuilderExample(name) {
@@ -1365,6 +1368,106 @@ function initApp() {
   renderMemoryRulesPanel();
   switchBuilderTab(activeBuilderTab);
   exportFullModel();
+}
+
+// ── Setup flow ────────────────────────────────────────────────────
+
+function initSetupFlow() {
+  ["model-version", "model-title-input", "model-desc-input"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("input", _onMetaInput);
+  });
+  _onMetaInput();
+}
+
+function _onMetaInput() {
+  if (_setupPhase !== "meta") return;
+  const v = document.getElementById("model-version")?.value?.trim();
+  const t = document.getElementById("model-title-input")?.value?.trim();
+  const d = document.getElementById("model-desc-input")?.value?.trim();
+  if (v && t && d) {
+    _setupPhase = "memory-choice";
+    const card = document.getElementById("builder-setup-card");
+    if (card) card.hidden = false;
+  }
+}
+
+function setMemoryChoice(useMemory) {
+  _useMemory = useMemory;
+  const card = document.getElementById("builder-setup-card");
+  if (card) card.hidden = true;
+  if (useMemory) {
+    _setupPhase = "memory-config";
+    const mainGrid = document.getElementById("builder-main-grid");
+    if (mainGrid) mainGrid.hidden = false;
+    const tabsRow = document.getElementById("builder-tabs-row");
+    if (tabsRow) tabsRow.hidden = true;
+    const banner = document.getElementById("setup-phase-banner");
+    if (banner) banner.hidden = false;
+    switchBuilderTab("memory");
+    // Expand all memory config collapsibles in the memory tab
+    const memPanel = document.getElementById("builder-tab-memory-panel");
+    memPanel?.querySelectorAll("[data-builder-collapse]").forEach((p) => {
+      p.classList.remove("collapsed");
+      const btn = p.querySelector(".collapse-toggle");
+      if (btn) btn.textContent = "Collapse";
+    });
+    // Wire continue-button enable
+    document.getElementById("mem-classifier-url")?.addEventListener("input", checkMemoryConfigReady);
+    checkMemoryConfigReady();
+  } else {
+    completeSetup();
+  }
+}
+
+function checkMemoryConfigReady() {
+  const url = document.getElementById("mem-classifier-url")?.value?.trim();
+  const btn = document.getElementById("setup-continue-btn");
+  if (btn) btn.disabled = !url;
+}
+
+function completeSetup() {
+  _setupPhase = "ready";
+  const card = document.getElementById("builder-setup-card");
+  if (card) card.hidden = true;
+  const banner = document.getElementById("setup-phase-banner");
+  if (banner) banner.hidden = true;
+  const mainGrid = document.getElementById("builder-main-grid");
+  if (mainGrid) mainGrid.hidden = false;
+  const tabsRow = document.getElementById("builder-tabs-row");
+  if (tabsRow) tabsRow.hidden = false;
+  const memTabBtn = document.getElementById("tab-memory");
+  if (memTabBtn) memTabBtn.hidden = !_useMemory;
+  if (_useMemory) {
+    // Auto-add memory template vars to prompt_endings
+    const pe = registryState.sections.prompt_endings;
+    if (pe) {
+      if (!pe.template_vars.includes("rule_ending")) pe.template_vars.push("rule_ending");
+      if (!pe.template_vars.includes("system_summary")) pe.template_vars.push("system_summary");
+    }
+    // Auto-add default memory_recall item if section is empty
+    const mr = registryState.sections.memory_recall;
+    if (mr && mr.items.length === 0) {
+      mr.items.push({ name: "recall", text: "{memory_recall}", _ui_id: Date.now() + Math.random() });
+    }
+  }
+  switchBuilderTab("sections");
+  exportFullModel();
+  initApp();
+}
+
+function _bypassSetup() {
+  _setupPhase = "ready";
+  _useMemory = !!(registryState.memory_config && Object.keys(registryState.memory_config).length > 0);
+  const card = document.getElementById("builder-setup-card");
+  if (card) card.hidden = true;
+  const banner = document.getElementById("setup-phase-banner");
+  if (banner) banner.hidden = true;
+  const mainGrid = document.getElementById("builder-main-grid");
+  if (mainGrid) mainGrid.hidden = false;
+  const tabsRow = document.getElementById("builder-tabs-row");
+  if (tabsRow) tabsRow.hidden = false;
+  const memTabBtn = document.getElementById("tab-memory");
+  if (memTabBtn) memTabBtn.hidden = !_useMemory;
 }
 
 const SECTION_INFO = {
@@ -1882,6 +1985,7 @@ async function populateExamplePicker() {
 consumeStudioHandoff();
 initApp();
 populateExamplePicker();
+initSetupFlow();
 
 fetch("/api/config")
   .then((r) => r.json())
@@ -1939,3 +2043,6 @@ window.saveRegistry = saveRegistry;
 window.loadSavedRegistry = loadSavedRegistry;
 window.deleteSavedRegistry = deleteSavedRegistry;
 window.handlePickerChange = handlePickerChange;
+window.setMemoryChoice = setMemoryChoice;
+window.checkMemoryConfigReady = checkMemoryConfigReady;
+window.completeSetup = completeSetup;

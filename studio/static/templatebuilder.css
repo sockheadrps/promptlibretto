@@ -1880,3 +1880,117 @@ details[open] > .inline-group-summary::before {
 .mem-test-warn {
   color: #e5c07b;
 }
+
+/* ── Builder setup flow ──────────────────────────────────────── */
+
+.builder-setup-card {
+  display: flex;
+  justify-content: center;
+  padding: 48px 16px;
+}
+
+.setup-card-inner {
+  background: var(--panel-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 40px 48px;
+  max-width: 520px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.setup-card-title {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 14px;
+}
+
+.setup-card-body {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+  margin: 0 0 28px;
+}
+
+.setup-card-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.setup-btn {
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: filter 0.15s, transform 0.1s;
+}
+
+.setup-btn:hover {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+
+.setup-btn-yes {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.setup-btn-no {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
+}
+
+.setup-btn-no:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+/* ── Memory config setup banner ──────────────────────────────── */
+
+.setup-phase-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  margin-bottom: 10px;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 8px;
+}
+
+.setup-banner-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.setup-continue-btn {
+  padding: 8px 18px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s, opacity 0.15s;
+}
+
+.setup-continue-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.setup-continue-btn:not(:disabled):hover {
+  filter: brightness(1.12);
+}

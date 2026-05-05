@@ -227,6 +227,31 @@
         font-size: 0.86rem;
       }
 
+      .template-var-pair {
+        display: grid;
+        grid-template-columns: auto minmax(160px, 220px) 1fr auto;
+        gap: 10px;
+        align-items: center;
+        width: 100%;
+      }
+
+      .template-var-box {
+        padding: 8px 10px;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--highlight);
+        font-family: 'Cascadia Code', Consolas, monospace;
+      }
+
+      .template-value-box {
+        padding: 8px 10px;
+        background: rgba(15, 23, 42, 0.45);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-main);
+      }
+
       .btn-group {
         display: flex;
         justify-content: flex-end;
@@ -697,19 +722,46 @@
           },
           memory_recall: {
             selected: 'recall',
+            template_vars: {
+              memory_recall: '',
+            },
           },
           prompt_endings: {
             selected: 'endings',
             array_modes: {
               items: 'all',
             },
+            template_vars: {
+              system_summary: '',
+              rule_ending: '{rule_ending}',
+            },
           },
+        },
+        output_policy: {
+          min_length: 80,
+          max_length: 1000,
         },
       };
 
       // ── Registry renderer ─────────────────────────────────────────
+      function copyText(value) {
+        if (typeof value !== 'string') return JSON.stringify(value, null, 2);
+        const trimmed = value.trim();
+        if (
+          trimmed.length >= 2 &&
+          trimmed.startsWith('"') &&
+          trimmed.endsWith('"')
+        ) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (typeof parsed === 'string') return parsed;
+          } catch (_err) {}
+        }
+        return value;
+      }
+
       function copy(text, btn) {
-        navigator.clipboard.writeText(text).then(() => {
+        navigator.clipboard.writeText(copyText(text)).then(() => {
           const orig = btn.innerText;
           btn.innerText = 'COPIED';
           btn.classList.add('copied');
@@ -767,6 +819,78 @@
         });
         section.appendChild(card);
         return section;
+      }
+
+      function renderStateCard(section, title, sectionData) {
+        const state = fullJson.state && fullJson.state[title];
+        const templateVars = Array.isArray(sectionData.template_vars)
+          ? sectionData.template_vars
+          : [];
+        if (!state && !templateVars.length) return;
+
+        const card = document.createElement('div');
+        card.className = 'item-card';
+        card.innerHTML = '<div class="nested-heading" style="margin-bottom:6px;">initialized selection + template vars</div>';
+
+        if (state && state.selected !== undefined) {
+          const row = document.createElement('div');
+          row.className = 'nested-item';
+          row.innerHTML = `<span><strong style="color:var(--highlight)">selected id:</strong> ${Array.isArray(state.selected) ? state.selected.join(', ') : state.selected}</span>`;
+          row.appendChild(createBtn('Copy', Array.isArray(state.selected) ? state.selected.join(', ') : String(state.selected), 'small'));
+          card.appendChild(row);
+        }
+
+        if (state && (state.slider !== undefined || state.slider_random !== undefined)) {
+          const row = document.createElement('div');
+          row.className = 'nested-item';
+          row.innerHTML = `<span><strong style="color:var(--highlight)">scale state:</strong> ${JSON.stringify({
+            slider: state.slider,
+            slider_random: state.slider_random,
+          })}</span>`;
+          row.appendChild(
+            createBtn(
+              'Copy',
+              JSON.stringify({ slider: state.slider, slider_random: state.slider_random }, null, 2),
+              'small'
+            )
+          );
+          card.appendChild(row);
+        }
+
+        if (templateVars.length || (state && state.template_vars)) {
+          const keys = Array.from(
+            new Set([
+              ...templateVars,
+              ...Object.keys((state && state.template_vars) || {}),
+            ])
+          );
+          keys.forEach((key) => {
+            const value =
+              state && state.template_vars && key in state.template_vars
+                ? state.template_vars[key]
+                : '';
+            const row = document.createElement('div');
+            row.className = 'nested-item';
+            row.innerHTML = `<span class="template-var-pair"><span data-copy-var></span><span class="template-var-box">{${key}}</span><span class="template-value-box">${value === '' ? '<span style="color:var(--text-dim)">(empty)</span>' : String(value)}</span><span data-copy-value></span></span>`;
+            row.querySelector('[data-copy-var]').appendChild(
+              createBtn('Copy', `{${key}}`, 'small')
+            );
+            row.querySelector('[data-copy-value]').appendChild(
+              createBtn('Copy', String(value), 'small')
+            );
+            card.appendChild(row);
+          });
+        }
+
+        if (state && state.array_modes) {
+          const row = document.createElement('div');
+          row.className = 'nested-item';
+          row.innerHTML = `<span><strong style="color:var(--highlight)">array modes:</strong> ${JSON.stringify(state.array_modes)}</span>`;
+          row.appendChild(createBtn('Copy', JSON.stringify(state.array_modes, null, 2), 'small'));
+          card.appendChild(row);
+        }
+
+        section.appendChild(card);
       }
 
       function renderFragments(parent, fragments) {
@@ -836,19 +960,16 @@
         const section = document.createElement('section');
         section.className = 'section';
         section.innerHTML = `<div class="section-header">${formatKey(title)}</div>`;
-        if (Array.isArray(sectionData.template_vars) && sectionData.template_vars.length) {
-          const tvCard = document.createElement('div');
-          tvCard.className = 'item-card';
-          tvCard.innerHTML = '<div class="nested-heading" style="margin-bottom:6px;">template vars</div>';
-          sectionData.template_vars.forEach((v) => {
-            const row = document.createElement('div');
-            row.className = 'nested-item';
-            row.innerHTML = `<span style="font-family:'Cascadia Code',Consolas,monospace;color:var(--highlight)">{${v}}</span>`;
-            row.appendChild(createBtn('Copy', `{${v}}`, 'small'));
-            tvCard.appendChild(row);
-          });
-          section.appendChild(tvCard);
-        }
+        renderStateCard(section, title, sectionData);
+        const settingsCard = document.createElement('div');
+        settingsCard.className = 'item-card';
+        settingsCard.innerHTML = '<div class="nested-heading" style="margin-bottom:6px;">section settings</div>';
+        const requiredRow = document.createElement('div');
+        requiredRow.className = 'nested-item';
+        requiredRow.innerHTML = `<span><strong style="color:var(--highlight)">required:</strong> ${String(Boolean(sectionData.required))}</span>`;
+        requiredRow.appendChild(createBtn('Copy', String(Boolean(sectionData.required)), 'small'));
+        settingsCard.appendChild(requiredRow);
+        section.appendChild(settingsCard);
         if (!sectionData.items.length) {
           const empty = document.createElement('div');
           empty.className = 'item-card';
@@ -903,7 +1024,7 @@
         return section;
       }
 
-      const SECTION_SCRIPTS = {
+      const SECTION_SCRIPTS_UNUSED = {
         file: "This is the registry file — the ID card for the whole setup. Name, timestamp, version number. Nothing glamorous, but it tells you exactly what you're looking at and when it was last saved.",
         assembly_order: "The assembly order is the spine of the whole system. This is the exact sequence of sections that get stitched together to form the final prompt. Change the order here and you change what the model sees first. In this registry, output directions come first — so the model gets its behavioral rules before it even knows what scene it's in or who it's playing.",
         generation: "Generation settings are the dials for how the model produces text. Temperature controls creativity — higher means more surprising output. Top-p and top-k narrow or widen the vocabulary the model draws from each token. Max tokens caps response length. Repeat penalty discourages the model from cycling back on phrases it already used. These are set once at the registry level and apply to every run.",
@@ -918,6 +1039,35 @@
         memory_recall: "Memory recall is the slot where retrieved conversation history gets injected at runtime. The text is just a placeholder variable — at generation time the memory engine fills it with the most semantically relevant past exchanges. This is what gives the model continuity across a long conversation without feeding it the entire history every turn.",
         prompt_endings: "Prompt endings cap the whole thing off. The items array holds a pool of closing cues — in this case just 'you say:' — and one gets appended at the very end of the assembled prompt. It's the nudge that tells the model it's time to speak. Simple, but it keeps the final line consistent and prevents the model from wandering.",
         state: "Finally — the saved state. This captures the configuration snapshot at the time of saving: which persona is active, which sentiment, what template variable values are set. When you load this file back into Studio, the state restores exactly as it was so you can pick up right where you left off.",
+      };
+
+      const SECTION_SCRIPTS = {
+        base_context:
+          'Start with base context. First we set the selected item ID to pranker. Then we initialize the template variables {company} and {artifact_alchemy}. Template variables are placeholders: here we are giving them starter values, but in Studio this registry uses the fragment strategy so runtime values can fill only the context fragments that have data.',
+        personas:
+          'Next is persona. Persona is the character layer: it decides who the prank caller is pretending to be. This registry selects old_lady, so the caller mishears details, swaps key words, rambles, and keeps derailing the support call like an annoying grandparent.',
+        sentiment:
+          'Sentiment is the tone layer. The context describes sarcastic behavior, and the scale settings are bound to that sentiment so sarcasm intensity can be dialed dynamically at runtime. The same sentiment can stay selected while the slider changes how hard the model leans into it.',
+        static_injections:
+          'Static injections are fixed text blocks that can be included when a model needs always-known facts, policies, or rules. This prank caller registry is not using static injections right now, so the section is present but empty.',
+        runtime_injections:
+          'Runtime injections are request-time context blocks. They are useful when you want to pass live values into the prompt, such as lookup data or a per-call fact. This model registry build is not using runtime injections either.',
+        output_prompt_directions:
+          'Output directions are the response contract. This is where we tell the model to reply as the prankster, stay in plain prose, keep it short, avoid headings and bullets, and advance the conversation instead of repeating itself.',
+        memory_recall:
+          'Memory recall is mandatory here. We give the section an item ID, recall, and a template variable {memory_recall}. The text is only the placeholder. At runtime the memory layer fills that placeholder with relevant prior conversation so the agent can keep continuity.',
+        prompt_endings:
+          'Prompt endings cap the assembled prompt. This section declares {system_summary} and {rule_ending}. The system summary is for compressed conversation state, while rule_ending is for dynamic rule text, such as memory-rule guidance. The item name endings is used as the assembly token suffix, so prompt_endings.endings resolves this item. Its preamble text supports the section template vars, and the ending labels list contains you say:, which is the final cue for the model response.',
+        assembly_order:
+          'Assembly order is the final prompt recipe. These tokens are rendered in sequence: output rules first, then base context, persona, sentiment context, sentiment scale, memory recall, and finally prompt_endings.endings. The suffix matters: prompt_endings.endings points to the ending item named endings.',
+        generation:
+          'Generation settings control how the model writes after the prompt is assembled. Temperature 0.85 keeps the prank caller lively, top_p 0.65 and top_k 75 constrain token choice, max_tokens 300 caps the response budget, repeat_penalty 1.15 discourages looping, and retries 1 gives the engine one retry when validation fails.',
+        output_policy:
+          'Output policy validates the model response after generation. Here min_length 80 prevents tiny throwaway replies, while max_length 1000 keeps the prank caller from rambling forever. These are response-quality guardrails, separate from the prompt assembly itself.',
+        memory_rules:
+          'Classifier rules define what the memory/classifier layer should watch for. Each rule has a tag, a human description of the situation, and rule text that can be injected when the classifier decides the current message matches. In this registry, order_number fires when the caller is asked for an order number, product ID, or purchase code, then adds guidance telling the prankster to stall briefly and confidently invent one.',
+        memory_config:
+          'Memory config tells the runtime where the memory services live and how much context to retrieve. The classifier URL and model handle tag detection for rules like order_number. The embed URL and model turn conversation turns into vectors for semantic recall. top_k controls how many matching memories are pulled back into the prompt, so higher values give the model more remembered context while also using more prompt space.',
       };
 
       function scriptBlock(key) {
@@ -939,11 +1089,18 @@
           main.appendChild(el);
         }
 
-        appendWithScript('file', renderObjectSection('file', {
-          name: fullJson.name,
-          savedAt: fullJson.savedAt,
-          version: reg.version,
-        }));
+        [
+          'base_context',
+          'personas',
+          'sentiment',
+          'static_injections',
+          'runtime_injections',
+          'output_prompt_directions',
+          'memory_recall',
+          'prompt_endings',
+        ].forEach((key) => {
+          if (reg[key]) appendWithScript(key, renderItemSection(key, reg[key]));
+        });
 
         if (reg.assembly_order) {
           const sec = document.createElement('section');
@@ -962,29 +1119,27 @@
           appendWithScript('assembly_order', sec);
         }
 
-        ['generation', 'memory_config'].forEach((key) => {
-          if (reg[key]) appendWithScript(key, renderObjectSection(key, reg[key]));
-        });
+        if (reg.generation) {
+          appendWithScript('generation', renderObjectSection('generation', reg.generation));
+        }
+
+        if (fullJson.output_policy) {
+          appendWithScript(
+            'output_policy',
+            renderObjectSection('output_policy', fullJson.output_policy)
+          );
+        }
 
         if (Array.isArray(reg.memory_rules)) {
           appendWithScript('memory_rules', renderMemoryRules(reg.memory_rules));
         }
 
-        Object.entries(reg).forEach(([key, sectionData]) => {
-          if (
-            !sectionData ||
-            typeof sectionData !== 'object' ||
-            Array.isArray(sectionData)
-          )
-            return;
-          if (!Array.isArray(sectionData.items)) return;
-          appendWithScript(key, renderItemSection(key, sectionData));
-        });
-
-        if (fullJson.state)
-          appendWithScript('state', renderObjectSection('state', fullJson.state));
-        if (fullJson.output_policy)
-          appendWithScript('output_policy', renderObjectSection('output_policy', fullJson.output_policy));
+        if (reg.memory_config) {
+          appendWithScript(
+            'memory_config',
+            renderObjectSection('memory_config', reg.memory_config)
+          );
+        }
       }
 
       renderRegistry();

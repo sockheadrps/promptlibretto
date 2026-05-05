@@ -86,10 +86,25 @@
       </div>
     </section>
 
-    <section class="builder-main-grid">
+    <div id="builder-setup-card" hidden class="builder-setup-card">
+      <div class="setup-card-inner">
+        <h3 class="setup-card-title">Does this registry use memory?</h3>
+        <p class="setup-card-body">Memory enables conversation history retrieval, classifier tagging, and rolling summaries. This choice is set once per registry.</p>
+        <div class="setup-card-actions">
+          <button type="button" class="setup-btn setup-btn-yes" onclick="setMemoryChoice(true)">Yes — configure memory</button>
+          <button type="button" class="setup-btn setup-btn-no" onclick="setMemoryChoice(false)">No — proceed to builder</button>
+        </div>
+      </div>
+    </div>
+
+    <section class="builder-main-grid" id="builder-main-grid" hidden>
       <div class="builder-authoring">
+        <div id="setup-phase-banner" hidden class="setup-phase-banner">
+          <span class="setup-banner-text">Set the classifier URL and model below, then continue.</span>
+          <button type="button" id="setup-continue-btn" class="setup-continue-btn" onclick="completeSetup()" disabled>Continue to Builder →</button>
+        </div>
         <section class="panel builder-tab-panel">
-          <div class="builder-tabs" role="tablist" aria-label="Builder panels">
+          <div class="builder-tabs" id="builder-tabs-row" role="tablist" aria-label="Builder panels">
             <button type="button" id="tab-sections" class="builder-tab active" onclick="switchBuilderTab('sections')" aria-selected="true">Sections</button>
             <button type="button" id="tab-finalize" class="builder-tab" onclick="switchBuilderTab('finalize')" aria-selected="false">Finalize</button>
             <button type="button" id="tab-memory" class="builder-tab" onclick="switchBuilderTab('memory')" aria-selected="false">Classifiers</button>
