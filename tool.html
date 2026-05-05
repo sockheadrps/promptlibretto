@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Prompt Constructor Tools</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --card-bg: #1e293b;
+        --accent: #8b5cf6;
+        --text-main: #f1f5f9;
+        --text-dim: #94a3b8;
+        --highlight: #2dd4bf;
+        --border: #334155;
+      }
+
+      body {
+        margin: 0;
+        padding: 20px;
+        background: var(--bg);
+        color: var(--text-main);
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        line-height: 1.5;
+      }
+
+      .container {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+
+      /* ── Tabs ── */
+      .tab-bar {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 28px;
+        border-bottom: 2px solid var(--border);
+        padding-bottom: 0;
+      }
+
+      .tab-btn {
+        padding: 10px 22px;
+        background: transparent;
+        border: none;
+        border-bottom: 3px solid transparent;
+        color: var(--text-dim);
+        font-size: 0.85rem;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        cursor: pointer;
+        margin-bottom: -2px;
+        transition:
+          color 0.15s,
+          border-color 0.15s;
+      }
+
+      .tab-btn:hover {
+        color: var(--text-main);
+        transform: none;
+        filter: none;
+      }
+      .tab-btn.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+
+      .tab-panel {
+        display: none;
+      }
+      .tab-panel.active {
+        display: block;
+      }
+
+      /* ── Script panels ── */
+      .script-wrap {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .script-header {
+        padding: 14px 22px;
+        background: rgba(139, 92, 246, 0.15);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .script-title {
+        color: var(--accent);
+        font-size: 0.86rem;
+        font-weight: 800;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+
+      .script-body {
+        padding: 28px 32px;
+        font-size: 1.05rem;
+        line-height: 1.85;
+        color: var(--text-main);
+        white-space: pre-wrap;
+      }
+
+      .script-body .beat {
+        display: block;
+        margin: 18px 0 0;
+        color: var(--text-dim);
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+
+      .script-body p {
+        margin: 0 0 16px;
+      }
+
+      .copy-btn {
+        border: 0;
+        border-radius: 5px;
+        padding: 6px 14px;
+        background: var(--accent);
+        color: white;
+        cursor: pointer;
+        font-size: 0.7rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        transition:
+          transform 0.15s,
+          filter 0.15s;
+      }
+      .copy-btn:hover {
+        filter: brightness(1.18);
+        transform: translateY(-1px);
+      }
+      .copy-btn.copied {
+        background: var(--highlight);
+        color: var(--bg);
+      }
+
+      /* ── Registry viewer (Prank Caller) ── */
+      .section {
+        margin-bottom: 28px;
+        overflow: hidden;
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+
+      .section-header {
+        padding: 14px 22px;
+        background: rgba(139, 92, 246, 0.15);
+        border-bottom: 1px solid var(--border);
+        color: var(--accent);
+        font-size: 0.86rem;
+        font-weight: 800;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+
+      .item-card {
+        padding: 18px 22px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .item-card:last-child {
+        border-bottom: 0;
+      }
+
+      .meta-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .id-badge {
+        padding: 4px 10px;
+        background: #0f172a;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--highlight);
+        font-family: 'Cascadia Code', Consolas, monospace;
+        font-size: 0.85rem;
+      }
+
+      .content-block {
+        margin: 10px 0;
+        padding: 14px;
+        background: rgba(15, 23, 42, 0.5);
+        border-left: 3px solid var(--accent);
+        border-radius: 6px;
+        color: #cbd5e1;
+        font-family: 'Cascadia Code', Consolas, monospace;
+        font-size: 0.9rem;
+        white-space: pre-wrap;
+      }
+
+      .nested-list {
+        margin: 12px 0 0 18px;
+        padding-left: 14px;
+        border-left: 1px dashed var(--accent);
+      }
+
+      .nested-heading {
+        margin-bottom: 6px;
+        color: var(--accent);
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .nested-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 6px;
+        padding: 7px 10px;
+        background: rgba(0, 0, 0, 0.12);
+        border-radius: 4px;
+        font-size: 0.86rem;
+      }
+
+      .btn-group {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      button.small {
+        border: 0;
+        border-radius: 5px;
+        padding: 3px 8px;
+        background: var(--border);
+        color: white;
+        cursor: pointer;
+        font-size: 0.62rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        transition:
+          transform 0.15s,
+          filter 0.15s;
+      }
+      button.small:hover {
+        filter: brightness(1.18);
+        transform: translateY(-1px);
+      }
+      button.small.copied {
+        background: var(--highlight);
+        color: var(--bg);
+      }
+
+      .section-script {
+        margin-bottom: 10px;
+        padding: 14px 18px;
+        background: rgba(45, 212, 191, 0.06);
+        border: 1px solid rgba(45, 212, 191, 0.2);
+        border-left: 3px solid var(--highlight);
+        border-radius: 8px;
+        color: #94a3b8;
+        font-size: 0.88rem;
+        line-height: 1.7;
+        font-style: italic;
+      }
+
+      .section-script-label {
+        display: block;
+        font-size: 0.65rem;
+        font-weight: 800;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: var(--highlight);
+        margin-bottom: 6px;
+        font-style: normal;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="showTab('intro-script', this)">
+          Intro Script
+        </button>
+        <button class="tab-btn" onclick="showTab('builder-script', this)">
+          Builder Script
+        </button>
+        <button class="tab-btn" onclick="showTab('studio-script', this)">
+          Studio Script
+        </button>
+        <button class="tab-btn" onclick="showTab('prank-caller', this)">
+          Prank Caller Registry
+        </button>
+      </div>
+
+      <!-- ── Tab 0: Intro Script ── -->
+      <div id="intro-script" class="tab-panel active">
+        <div class="script-wrap">
+          <div class="script-header">
+            <span class="script-title"
+              >Intro — Prompt Libretto &amp; Prompt Constructor</span
+            >
+            <button
+              class="copy-btn"
+              onclick="copyScript('intro-script-text', this)"
+            >
+              Copy
+            </button>
+          </div>
+          <div class="script-body" id="intro-script-text">
+            <p>
+              Prompt Libretto is a Python library for building structured,
+              dynamic system prompts — at runtime, from a declarative model
+              called a registry.
+            </p>
+
+            <p>
+              The problem it solves is this: as soon as you want a language
+              model's behavior to vary — by persona, mood, context, or
+              conversation state — hardcoding prompt strings stops working. You
+              end up with concatenated strings scattered across your codebase,
+              no consistency, and no way to audit what the model is actually
+              receiving. Prompt Libretto replaces that with a registry: a JSON
+              document that defines every section of a prompt, how sections
+              relate to each other, what's required, what's optional, and what
+              gets selected or randomized at call time. The engine assembles the
+              final prompt from that spec every time.
+            </p>
+
+            <p>
+              This tool — Prompt Constructor — is one example of how you can
+              build on top of that. It's a studio for creating chat models: you
+              get a visual builder for authoring registries, a studio for
+              testing them against a live model, and an ensemble mode that runs
+              two registry-driven agents in conversation with each other.
+            </p>
+
+            <p>
+              Ensemble is where it gets more interesting. Each participant has
+              memory — an embedding model indexes the conversation as it
+              happens, a summarizer compresses older context into a rolling
+              system summary, and working notes let each agent track its own
+              read on the situation. The scenario is steered — you define the
+              domain, the persona, the tone — but the output is
+              non-deterministic. The model generates freely within those
+              constraints, so each run produces something unique while still
+              staying true to the theme.
+            </p>
+
+            <p>
+              Think of it as the difference between scripted dialogue and improv
+              with rules. The registry sets the stage and the character. What
+              actually gets said is up to the model.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Tab 1: Builder Script ── -->
+      <div id="builder-script" class="tab-panel">
+        <div class="script-wrap">
+          <div class="script-header">
+            <span class="script-title"
+              >Builder Walkthrough — Wizard Tech Support</span
+            >
+            <button
+              class="copy-btn"
+              onclick="copyScript('builder-script-text', this)"
+            >
+              Copy
+            </button>
+          </div>
+          <div class="script-body" id="builder-script-text">
+            <p>
+              So this is the Wizard Tech Support registry loaded in Builder.
+            </p>
+
+            <p>
+              At the top we have the assembly order — this is the backbone of
+              the system. It defines exactly what sections get included in the
+              final prompt, and in what order. Everything flows from here.
+            </p>
+
+            <p>
+              Base context sets the scene — this agent works for a magical
+              helpdesk. There's a template variable for the company name, so you
+              can swap that out per deployment.
+            </p>
+
+            <p>
+              Personas give the agent a character. We have two: the Fresh Grad
+              Apprentice — nervous, over-reliant on the script — and the Burned
+              Out Mage, who's done with everyone but still technically doing the
+              job. Each persona has a group of behavioral directives, and the
+              array mode is set to random-one, so it picks a different nudge
+              each time instead of repeating the same behavior.
+            </p>
+
+            <p>
+              Sentiment works the same way — two options here, Nervous Helpful
+              and Mystically Reassuring — each with a composure slider that
+              injects a score into the prompt. The groups give it a random
+              behavioral nudge on top of that.
+            </p>
+
+            <p>
+              Static injections are facts that are always true — like the
+              supervisor queue being 45 days. You toggle these on or off.
+            </p>
+
+            <p>
+              Runtime injections are dynamic — this one has a care level
+              variable you can fill in at call time.
+            </p>
+
+            <p>
+              Memory rules are where it gets interesting — if the classifier
+              detects a customer is confused about basic magic, it appends a
+              special ending that changes how the agent responds to that
+              specific message.
+            </p>
+
+            <p>
+              And at the bottom, output directions and prompt endings cap it off
+              — format rules and the role label that kicks off the model's
+              response.
+            </p>
+
+            <p>
+              In the next section I'll build one of these from scratch so you
+              can see how each piece connects.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Tab 2: Studio Script ── -->
+      <div id="studio-script" class="tab-panel">
+        <div class="script-wrap">
+          <div class="script-header">
+            <span class="script-title"
+              >Studio Walkthrough — Wizard Tech Support</span
+            >
+            <button
+              class="copy-btn"
+              onclick="copyScript('studio-script-text', this)"
+            >
+              Copy
+            </button>
+          </div>
+          <div class="script-body" id="studio-script-text">
+            <p>
+              Now here's the same registry running in Studio — this is where you
+              actually talk to it.
+            </p>
+
+            <p>
+              On the left you can see the live state panel. Every section from
+              the assembly order shows up here — persona, sentiment, static
+              injections — and you can change any of them without touching the
+              JSON. Switch personas, move the composure slider, toggle an
+              injection on or off, and the assembled prompt updates instantly.
+            </p>
+
+            <p>
+              Down here is the prompt preview. This is exactly what gets sent to
+              the model — no guesswork. You can see the persona context, the
+              behavioral directive that was randomly picked this run, the
+              sentiment nudge, and the static injection text all assembled in
+              order.
+            </p>
+
+            <p>
+              I'll type something in as the customer. Notice the model responds
+              in character — polite, slightly panicked, leaning on helpdesk
+              procedure it barely understands.
+            </p>
+
+            <p>
+              Now watch what happens when I switch personas to the Burned Out
+              Mage and ask the same kind of question. Same registry, same
+              sentiment slider position — completely different voice. The prompt
+              preview updates and the model responds accordingly.
+            </p>
+
+            <p>
+              The output policy is enforced silently in the background — minimum
+              length, forbidden phrases like "As an AI," and automatic retries
+              if the output doesn't pass. You don't see the failures, just the
+              clean result.
+            </p>
+
+            <p>
+              And if memory is wired up, working notes and session summaries
+              feed back in here — but we'll get into that separately. The point
+              is Studio lets you audition any combination of settings before you
+              commit anything to the registry file.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Tab 3: Prank Caller Registry Viewer ── -->
+      <div id="prank-caller" class="tab-panel">
+        <div id="registry-main"></div>
+      </div>
+    </div>
+
+    <script>
+      // ── Tab switching ──────────────────────────────────────────────
+      function showTab(id, btn) {
+        document
+          .querySelectorAll('.tab-panel')
+          .forEach((p) => p.classList.remove('active'));
+        document
+          .querySelectorAll('.tab-btn')
+          .forEach((b) => b.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        btn.classList.add('active');
+      }
+
+      // ── Script copy ────────────────────────────────────────────────
+      function copyScript(id, btn) {
+        const el = document.getElementById(id);
+        const text = el.innerText;
+        navigator.clipboard.writeText(text).then(() => {
+          btn.innerText = 'COPIED';
+          btn.classList.add('copied');
+          setTimeout(() => {
+            btn.innerText = 'Copy';
+            btn.classList.remove('copied');
+          }, 1200);
+        });
+      }
+
+      // ── Prank Caller registry data ────────────────────────────────
+      const fullJson = {
+        name: 'Wizard Tech Prank Caller',
+        savedAt: '2026-05-05T03:07:58.620Z',
+        registry: {
+          version: 2,
+          title: '"Wizard Tech Prank Caller"',
+          description: 'a prankster for wizard tech support',
+          assembly_order: [
+            'output_prompt_directions',
+            'base_context.text',
+            'personas.context',
+            'sentiment.context',
+            'sentiment.scale',
+            'memory_recall.text',
+            'prompt_endings.endings',
+          ],
+          generation: {
+            temperature: 0.85,
+            top_p: 0.65,
+            top_k: 75,
+            max_tokens: 300,
+            repeat_penalty: 1.15,
+            retries: 1,
+          },
+          memory_rules: [
+            {
+              tag: 'order_number',
+              description:
+                'When asked about an order number, a product ID or other identifying purchase code.',
+              ending_text:
+                'Tell them to hold on a second, give you a minute, or that you had it around here somewhere....then make number up and give it to them as if youre completely confident that its accurate.',
+            },
+          ],
+          memory_config: {
+            classifier_url: 'http://localhost:8080',
+            classifier_model: 'Qwen3.5-9B-Q4_K_M.gguf',
+            embed_url: 'http://localhost:11434',
+            embed_model: 'nomic-embed-text',
+            top_k: 11,
+          },
+          base_context: {
+            required: true,
+            template_vars: ['company', 'artifact_alchemy'],
+            items: [
+              {
+                id: 'pranker',
+                text: '',
+                fragments: [
+                  {
+                    condition: 'company',
+                    text: 'Youre prank calling {company} Support, a helpdesk for magical orders, cursed deliveries, spellbook licensing.',
+                  },
+                  {
+                    condition: 'artifact_alchemy',
+                    text: '\nYour roommate dared you to do this and is listening on mute, barely holding back laughter. The only way to win the dare is to make the support technician contact his manager or supervisor and escalate your case, and convince them the item youre calling about is an artifact that turns anything into a {artifact_alchemy}, but DO NOT admit that until the service agent agrees to escalate the case if you tell them what it does. If asked, refer to the resulting alchemy being "smelly" or "brown in color" or "a tacky consistency"',
+                  },
+                  {
+                    condition: '',
+                    text: '\nMake underhanded jokes but seem like somewhat of a legitimate customer.\n',
+                  },
+                ],
+              },
+            ],
+          },
+          personas: {
+            required: true,
+            template_vars: [],
+            items: [
+              {
+                id: 'old_lady',
+                context:
+                  'Youre posing as an old lady. When responding, often replace statements the support agent said with similar, but incorrect phrases, changing just the main topic word to something else. You ramble on directing the conversation off topic when possible, asking un-related questions like an annoying grandparent.',
+              },
+            ],
+          },
+          sentiment: {
+            required: true,
+            template_vars: [],
+            items: [
+              {
+                id: 'sarcastic_king',
+                context:
+                  'You often say absurd phrases sarcastically, but act like its entirely reasonable. Youre mocking the support agent, but subtly so  that it may seem like you dont intend to offend, but you actually do.',
+                scale: {
+                  scale_descriptor: 'level of sarcasm',
+                  template: '{value}/10 — {scale_descriptor}.',
+                  default_value: 5,
+                },
+              },
+            ],
+          },
+          static_injections: {
+            required: false,
+            template_vars: [],
+            items: [],
+          },
+          runtime_injections: {
+            required: false,
+            template_vars: [],
+            items: [],
+          },
+          output_prompt_directions: {
+            required: true,
+            template_vars: [],
+            items: [
+              {
+                id: 'output',
+                text: 'Reply as the prankster in SHORT plain prose, 1-2 complete sentences. Do NOT repeat prompt data or information as verbatim. You MUST keep responses short and true to character. No headings, no bullet lists. BE BRIEF IN RESPONSES.\n\nEach reply must advance the conversation — never reuse or closely paraphrase wording from your previous turns',
+              },
+            ],
+          },
+          memory_recall: {
+            required: true,
+            template_vars: ['memory_recall'],
+            items: [
+              {
+                name: 'recall',
+                text: '{memory_recall}',
+              },
+            ],
+          },
+          user_message: {
+            required: false,
+            template_vars: [],
+            items: [],
+          },
+          prompt_endings: {
+            required: true,
+            template_vars: ['system_summary', 'rule_ending'],
+            items: [
+              {
+                name: 'endings',
+                text: '{rule_ending}',
+                items: ['you say:'],
+              },
+            ],
+          },
+        },
+        state: {
+          base_context: {
+            selected: 'pranker',
+            template_vars: {
+              company: 'Shiddy Magic LLC',
+              artifact_alchemy: 'a pile of Shit',
+            },
+          },
+          personas: {
+            selected: 'old_lady',
+          },
+          sentiment: {
+            selected: 'sarcastic_king',
+          },
+          output_prompt_directions: {
+            selected: 'output',
+          },
+          memory_recall: {
+            selected: 'recall',
+          },
+          prompt_endings: {
+            selected: 'endings',
+            array_modes: {
+              items: 'all',
+            },
+          },
+        },
+      };
+
+      // ── Registry renderer ─────────────────────────────────────────
+      function copy(text, btn) {
+        navigator.clipboard.writeText(text).then(() => {
+          const orig = btn.innerText;
+          btn.innerText = 'COPIED';
+          btn.classList.add('copied');
+          setTimeout(() => {
+            btn.innerText = orig;
+            btn.classList.remove('copied');
+          }, 1000);
+        });
+      }
+
+      function createBtn(text, copyVal, className = '') {
+        const btn = document.createElement('button');
+        btn.innerText = text;
+        if (className) btn.className = className;
+        btn.onclick = () => copy(copyVal, btn);
+        return btn;
+      }
+
+      function formatKey(key) {
+        return key.replace(/_/g, ' ');
+      }
+      function itemId(item) {
+        return item.id || item.name || 'default';
+      }
+
+      function renderNestedList(parent, title, items) {
+        if (!Array.isArray(items) || !items.length) return;
+        const nest = document.createElement('div');
+        nest.className = 'nested-list';
+        nest.innerHTML = `<div class="nested-heading">${title}</div>`;
+        items.forEach((value) => {
+          const row = document.createElement('div');
+          row.className = 'nested-item';
+          row.innerHTML = `<span>${value}</span>`;
+          row.appendChild(createBtn('Copy', String(value), 'small'));
+          nest.appendChild(row);
+        });
+        parent.appendChild(nest);
+      }
+
+      function renderObjectSection(title, obj) {
+        const section = document.createElement('section');
+        section.className = 'section';
+        section.innerHTML = `<div class="section-header">${formatKey(title)}</div>`;
+        const card = document.createElement('div');
+        card.className = 'item-card';
+        Object.entries(obj).forEach(([key, value]) => {
+          const row = document.createElement('div');
+          row.className = 'nested-item';
+          row.innerHTML = `<span><strong style="color:var(--highlight)">${key}:</strong> ${JSON.stringify(value)}</span>`;
+          row.appendChild(
+            createBtn('Copy', JSON.stringify(value, null, 2), 'small')
+          );
+          card.appendChild(row);
+        });
+        section.appendChild(card);
+        return section;
+      }
+
+      function renderFragments(parent, fragments) {
+        if (!Array.isArray(fragments) || !fragments.length) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'nested-list';
+        wrap.innerHTML = '<div class="nested-heading">Fragments</div>';
+        fragments.forEach((frag, i) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'margin-bottom:8px;padding:8px 10px;background:rgba(0,0,0,0.18);border-radius:4px;';
+          const cond = frag.condition ? `<span style="color:var(--highlight);font-size:0.75rem;font-weight:700;text-transform:uppercase;margin-right:8px;">if {${frag.condition}}</span>` : `<span style="color:var(--text-dim);font-size:0.75rem;font-weight:700;text-transform:uppercase;margin-right:8px;">always</span>`;
+          row.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">${cond}</div><div style="font-family:'Cascadia Code',Consolas,monospace;font-size:0.85rem;color:#cbd5e1;white-space:pre-wrap;">${frag.text || ''}</div>`;
+          const btnGroup = document.createElement('div');
+          btnGroup.className = 'btn-group';
+          btnGroup.appendChild(createBtn('Copy', frag.text || '', 'small'));
+          row.appendChild(btnGroup);
+          wrap.appendChild(row);
+        });
+        parent.appendChild(wrap);
+      }
+
+      function renderMemoryRules(rules) {
+        const section = document.createElement('section');
+        section.className = 'section';
+        section.innerHTML = '<div class="section-header">memory rules</div>';
+        if (!rules.length) {
+          const empty = document.createElement('div');
+          empty.className = 'item-card';
+          empty.innerHTML = `<span style="color:var(--text-dim)">No rules</span>`;
+          section.appendChild(empty);
+          return section;
+        }
+        rules.forEach((rule) => {
+          const card = document.createElement('div');
+          card.className = 'item-card';
+          const top = document.createElement('div');
+          top.className = 'meta-row';
+          top.innerHTML = `<span class="id-badge">${rule.tag}</span>`;
+          top.appendChild(createBtn('Copy Tag', rule.tag, 'small'));
+          card.appendChild(top);
+          if (rule.description) {
+            const desc = document.createElement('div');
+            desc.className = 'content-block';
+            desc.innerText = rule.description;
+            card.appendChild(desc);
+          }
+          if (rule.ending_text) {
+            const nest = document.createElement('div');
+            nest.className = 'nested-list';
+            nest.innerHTML = '<div class="nested-heading">ending text</div>';
+            const row = document.createElement('div');
+            row.style.cssText = 'padding:8px 10px;background:rgba(0,0,0,0.18);border-radius:4px;font-family:"Cascadia Code",Consolas,monospace;font-size:0.85rem;color:#cbd5e1;white-space:pre-wrap;';
+            row.innerText = rule.ending_text;
+            const btnGroup = document.createElement('div');
+            btnGroup.className = 'btn-group';
+            btnGroup.appendChild(createBtn('Copy', rule.ending_text, 'small'));
+            nest.appendChild(row);
+            nest.appendChild(btnGroup);
+            card.appendChild(nest);
+          }
+          section.appendChild(card);
+        });
+        return section;
+      }
+
+      function renderItemSection(title, sectionData) {
+        const section = document.createElement('section');
+        section.className = 'section';
+        section.innerHTML = `<div class="section-header">${formatKey(title)}</div>`;
+        if (Array.isArray(sectionData.template_vars) && sectionData.template_vars.length) {
+          const tvCard = document.createElement('div');
+          tvCard.className = 'item-card';
+          tvCard.innerHTML = '<div class="nested-heading" style="margin-bottom:6px;">template vars</div>';
+          sectionData.template_vars.forEach((v) => {
+            const row = document.createElement('div');
+            row.className = 'nested-item';
+            row.innerHTML = `<span style="font-family:'Cascadia Code',Consolas,monospace;color:var(--highlight)">{${v}}</span>`;
+            row.appendChild(createBtn('Copy', `{${v}}`, 'small'));
+            tvCard.appendChild(row);
+          });
+          section.appendChild(tvCard);
+        }
+        if (!sectionData.items.length) {
+          const empty = document.createElement('div');
+          empty.className = 'item-card';
+          empty.innerHTML = `<span style="color:var(--text-dim)">No items</span>`;
+          section.appendChild(empty);
+          return section;
+        }
+        sectionData.items.forEach((item) => {
+          const card = document.createElement('div');
+          card.className = 'item-card';
+          const label = itemId(item);
+          const text = item.text || item.context || '';
+          const top = document.createElement('div');
+          top.className = 'meta-row';
+          top.innerHTML = `<span class="id-badge">${label}</span>`;
+          top.appendChild(createBtn('Copy ID', label, 'small'));
+          card.appendChild(top);
+          if (text) {
+            const content = document.createElement('div');
+            content.className = 'content-block';
+            content.innerText = text;
+            card.appendChild(content);
+            const btnGroup = document.createElement('div');
+            btnGroup.className = 'btn-group';
+            btnGroup.appendChild(createBtn('Copy Value', text));
+            card.appendChild(btnGroup);
+          }
+          if (Array.isArray(item.fragments) && item.fragments.length) {
+            renderFragments(card, item.fragments);
+          }
+          if (item.scale) {
+            const scale = document.createElement('div');
+            scale.className = 'content-block';
+            scale.innerText = JSON.stringify(item.scale, null, 2);
+            card.appendChild(scale);
+          }
+          if (Array.isArray(item.groups)) {
+            item.groups.forEach((group) => {
+              if (typeof group === 'string')
+                renderNestedList(card, group, [group]);
+              else
+                renderNestedList(
+                  card,
+                  group.pre_context || group.id || 'group',
+                  group.items || []
+                );
+            });
+          }
+          renderNestedList(card, 'items', item.items);
+          section.appendChild(card);
+        });
+        return section;
+      }
+
+      const SECTION_SCRIPTS = {
+        file: "This is the registry file — the ID card for the whole setup. Name, timestamp, version number. Nothing glamorous, but it tells you exactly what you're looking at and when it was last saved.",
+        assembly_order: "The assembly order is the spine of the whole system. This is the exact sequence of sections that get stitched together to form the final prompt. Change the order here and you change what the model sees first. In this registry, output directions come first — so the model gets its behavioral rules before it even knows what scene it's in or who it's playing.",
+        generation: "Generation settings are the dials for how the model produces text. Temperature controls creativity — higher means more surprising output. Top-p and top-k narrow or widen the vocabulary the model draws from each token. Max tokens caps response length. Repeat penalty discourages the model from cycling back on phrases it already used. These are set once at the registry level and apply to every run.",
+        memory_config: "Memory config wires up the intelligence layer. The classifier URL and model handle tagging incoming messages — identifying what kind of thing is being said so the right rules can fire. The embed URL and model handle the semantic search side — turning conversation history into vectors so the memory engine can surface relevant past context. Top-k controls how many memories get retrieved each turn.",
+        memory_rules: "Memory rules are where it gets interesting. Each rule defines a tag the classifier might fire, describes the situation that triggers it, and injects a private directive into the prompt when it does — something only the agent sees. In this registry, if someone asks for an order number, the prankster gets a quiet instruction to make one up and deliver it with total confidence.",
+        base_context: "Base context is the foundation — it sets the scene before anything else loads. This registry uses fragments to make it modular. The company name slots in as a template variable. The dare setup and the artifact reveal are conditional fragments — they only render when those variables have values. The behavior line is always on. Same persona, completely different prompt shape depending on what you pass in.",
+        personas: "Personas give the agent its character. This one has a single persona — an old lady who mishears everything, redirects every topic, and treats the support call like a chance to ramble about something completely unrelated. The behavior is baked into the context field and stays consistent across every run as long as this persona is selected.",
+        sentiment: "Sentiment defines the emotional register. This registry has one — sarcastic, subtly mocking, maintaining a veneer of reasonableness the whole time. The scale object renders the sarcasm level directly into the prompt as a score, so you can dial it up or down without rewriting anything. The model reads the number and adjusts its tone accordingly.",
+        static_injections: "Static injections are fixed text blocks you can slot into the assembly order when you need boilerplate that never changes. This registry has none — but you'd use them for things like permanent disclaimers, hard rules, or context that applies to every single run without variation.",
+        runtime_injections: "Runtime injections are the dynamic version of the same idea. The text can use template variables, so you can pass in different values at call time without touching the registry. Nothing here either — but in a more complex setup, this is where you'd drop in per-request context like a live order lookup or a specific customer detail.",
+        output_prompt_directions: "Output directions tell the model exactly how to format and constrain its response. In this registry they come first in the assembly order — so before the model knows the scene, the persona, or the sentiment, it already knows to keep replies short, stay in character, never repeat itself, and never reach for a heading or a bullet list.",
+        memory_recall: "Memory recall is the slot where retrieved conversation history gets injected at runtime. The text is just a placeholder variable — at generation time the memory engine fills it with the most semantically relevant past exchanges. This is what gives the model continuity across a long conversation without feeding it the entire history every turn.",
+        prompt_endings: "Prompt endings cap the whole thing off. The items array holds a pool of closing cues — in this case just 'you say:' — and one gets appended at the very end of the assembled prompt. It's the nudge that tells the model it's time to speak. Simple, but it keeps the final line consistent and prevents the model from wandering.",
+        state: "Finally — the saved state. This captures the configuration snapshot at the time of saving: which persona is active, which sentiment, what template variable values are set. When you load this file back into Studio, the state restores exactly as it was so you can pick up right where you left off.",
+      };
+
+      function scriptBlock(key) {
+        const text = SECTION_SCRIPTS[key];
+        if (!text) return null;
+        const div = document.createElement('div');
+        div.className = 'section-script';
+        div.innerHTML = `<span class="section-script-label">Script</span>${text}`;
+        return div;
+      }
+
+      function renderRegistry() {
+        const reg = fullJson.registry;
+        const main = document.getElementById('registry-main');
+        main.innerHTML = '';
+        function appendWithScript(key, el) {
+          const s = scriptBlock(key);
+          if (s) main.appendChild(s);
+          main.appendChild(el);
+        }
+
+        appendWithScript('file', renderObjectSection('file', {
+          name: fullJson.name,
+          savedAt: fullJson.savedAt,
+          version: reg.version,
+        }));
+
+        if (reg.assembly_order) {
+          const sec = document.createElement('section');
+          sec.className = 'section';
+          sec.innerHTML = '<div class="section-header">assembly order</div>';
+          const card = document.createElement('div');
+          card.className = 'item-card';
+          reg.assembly_order.forEach((item) => {
+            const row = document.createElement('div');
+            row.className = 'nested-item';
+            row.innerHTML = `<span style="font-family:'Cascadia Code',Consolas,monospace;font-size:0.88rem;color:var(--highlight)">${item}</span>`;
+            row.appendChild(createBtn('Copy', item, 'small'));
+            card.appendChild(row);
+          });
+          sec.appendChild(card);
+          appendWithScript('assembly_order', sec);
+        }
+
+        ['generation', 'memory_config'].forEach((key) => {
+          if (reg[key]) appendWithScript(key, renderObjectSection(key, reg[key]));
+        });
+
+        if (Array.isArray(reg.memory_rules)) {
+          appendWithScript('memory_rules', renderMemoryRules(reg.memory_rules));
+        }
+
+        Object.entries(reg).forEach(([key, sectionData]) => {
+          if (
+            !sectionData ||
+            typeof sectionData !== 'object' ||
+            Array.isArray(sectionData)
+          )
+            return;
+          if (!Array.isArray(sectionData.items)) return;
+          appendWithScript(key, renderItemSection(key, sectionData));
+        });
+
+        if (fullJson.state)
+          appendWithScript('state', renderObjectSection('state', fullJson.state));
+        if (fullJson.output_policy)
+          appendWithScript('output_policy', renderObjectSection('output_policy', fullJson.output_policy));
+      }
+
+      renderRegistry();
+    </script>
+  </body>
+</html>
