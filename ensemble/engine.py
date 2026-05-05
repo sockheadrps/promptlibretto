@@ -27,10 +27,13 @@ class Participant:
     state: Optional[RegistryState] = None
     human: bool = False  # if True, run loop pauses and awaits external input
     memory: Optional["MemoryEngine"] = None  # per-participant memory pipeline
+    provider_override: Any = field(default=None)
     _provider: Optional[OllamaProvider] = field(default=None, init=False, repr=False)
     _hydrate_seed: Optional[int] = field(default=None, init=False, repr=False)
 
-    def provider(self) -> OllamaProvider:
+    def provider(self) -> Any:
+        if self.provider_override is not None:
+            return self.provider_override
         if self._provider is None:
             self._provider = OllamaProvider(
                 base_url=self.ollama_url,

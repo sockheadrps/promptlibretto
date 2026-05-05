@@ -456,28 +456,82 @@ async function startEnsemble() {
     embedWs.onmessage = async (evt) => {
       let msg;
       try { msg = JSON.parse(evt.data); } catch { return; }
-      if (msg.type !== "embed_request") return;
-      const { id, text: embedText, side } = msg;
-      const cfg = side === "b" ? cfgB : cfgA;
-      const embedUrl = cfg.url.replace(/\/$/, "") + cfg.path;
-      try {
-        // Support both Ollama (/api/embed) and OpenAI-compat (/v1/embeddings) shapes.
-        const isOllama = cfg.path.includes("/api/embed");
-        const reqBody = isOllama
-          ? { model: cfg.model, input: embedText }
-          : { model: cfg.model, input: embedText };
-        const resp = await fetch(embedUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(reqBody),
-        });
-        if (!resp.ok) throw new Error(`embed HTTP ${resp.status}`);
-        const data = await resp.json();
-        // Handle both Ollama (embeddings[0]) and OpenAI (data[0].embedding) response shapes.
-        const vectors = data.embeddings?.[0] ?? data.data?.[0]?.embedding ?? data.embedding ?? [];
-        embedWs.send(JSON.stringify({ type: "embed_result", id, vectors }));
-      } catch (e) {
-        embedWs.send(JSON.stringify({ type: "embed_error", id, error: String(e.message) }));
+
+      if (msg.type === "embed_request") {
+        const { id, text: embedText, side } = msg;
+        const cfg = side === "b" ? cfgB : cfgA;
+        const embedUrl = cfg.url.replace(/\/$/, "") + cfg.path;
+        try {
+          const resp = await fetch(embedUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: cfg.model, input: embedText }),
+          });
+          if (!resp.ok) throw new Error(`embed HTTP ${resp.status}`);
+          const data = await resp.json();
+          const vectors = data.embeddings?.[0] ?? data.data?.[0]?.embedding ?? data.embedding ?? [];
+          embedWs.send(JSON.stringify({ type: "embed_result", id, vectors }));
+        } catch (e) {
+          embedWs.send(JSON.stringify({ type: "embed_error", id, error: String(e.message) }));
+        }
+
+      } else if (msg.type === "chat_request") {
+        const { id, model, messages, temperature, max_tokens, top_p, top_k, repeat_penalty } = msg;
+        const isOpenAI = conn.chatPath?.includes("/v1/") || conn.payloadShape === "openai";
+        const chatUrl = conn.baseUrl.replace(/\/$/, "") + (conn.chatPath || "/api/chat");
+        try {
+          let body;
+          if (isOpenAI) {
+            body = { model, messages, temperature, max_tokens, stream: true };
+            if (top_p   != null) body.top_p            = top_p;
+            if (repeat_penalty != null) body.frequency_penalty = repeat_penalty;
+          } else {
+            const options = {};
+            if (temperature    != null) options.temperature    = temperature;
+            if (top_p          != null) options.top_p          = top_p;
+            if (top_k          != null) options.top_k          = top_k;
+            if (repeat_penalty != null) options.repeat_penalty = repeat_penalty;
+            body = { model, messages, options, stream: true };
+            if (max_tokens != null) body.num_predict = max_tokens;
+          }
+          const resp = await fetch(chatUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!resp.ok) throw new Error(`chat HTTP ${resp.status}`);
+
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop();
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              let raw = trimmed;
+              if (isOpenAI) {
+                if (!trimmed.startsWith("data:")) continue;
+                raw = trimmed.slice(5).trim();
+                if (raw === "[DONE]") continue;
+              }
+              try {
+                const chunk = JSON.parse(raw);
+                const delta = isOpenAI
+                  ? (chunk.choices?.[0]?.delta?.content ?? "")
+                  : (chunk.message?.content ?? chunk.content ?? "");
+                if (delta) embedWs.send(JSON.stringify({ type: "chat_chunk", id, delta }));
+              } catch { /* skip malformed */ }
+            }
+          }
+          embedWs.send(JSON.stringify({ type: "chat_done", id }));
+        } catch (e) {
+          embedWs.send(JSON.stringify({ type: "chat_error", id, error: String(e.message) }));
+        }
       }
     };
 
