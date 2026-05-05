@@ -110,6 +110,8 @@ class ScalableMixin:
 
 `scale_descriptor` replaces `scale_emotion`. The name `scale_emotion` is too narrow — the field can represent urgency, formality, confidence, detail level, or any scaled quality. `Scale` is reusable outside `Sentiment` via `ScalableMixin`.
 
+`ScalableMixin` is intentionally open. Any item type can mix it in. The slider actuates a descriptor — a word or phrase that gets injected into the prompt's linguistic context to color the model's voice or posture. It is not a mechanical output parameter (length, token count). `OutputDirection` uses it to inject a formality register alongside the instruction text. `Sentiment` uses it to inject emotional tone. Other candidates: `ContextItem` (detail density), `Persona` (assertiveness). The pattern is always the same: add `ScalableMixin` to the class, include `section_id.scale` in assembly order, set a slider in `SectionState`.
+
 The `scale_template` field currently on `Section` moves inside `Scale.template`. This keeps scale configuration together and removes the need for the engine to check the parent section for rendering instructions.
 
 The runtime slider value is stored in `SectionState.slider` and passed to the hydrator. `Scale.default_value` is the fallback when no runtime slider is present.
@@ -217,7 +219,7 @@ class StaticInjection(BaseItem):
 
 
 @dataclass
-class OutputDirection(BaseItem, DynamicMixin):
+class OutputDirection(BaseItem, DynamicMixin, ScalableMixin):
     text: str = ""
     groups: list[str] = field(default_factory=list)
 
