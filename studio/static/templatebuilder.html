@@ -213,6 +213,7 @@
                           <option value="">— fetch models —</option>
                         </select>
                         <button type="button" class="mem-conn-refresh" onclick="fetchClassifierModels()" title="Fetch models">↺</button>
+                        <span id="mem-classifier-test-result" class="mem-test-result"></span>
                       </div>
                     </label>
                     <label class="mem-check-label"><span>use_classifier <span class="label-hint">run LLM classifier to extract tags</span></span><input id="mem-use-classifier" type="checkbox" checked onchange="exportFullModel()" /></label>

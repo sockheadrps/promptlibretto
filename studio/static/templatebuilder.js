@@ -1550,20 +1550,21 @@ function _setClassifierModelSelect(models, currentValue) {
 }
 
 async function fetchClassifierModels() {
+  const resultEl = document.getElementById("mem-classifier-test-result");
   const urlEl = document.getElementById("mem-classifier-url");
   const conn = getStudioConnection();
   const base = (urlEl?.value?.trim() || conn.baseUrl || conn.base_url || "").replace(/\/+$/, "");
   if (!base) {
-    alert("Set a classifier_url or configure your Studio connection first.");
+    if (resultEl) { resultEl.textContent = "⚠ no URL"; resultEl.className = "mem-test-result mem-test-warn"; }
     return;
   }
   const sel = document.getElementById("mem-classifier-model");
   if (sel) { sel.innerHTML = `<option value="">Loading…</option>`; }
+  if (resultEl) { resultEl.textContent = "…"; resultEl.className = "mem-test-result"; }
   try {
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), 5000);
     let models = [];
-    // Try Ollama /api/tags first, fall back to OpenAI /v1/models
     for (const path of ["/api/tags", "/v1/models"]) {
       try {
         const resp = await fetch(base + path, { signal: abort.signal });
@@ -1574,10 +1575,17 @@ async function fetchClassifierModels() {
       } catch {}
     }
     clearTimeout(timer);
-    _setClassifierModelSelect(models, registryState.memory_config?.classifier_model);
+    if (models.length) {
+      _setClassifierModelSelect(models, registryState.memory_config?.classifier_model);
+      if (resultEl) { resultEl.textContent = `✓ ${models.length} model${models.length === 1 ? "" : "s"}`; resultEl.className = "mem-test-result mem-test-ok"; }
+    } else {
+      if (sel) sel.innerHTML = `<option value="">— no models —</option>`;
+      if (resultEl) { resultEl.textContent = "✗ no models"; resultEl.className = "mem-test-result mem-test-fail"; }
+    }
     exportFullModel();
   } catch (err) {
     if (sel) sel.innerHTML = `<option value="">— fetch failed —</option>`;
+    if (resultEl) { resultEl.textContent = "✗ failed"; resultEl.className = "mem-test-result mem-test-fail"; }
   }
 }
 
