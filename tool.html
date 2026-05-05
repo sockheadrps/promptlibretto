@@ -1089,19 +1089,19 @@
           main.appendChild(el);
         }
 
-        [
-          'base_context',
-          'personas',
-          'sentiment',
-          'static_injections',
-          'runtime_injections',
-          'output_prompt_directions',
-          'memory_recall',
-          'prompt_endings',
-        ].forEach((key) => {
-          if (reg[key]) appendWithScript(key, renderItemSection(key, reg[key]));
-        });
+        // 1. Registry meta
+        appendWithScript('file', renderObjectSection('registry', {
+          version: reg.version,
+          title: reg.title,
+          description: reg.description,
+        }));
 
+        // 2. Memory config
+        if (reg.memory_config) {
+          appendWithScript('memory_config', renderObjectSection('memory_config', reg.memory_config));
+        }
+
+        // 3. Assembly order
         if (reg.assembly_order) {
           const sec = document.createElement('section');
           sec.className = 'section';
@@ -1119,27 +1119,32 @@
           appendWithScript('assembly_order', sec);
         }
 
+        // 4. Generation + output policy
         if (reg.generation) {
           appendWithScript('generation', renderObjectSection('generation', reg.generation));
         }
-
         if (fullJson.output_policy) {
-          appendWithScript(
-            'output_policy',
-            renderObjectSection('output_policy', fullJson.output_policy)
-          );
+          appendWithScript('output_policy', renderObjectSection('output_policy', fullJson.output_policy));
         }
 
+        // 5. Memory rules
         if (Array.isArray(reg.memory_rules)) {
           appendWithScript('memory_rules', renderMemoryRules(reg.memory_rules));
         }
 
-        if (reg.memory_config) {
-          appendWithScript(
-            'memory_config',
-            renderObjectSection('memory_config', reg.memory_config)
-          );
-        }
+        // 6. Item sections
+        [
+          'base_context',
+          'personas',
+          'sentiment',
+          'static_injections',
+          'runtime_injections',
+          'output_prompt_directions',
+          'memory_recall',
+          'prompt_endings',
+        ].forEach((key) => {
+          if (reg[key]) appendWithScript(key, renderItemSection(key, reg[key]));
+        });
       }
 
       renderRegistry();
