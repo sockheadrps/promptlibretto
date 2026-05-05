@@ -12,7 +12,7 @@ COPY promptlibretto ./promptlibretto
 COPY studio ./studio
 COPY ensemble ./ensemble
 
-RUN pip install --upgrade pip && pip install ".[studio,ollama,memory]"
+RUN pip install --upgrade pip && pip install ".[studio,ollama,memory]" websockets
 
 EXPOSE 8000
 
