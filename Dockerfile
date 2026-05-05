@@ -9,6 +9,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY promptlibretto ./promptlibretto
 COPY studio ./studio
+COPY ensemble ./ensemble
 
 RUN pip install --upgrade pip && pip install ".[studio,ollama,memory]"
 
