@@ -3266,3 +3266,120 @@ details[open] > .registry-scale-summary::before { transform: rotate(90deg); }
 }
 .memory-info-val { color: var(--text, #ede6db); font-size: 11px; font-family: var(--mono, monospace); }
 .memory-info-toggle { cursor: default; user-select: none; }
+
+/* ═══ COMPOSITING ROOM OVERRIDE ═══════════════════════════════
+   Align studio with the shared palette used by Builder + Ensemble.
+   All three pages share identical CSS variables and visual grammar.
+   ════════════════════════════════════════════════════════════ */
+
+:root {
+  /* background / surface */
+  --bg:             #0b0907;
+  --panel:          #131008;
+  --panel-2:        #1a1510;
+  --panel-3:        #221c14;
+
+  /* borders */
+  --border:         #2d2820;
+  --border-subtle:  #1e1912;
+
+  /* typography */
+  --text:           #eee8de;
+  --text-dim:       #c0b49f;
+  --muted:          #7a6e5e;
+  --muted-soft:     #524a3c;
+
+  /* accent — amber / steel */
+  --accent:         #c98b40;
+  --accent-glow:    rgba(201, 139, 64, 0.11);
+  --accent-2:       #8db0cc;
+  --accent-rose:    #c06060;
+  --warn:           #d4a84c;
+  --error:          #c45858;
+}
+
+/* ── gradient buttons: vertical amber sweep (was diagonal) ── */
+.action-btn--primary {
+  background: linear-gradient(180deg, #dba060, #c08338);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(201, 139, 64, 0.3) inset;
+}
+.action-btn--primary:hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+}
+.action-btn--primary:active { transform: translateY(0); }
+
+.primary-action {
+  background: linear-gradient(180deg, #dba060, #c08338);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(201, 139, 64, 0.3) inset;
+}
+.primary-action:hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+}
+
+/* snap-save button in header */
+.snapshot-save-btn {
+  background: linear-gradient(180deg, #dba060, #c08338);
+  color: #0b0907;
+}
+
+/* header gradient rule */
+header::after {
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    #b88030 30%,
+    rgba(201, 139, 64, 0.08) 70%,
+    transparent
+  );
+}
+
+/* controls panel left-edge glow — tighter, more amber */
+.controls-panel::before {
+  background: linear-gradient(180deg, var(--accent), transparent 65%);
+  opacity: 0.35;
+}
+
+/* tab active state — update to match builder/ensemble treatment */
+.tabs .tab.active { color: var(--text); background: var(--panel); }
+.tabs .tab.active .tab-num { background: var(--accent); color: #0b0907; }
+.tabs .tab:hover { background: rgba(201, 139, 64, 0.04); }
+
+/* connection dot filled color (hardcoded in original) */
+.meta-chip--action .chip-dot[data-ok="1"] {
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(201, 139, 64, 0.45);
+}
+#conn-status[data-kind="ok"]   { color: var(--accent); }
+#conn-status[data-kind="warn"] { color: var(--accent); }
+
+/* pipeline node accent (hardcoded amber) */
+.pcard-tvar-label code { color: var(--accent); }
+.pcard-tvar-input:focus { border-color: rgba(201, 139, 64, 0.4); }
+
+/* route-slot empty highlight */
+.route-slot-empty { border-color: rgba(201, 139, 64, 0.35); background: rgba(201, 139, 64, 0.04); }
+.route-slot-empty .route-slot-value { border-color: rgba(201, 139, 64, 0.38); }
+
+/* cors warning strong color */
+.conn-cors-warning strong { color: var(--accent); }
+
+/* example button */
+button.example { background: linear-gradient(180deg, #dba060, #b87828); box-shadow: 0 2px 8px rgba(201, 139, 64, 0.18); }
+button.example:hover { box-shadow: 0 4px 16px rgba(201, 139, 64, 0.28); }
+
+/* modal ring */
+.modal-card {
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(201, 139, 64, 0.06);
+}
+
+/* filled input visual signal — consistent with builder/ensemble */
+input[type="text"]:not(:placeholder-shown),
+input[type="number"]:not(:placeholder-shown),
+textarea:not(:placeholder-shown) {
+  border-color: rgba(201, 139, 64, 0.28);
+  background: rgba(18, 15, 11, 0.95);
+}

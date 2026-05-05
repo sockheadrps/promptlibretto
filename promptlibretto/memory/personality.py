@@ -66,7 +66,7 @@ class PersonalityProfile:
 
     def rebuild(self) -> None:
         parts = [self.seed] + [a.text for a in self.amendments if a.text.strip()]
-        self.assembled = " ".join(p.strip() for p in parts if p.strip())
+        self.assembled = "\n\n".join(p.strip() for p in parts if p.strip())
 
     def to_dict(self) -> dict[str, Any]:
         return {

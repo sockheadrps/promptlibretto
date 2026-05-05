@@ -7,26 +7,28 @@ from promptlibretto import Engine, MockProvider, Registry
 
 _TWITCH_REGISTRY = {
     "registry": {
-        "version": 22,
+        "version": 2,
         "title": "Twitch Chatter",
         "assembly_order": [
             "output_prompt_directions",
             "base_context.text",
-            "persona.context",
+            "personas.context",
+            "personas.groups",
             "sentiment.context",
-            "sentiment.nudges",
+            "sentiment.groups[positive_cues]",
             "sentiment.scale",
-            "examples.normal_examples",
-            "sentiment.examples",
-            "prompt_endings.examples",
+            "groups[normal_examples]",
+            "sentiment.groups[positive_examples]",
+            "prompt_endings",
         ],
         "base_context": {
             "required": True,
             "template_vars": ["location"],
             "items": [
                 {
-                    "name": "stream_context",
+                    "id": "stream_context",
                     "text": "Streamer is at {location}.",
+                    "template_defaults": {"location": "stream"},
                 }
             ],
         },
@@ -36,12 +38,12 @@ _TWITCH_REGISTRY = {
                 {
                     "id": "the_lurker",
                     "context": "You usually never speak.",
-                    "base_directives": ["Be brief.", "Be shy."],
+                    "groups": ["lurker_directives"],
                 },
                 {
                     "id": "the_hype_man",
                     "context": "You're the streamer's biggest fan.",
-                    "base_directives": ["Exaggerate.", "High energy."],
+                    "groups": ["hype_directives"],
                 },
             ],
         },
@@ -51,14 +53,22 @@ _TWITCH_REGISTRY = {
                 {
                     "id": "positive",
                     "context": "Your opinion is positive:",
-                    "nudges": ["React with excitement.", "Sound impressed."],
-                    "examples": ["lets gooo", "huge W"],
+                    "groups": ["positive_cues", "positive_examples"],
+                    "scale": {
+                        "scale_descriptor": "excited",
+                        "template": "intensity is {value} on {scale_descriptor}",
+                        "default_value": 5,
+                    },
                 },
                 {
                     "id": "negative",
                     "context": "Your opinion is negative:",
-                    "nudges": ["Be sarcastic.", "Sound bored."],
-                    "examples": ["yikes", "L"],
+                    "groups": ["negative_cues", "negative_examples"],
+                    "scale": {
+                        "scale_descriptor": "annoyed",
+                        "template": "intensity is {value} on {scale_descriptor}",
+                        "default_value": 5,
+                    },
                 },
             ],
         },
@@ -77,23 +87,47 @@ _TWITCH_REGISTRY = {
         "output_prompt_directions": {
             "required": True,
             "items": [
-                {"name": "rules_chat", "text": "Rules: short message."},
+                {"id": "rules_chat", "text": "Rules: short message."},
             ],
         },
-        "examples": {
+        "groups": {
             "required": False,
             "items": [
                 {
-                    "name": "normal_examples",
+                    "id": "lurker_directives",
+                    "items": ["Be brief.", "Be shy."],
+                },
+                {
+                    "id": "hype_directives",
+                    "items": ["Exaggerate.", "High energy."],
+                },
+                {
+                    "id": "positive_cues",
+                    "items": ["React with excitement.", "Sound impressed."],
+                },
+                {
+                    "id": "positive_examples",
+                    "items": ["lets gooo", "huge W"],
+                },
+                {
+                    "id": "negative_cues",
+                    "items": ["Be sarcastic.", "Sound bored."],
+                },
+                {
+                    "id": "negative_examples",
+                    "items": ["yikes", "L"],
+                },
+                {
+                    "id": "normal_examples",
                     "pre_context": "Here are example phrases:",
                     "items": ["lmao", "W", "pog", "bruh"],
-                }
+                },
             ],
         },
         "prompt_endings": {
             "required": True,
             "items": [
-                {"name": "prompt_endings", "items": ["Your message:", "You type:"]},
+                {"id": "prompt_endings", "items": ["Your message:", "You type:"]},
             ],
         },
     }

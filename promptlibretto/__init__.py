@@ -23,12 +23,10 @@ from .registry import (
     Display,
     DynamicMixin,
     Engine,
-    ExampleGroup,
     Fragment,
     GenerationChunk,
     GenerationResult,
     Group,
-    HydrateState,
     OutputDirection,
     Persona,
     PromptEnding,
@@ -43,7 +41,6 @@ from .registry import (
     Section,
     SectionState,
     Sentiment,
-    SentimentItem,
     StaticInjection,
     export_json,
     hydrate,
@@ -56,7 +53,6 @@ __all__ = [
     "GenerationChunk",
     "GenerationResult",
     # State
-    "HydrateState",
     "RegistryState",
     "SectionState",
     # Registry
@@ -89,9 +85,6 @@ __all__ = [
     "SectionStateSchema",
     "SelectableItem",
     "derive_state_schema",
-    # v22 aliases
-    "ExampleGroup",
-    "SentimentItem",
     # Providers
     "ProviderAdapter",
     "ProviderRequest",

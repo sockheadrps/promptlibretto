@@ -1,20 +1,21 @@
 :root {
-  --bg: #0d0b09;
-  --panel: #15120f;
-  --panel-2: #1c1914;
-  --panel-3: #24201a;
-  --border: #332e26;
-  --border-subtle: #272219;
-  --text: #ede6db;
-  --text-dim: #c4b9a8;
-  --muted: #7d7264;
-  --muted-soft: #5a5147;
-  --accent: #d4915c;
-  --accent-glow: rgba(212, 145, 92, 0.12);
-  --accent-2: #94b4d4;
-  --accent-rose: #c46b6b;
+  --bg: #0b0907;
+  --panel: #131008;
+  --panel-2: #1a1510;
+  --panel-3: #221c14;
+  --border: #2d2820;
+  --border-subtle: #1e1912;
+  --text: #eee8de;
+  --text-dim: #c0b49f;
+  --muted: #7a6e5e;
+  --muted-soft: #524a3c;
+  --accent: #c98b40;
+  --accent-glow: rgba(201, 139, 64, 0.12);
+  --accent-2: #8db0cc;
+  --accent-rose: #c06060;
   --warn: #d4a84c;
   --error: #c45858;
+  --gold: #c8a856;
   --pill-bg: #1a1710;
   --font-display: "Crimson Pro", Georgia, serif;
   --font-body: "Manrope", "Segoe UI", sans-serif;
@@ -664,6 +665,9 @@ select {
   font-family: var(--font-body);
   font-size: 13px;
   line-height: 1.45;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
   transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
@@ -1356,32 +1360,7 @@ select:focus {
 .cors-tab-active { background: var(--panel-3, #1e1a14); color: var(--accent); border-color: var(--border); }
 .cors-pre { border-radius: 0 6px 6px 6px !important; margin-top: 0 !important; }
 
-.mem-help-btn {
-  background: var(--panel-2);
-  color: var(--muted-soft);
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  margin-left: 6px;
-  vertical-align: middle;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: all 150ms ease;
-}
-
-.mem-help-btn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: rgba(212, 145, 92, 0.1);
-}
+/* .mem-help-btn — see redesign block */
 
 /* ── Memory Rules ──────────────────────────────────────────────── */
 
@@ -1581,29 +1560,7 @@ select:focus {
   color: var(--warn);
 }
 
-.mem-conn-refresh {
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 14px;
-  padding: 0 4px;
-  line-height: 1;
-}
-
-.mem-conn-refresh:hover {
-  color: var(--text);
-}
-
-.mem-model-row {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-
-.mem-model-row select {
-  flex: 1;
-}
+/* .mem-conn-refresh, .mem-model-row — see redesign block */
 
 /* ── Inline group editor ─────────────────────────────────── */
 
@@ -1807,57 +1764,8 @@ details[open] > .inline-group-summary::before {
   font-style: italic;
 }
 
-/* ── Memory config grouped sections ─────────────────────── */
-
-.mem-config-group {
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 12px;
-  margin-top: 12px;
-}
-
-.mem-config-group:first-child {
-  border-top: none;
-  padding-top: 0;
-  margin-top: 0;
-}
-
-.mem-config-group-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.mem-check-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  grid-column: 1 / -1;
-}
-
-.mem-check-label input[type="checkbox"] {
-  width: auto;
-  flex-shrink: 0;
-}
-
-.mem-embed-toggle-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  grid-column: 1 / -1;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.mem-embed-toggle-label input[type="checkbox"] {
-  width: auto;
-  flex-shrink: 0;
-}
+/* ── Memory config card grid — see redesign block below ──── */
+/* (rules moved to redesign block at end of file) */
 
 /* ── Embed test result badge ─────────────────────────────── */
 
@@ -1999,4 +1907,962 @@ details[open] > .inline-group-summary::before {
   opacity: 0.45;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BUILDER REDESIGN — "Compositing Room"
+   Precision typesetting instrument aesthetic: warm dark,
+   deliberate marks, ruled hierarchy, editorial rhythm.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Entrance animations ──────────────────────────────────── */
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.builder-meta-grid {
+  animation: fadeSlideUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+#builder-setup-card:not([hidden]) {
+  animation: fadeSlideUp 0.38s 0.06s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+#builder-main-grid:not([hidden]) .builder-tab-panel.panel {
+  animation: fadeSlideUp 0.38s 0.05s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+#builder-main-grid:not([hidden]) .builder-preview {
+  animation: fadeSlideUp 0.42s 0.1s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.builder-tab-body.active > .panel,
+.builder-tab-body.active > .builder-advanced-row,
+.builder-tab-body.active > section {
+  animation: fadeIn 0.22s ease both;
+}
+
+/* ── Meta strip — unified manifest ───────────────────────── */
+
+.builder-meta-grid {
+  display: grid;
+  grid-template-columns: minmax(72px, 90px) minmax(200px, 1fr) minmax(220px, 1.5fr);
+  gap: 0;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.025) inset,
+    0 12px 28px rgba(0, 0, 0, 0.32);
+}
+
+.builder-meta-grid .panel.field-card {
+  background: linear-gradient(180deg, #141109 0%, #0f0d09 100%);
+  border: none;
+  border-radius: 0;
+  border-right: 1px solid var(--border);
+  box-shadow: none;
+  padding: 18px 22px 16px;
+  position: relative;
+  overflow: visible;
+}
+
+.builder-meta-grid .panel.field-card::before {
+  display: none;
+}
+
+.builder-meta-grid .panel.field-card:last-child {
+  border-right: none;
+}
+
+.builder-meta-grid .panel.field-card:first-child {
+  background: linear-gradient(160deg, rgba(201, 139, 64, 0.05) 0%, #0f0d09 60%);
+}
+
+/* Field ordinal marks */
+.field-ordinal {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--accent);
+  opacity: 0.55;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  margin-bottom: 8px;
+  display: block;
+  user-select: none;
+}
+
+.builder-meta-grid label {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.builder-meta-grid input {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: var(--border-subtle);
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+.builder-meta-grid input:focus {
+  border-color: rgba(201, 139, 64, 0.45);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: 0 0 0 3px rgba(201, 139, 64, 0.1);
+}
+
+/* ── Tab bar — architectural segments ────────────────────── */
+
+.builder-tab-panel {
+  padding: 0;
+  overflow: hidden;
+  background: linear-gradient(180deg, #131008, #0f0d08);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.builder-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  width: 100%;
+}
+
+.builder-tab {
+  flex: 1;
+  padding: 14px 10px;
+  border-radius: 0;
+  border: none;
+  border-right: 1px solid var(--border);
+  border-bottom: 2px solid transparent;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease, border-bottom-color 160ms ease;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  position: relative;
+}
+
+.builder-tab:last-child {
+  border-right: none;
+}
+
+.builder-tab:hover:not(.active) {
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.builder-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: rgba(201, 139, 64, 0.07);
+}
+
+.tab-num {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--muted-soft);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.builder-tab.active .tab-num {
+  color: rgba(201, 139, 64, 0.6);
+}
+
+/* ── Panel heads — marked hierarchy ─────────────────────── */
+
+.panel-head {
+  margin-bottom: 16px;
+}
+
+.panel-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-title::before {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 11px;
+  background: var(--accent);
+  border-radius: 2px;
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.panel-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ── Section & field panels — refined density ────────────── */
+
+.field-card,
+.field-panel,
+.sections-panel,
+.output-panel {
+  padding: 18px 20px;
+}
+
+/* Inner panel heads in sections — slightly less weight */
+.sections-panel .panel-head {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 18px;
+}
+
+.field-panel .panel-head {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 18px;
+}
+
+/* ── Entry/section cards ─────────────────────────────────── */
+
+.section-list {
+  counter-reset: section-index;
+  gap: 12px;
+}
+
+.entry-card {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(10, 8, 6, 0.5);
+  position: relative;
+  transition: border-color 160ms ease;
+}
+
+.entry-card:hover {
+  border-color: rgba(201, 139, 64, 0.16);
+}
+
+/* ── Assembly flow — signal chain ────────────────────────── */
+
+.assembly-flow-layout {
+  gap: 14px;
+}
+
+.assembly-flow-list {
+  border: 1px solid var(--border-subtle);
+  background: rgba(8, 6, 4, 0.6);
+  border-radius: 10px;
+  padding: 12px;
+  gap: 8px;
+  position: relative;
+}
+
+.assembly-step-card {
+  border: 1px solid rgba(201, 139, 64, 0.12);
+  background: linear-gradient(180deg, rgba(20, 16, 11, 0.98), rgba(13, 10, 7, 0.98));
+  border-radius: 8px;
+  padding: 10px 12px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.assembly-step-card:hover {
+  border-color: rgba(201, 139, 64, 0.24);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.assembly-step-number {
+  width: 28px;
+  height: 28px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  border-radius: 50%;
+  background: rgba(201, 139, 64, 0.08);
+  border: 1px solid rgba(201, 139, 64, 0.18);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+}
+
+.assembly-step-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+.assembly-step-token {
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent-2);
+  opacity: 0.85;
+}
+
+.assembly-subhead {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.assembly-group-title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  opacity: 0.85;
+  margin-bottom: 6px;
+}
+
+/* ── Output panel tabs — refined ─────────────────────────── */
+
+.preview-tab-row {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.preview-tab {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  padding: 5px 10px;
+  border-radius: 5px;
+  transition: background 140ms, color 140ms;
+}
+
+.preview-tab.active {
+  background: rgba(201, 139, 64, 0.1);
+  color: var(--accent);
+}
+
+/* ── Buttons — refined precision ─────────────────────────── */
+
+.primary-btn {
+  background: linear-gradient(180deg, #dba060, #c08338);
+  color: #0b0805;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  box-shadow: 0 0 0 1px rgba(201, 139, 64, 0.3) inset, 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: filter 140ms ease, transform 120ms ease;
+}
+
+.primary-btn:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(201, 139, 64, 0.4) inset, 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+.ghost-btn {
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  transition: border-color 140ms, color 140ms, background 140ms;
+}
+
+.ghost-btn:hover {
+  border-color: rgba(201, 139, 64, 0.3);
+  color: var(--text-dim);
+  background: rgba(201, 139, 64, 0.04);
+}
+
+.btn-add {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  border-radius: 7px;
+  padding: 9px 12px;
+  color: var(--accent);
+  border: 1px dashed rgba(201, 139, 64, 0.35);
+  background: rgba(201, 139, 64, 0.03);
+  transition: background 150ms, border-color 150ms, border-style 150ms;
+}
+
+.btn-add:hover {
+  background: rgba(201, 139, 64, 0.07);
+  border-style: solid;
+  border-color: rgba(201, 139, 64, 0.5);
+}
+
+.collapse-toggle {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 5px 10px;
+  transition: color 140ms, border-color 140ms;
+}
+
+.collapse-toggle:hover {
+  color: var(--text-dim);
+  border-color: rgba(201, 139, 64, 0.25);
+}
+
+/* ── Setup card — centered decision point ────────────────── */
+
+.builder-setup-card {
+  padding: 56px 16px;
+}
+
+.setup-card-inner {
+  background: linear-gradient(180deg, #161208 0%, #100e09 100%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 44px 52px;
+  max-width: 500px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02) inset, 0 20px 48px rgba(0, 0, 0, 0.4);
+  position: relative;
+  overflow: hidden;
+}
+
+.setup-card-inner::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(201, 139, 64, 0.4), transparent);
+}
+
+.setup-card-title {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--text);
+  margin: 0 0 14px;
+  letter-spacing: 0.01em;
+}
+
+.setup-card-body {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.7;
+  margin: 0 0 32px;
+}
+
+.setup-btn {
+  padding: 10px 26px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: filter 140ms, transform 110ms, background 140ms;
+}
+
+.setup-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.setup-btn-yes {
+  background: linear-gradient(180deg, #dba060, #c08338);
+  color: #0b0805;
+  border-color: rgba(201, 139, 64, 0.3);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+
+.setup-btn-no {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+.setup-btn-no:hover {
+  color: var(--text-dim);
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+/* ── Setup phase banner ──────────────────────────────────── */
+
+.setup-phase-banner {
+  background: rgba(140, 95, 40, 0.08);
+  border: 1px solid rgba(201, 139, 64, 0.22);
+  border-radius: 9px;
+  padding: 11px 18px;
+}
+
+.setup-banner-text {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.01em;
+}
+
+.setup-continue-btn {
+  background: linear-gradient(180deg, #dba060, #c08338);
+  color: #0b0805;
+  border: none;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: filter 140ms, opacity 140ms;
+}
+
+.setup-continue-btn:not(:disabled):hover {
+  filter: brightness(1.1);
+}
+
+.setup-continue-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+/* ── Output JSON + preview ───────────────────────────────── */
+
+.output-json {
+  background: rgba(6, 5, 3, 0.7);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+}
+
+.validation-status {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+/* ── Inset panel ─────────────────────────────────────────── */
+
+.inset-panel {
+  background: rgba(8, 6, 4, 0.5);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  padding: 14px;
+}
+
+/* ── Form grid labels ────────────────────────────────────── */
+
+.form-grid label span,
+.stack-fields label span {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+/* ── Memory config card — full fix ──────────────────────── */
+
+.mem-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.mem-config-card {
+  background: rgba(8, 6, 4, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Card section title */
+.mem-config-card-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--accent);
+  opacity: 1;
+  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* Labels inside cards — suppress global label uppercase/transform.
+   Use descendant (not >) so nested labels in two-col grids are covered. */
+.mem-config-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 0;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+}
+
+/* Field name span inside labels */
+.mem-config-card label > span:first-child {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  font-family: var(--font-body);
+}
+
+/* Two-col grid for paired number fields */
+.mem-config-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+/* Inputs inside cards — slightly more compact */
+.mem-config-card input,
+.mem-config-card select,
+.mem-config-card textarea {
+  font-size: 12px;
+  padding: 7px 10px;
+}
+
+/* Model row — select + refresh + status */
+.mem-model-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.mem-model-row select,
+.mem-model-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.mem-conn-refresh {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 5px 7px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 140ms, border-color 140ms;
+}
+
+.mem-conn-refresh:hover {
+  color: var(--accent);
+  border-color: rgba(201, 139, 64, 0.3);
+}
+
+/* Test result badge */
+.mem-test-result {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Toggle rows — checkbox + label inline */
+.mem-toggle-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  margin-bottom: 0;
+  transition: border-color 140ms, color 140ms;
+}
+
+.mem-toggle-row input[type="checkbox"] {
+  width: auto;
+  flex-shrink: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.mem-toggle-row > span {
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.mem-toggle-row:hover {
+  border-color: rgba(201, 139, 64, 0.2);
+  color: var(--text);
+}
+
+/* Embed help button */
+.mem-help-btn {
+  background: rgba(141, 176, 204, 0.08);
+  border: 1px solid rgba(141, 176, 204, 0.18);
+  color: var(--accent-2);
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 140ms, border-color 140ms;
+}
+
+.mem-help-btn:hover {
+  background: rgba(141, 176, 204, 0.16);
+  border-color: rgba(141, 176, 204, 0.35);
+}
+
+@media (max-width: 1100px) {
+  .mem-config-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Flow view ───────────────────────────────────────────── */
+
+.flow-block {
+  border-left: 2px solid rgba(201, 139, 64, 0.45);
+  border-radius: 0 5px 5px 0;
+  margin: 3px 10px;
+  padding: 6px 10px;
+  background: rgba(14, 11, 8, 0.6);
+}
+
+.flow-block-token {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  opacity: 0.8;
+}
+
+/* ── Responsive overrides for redesign ──────────────────── */
+
+@media (max-width: 1100px) {
+  .builder-meta-grid {
+    grid-template-columns: 1fr;
+    background: var(--bg);
+    border: none;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+
+  .builder-meta-grid .panel.field-card {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .builder-meta-grid .panel.field-card:last-child {
+    border-bottom: none;
+  }
+}
+
+/* ── Filled input state ──────────────────────────────────── */
+
+input[type="text"]:not(:placeholder-shown),
+input[type="number"]:not(:placeholder-shown),
+input[type="url"]:not(:placeholder-shown),
+textarea:not(:placeholder-shown) {
+  border-color: rgba(201, 139, 64, 0.32);
+  background: rgba(20, 16, 12, 0.96);
+}
+
+/* Select with a real value chosen (not the placeholder-style empty option) */
+select:not([data-empty]) {
+  border-color: rgba(201, 139, 64, 0.22);
+}
+
+/* ── Mem config conditional sections ─────────────────────── */
+
+#mem-classifier-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#mem-classifier-section[hidden],
+#mem-embed-url-section[hidden] {
+  display: none;
+}
+
+#mem-embed-url-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Fine print — header accent line ─────────────────────── */
+
+header::after {
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent) 0%, rgba(201, 139, 64, 0.3) 45%, transparent 80%);
+  opacity: 0.7;
+}
+
+/* ── Palette button in assembly sidebar ──────────────────── */
+
+.assembly-palette-btn {
+  border-radius: 7px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.015);
+  color: var(--text-dim);
+  font-size: 10px;
+  padding: 7px 9px;
+  transition: border-color 140ms, color 140ms, background 140ms;
+}
+
+.assembly-palette-btn:hover {
+  border-color: rgba(201, 139, 64, 0.3);
+  color: var(--text);
+  background: rgba(201, 139, 64, 0.05);
+}
+
+/* ── Chip controls ───────────────────────────────────────── */
+
+.assembly-chip-btn {
+  border-radius: 999px;
+  font-size: 10px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-dim);
+  transition: border-color 140ms, color 140ms;
+}
+
+.assembly-chip-btn:hover {
+  border-color: rgba(201, 139, 64, 0.3);
+  color: var(--text);
+}
+
+/* ── var badges ──────────────────────────────────────────── */
+
+.var-badge {
+  font-size: 10px;
+  border-radius: 4px;
+  padding: 1px 7px;
+}
+
+/* ── Section header (collapsible) ────────────────────────── */
+
+.section-header {
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.018);
+  transition: background 160ms ease;
+}
+
+.section-header:hover {
+  background: rgba(201, 139, 64, 0.04);
+}
+
+/* ── List item rows ──────────────────────────────────────── */
+
+.list-item-row {
+  border-radius: 6px;
+}
+
+.list-item-row:nth-child(odd) {
+  background: rgba(201, 139, 64, 0.03);
+}
+
+.list-item-remove {
+  color: var(--muted-soft);
+  font-size: 14px;
+}
+
+.list-item-remove:hover {
+  color: var(--accent-rose);
+}
+
+.list-item-add {
+  border: 1px dashed rgba(201, 139, 64, 0.28);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  border-radius: 6px;
+  padding: 5px 10px;
+  transition: all 140ms;
+}
+
+.list-item-add:hover {
+  border-style: solid;
+  border-color: rgba(201, 139, 64, 0.45);
+  color: var(--accent);
+  background: rgba(201, 139, 64, 0.04);
+}
+
+/* ── Delete button ───────────────────────────────────────── */
+
+.btn-delete {
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  opacity: 0.65;
+  top: 10px;
+  right: 10px;
+  transition: opacity 140ms;
+}
+
+.btn-delete:hover {
+  opacity: 1;
 }

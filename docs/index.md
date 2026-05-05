@@ -1,319 +1,121 @@
 # promptlibretto
 
-A prompt-engineering library plus a browser studio for designing,
-tuning, and exporting prompts as portable JSON.
+`promptlibretto` is a schema v2 prompt registry library. It assembles prompts from named sections, runtime state, and an explicit `assembly_order`.
 
-A **registry** is a flat list of named *sections* — `personas`,
-`sentiment`, `examples`, `prompt_endings`, and so on — each holding a
-list of *items*. An `assembly_order` of tokens
-(`section`, `section.field`, or `section[expr]`) tells the engine how to
-weave the selected items into one prompt.
-
-The same JSON the studio exports is the JSON the library loads. No
-codegen, no schema drift between the editor and the runtime.
-
-![promptlibretto intro](assets/intro.gif)
-
-## Install
-
-```bash
-pip install promptlibretto                # library only
-pip install "promptlibretto[ollama]"      # adds httpx for OllamaProvider
-pip install "promptlibretto[studio]"      # adds the browser studio
-pip install "promptlibretto[dev]"         # pytest + pytest-asyncio
-```
-
-## Quick start — library
+## Minimal Example
 
 ```python
-import asyncio
 from promptlibretto import Engine, MockProvider, Registry
 
 reg = Registry.from_dict({
     "registry": {
+        "version": 2,
         "assembly_order": ["output_prompt_directions", "personas.context"],
         "output_prompt_directions": {
             "required": True,
-            "items": [{"name": "rules", "text": "Be brief."}],
+            "items": [{"id": "rules", "text": "Be brief."}],
         },
         "personas": {
             "required": True,
-            "items": [
-                {"id": "shy",  "context": "You're nervous about speaking."},
-                {"id": "loud", "context": "You're full of energy."},
-            ],
+            "items": [{"id": "direct", "context": "Be direct."}],
         },
     }
 })
 
 eng = Engine(reg, provider=MockProvider())
-print(eng.hydrate(state={"selections": {"personas": "loud"}}))
+print(eng.hydrate({"personas": {"selected": "direct"}}))
 ```
 
-Output:
+## Current Public Model
 
+- `Registry`, `Section`, `Route`
+- `RegistryState`, `SectionState`
+- `ContextItem`, `Persona`, `Sentiment`, `Group`
+- `StaticInjection`, `RuntimeInjection`
+- `OutputDirection`, `PromptEnding`
+- `Display`, `Fragment`, `Scale`
+
+Only schema `version: 2` is supported.
+
+## State Shape
+
+State is keyed by section:
+
+```json
+{
+  "base_context": {
+    "selected": "scene",
+    "template_vars": {"place": "the kitchen"}
+  },
+  "personas": {
+    "selected": "direct"
+  },
+  "sentiment": {
+    "selected": "warm",
+    "slider": 7,
+    "array_modes": {"groups[warm_examples]": "random:1"}
+  }
+}
 ```
-Be brief.
 
-You're full of energy.
+## Assembly Tokens
+
+- `section`
+- `section.field`
+- `section.scale`
+- `section.groups`
+- `section.groups[group_id]`
+- `groups[group_id]`
+- `injections`
+
+Adjacent blocks from the same section join with one newline. Different sections join with two newlines. Adjacent list blocks can merge when they share a `pre_context`.
+
+## Dynamic Items
+
+Dynamic items may carry:
+
+- `template_vars`
+- `template_defaults`
+- `fragments`
+
+Fragments use `condition` to render only when a section template variable has a value.
+
+## Groups
+
+Groups are reusable lists of prompt snippets. Attach them to items with `groups: ["group_id"]`, then render with `section.groups` or `section.groups[group_id]`.
+
+## Providers
+
+Use `Engine.hydrate()` for prompt-only rendering, `Engine.run()` for provider generation, and `Engine.stream()` for streaming providers.
+
+Built-ins:
+
+- `MockProvider`
+- `OllamaProvider`
+
+## Memory
+
+Install the memory extra and use `MemoryEngine` to add semantic retrieval, tag-based routing, and an evolving personality layer on top of any `Engine`:
+
+```bash
+pip install "promptlibretto[memory]"
+ollama pull nomic-embed-text
 ```
 
-## Quick start — studio
+`MemoryEngine.run()` returns the standard `GenerationResult` extended with `retrieved_chunks`, `extracted_tags`, `applied_rules`, and `final_state`.
+
+## Studio
 
 ```bash
 pip install "promptlibretto[studio,ollama]"
 promptlibretto-studio --port 8000
 ```
 
-Open <http://localhost:8000>. From there:
+- **`/`** Studio — runtime tuning surface
+- **`/builder`** Builder — visual registry authoring
+- **`/ensemble`** Ensemble — two-participant model-vs-model or model-vs-human conversations
 
-1. **Import JSON…** to paste a registry, or load one of the bundled
-   examples as a starting point.
-2. Pick selections (dropdowns / checkboxes), set per-array runtime modes
-   (`all` / `none` / `index:N` / `random:K`), fill template-var inputs,
-   and use the sentiment-intensity slider.
-3. **Pre-generate** to render the prompt; **Generate** to send it
-   browser-direct to your local Ollama. The browser-direct path uses the
-   server to hydrate the prompt, but it does not apply Python-side output
-   policy validation or retries.
-4. **Export Model JSON** copies the canonical registry — selections,
-   runtime modes, slider, generation overrides, all baked in — to
-   load in your app via `load_registry()`.
+## More
 
-![Studio Compose view](assets/screenshots/studio-compose.png)
-
-![Builder overview](assets/screenshots/builder-overview.png)
-
-## State shape
-
-```python
-state = {
-    "selections":     {section_key: id | [id, ...]},
-    "array_modes":    {section_key: {field: "all" | "none" | "index:N" | "random:K"}},
-    "section_random": {section_key: bool},
-    "sliders":        {section_key: int},
-    "slider_random":  {section_key: bool},
-    "template_vars":  {"<section>::<var>": "value"},
-}
-```
-
-All fields optional. Selections default to the first item of each
-required section. Modes default to `all`.
-
-## Hydrate vs run
-
-```python
-prompt = eng.hydrate(state=...)             # string, no LLM call
-result = await eng.run(state=...)           # hydrate + provider + output policy
-result = await eng.run(state=..., route="raid")    # optional route override
-async for chunk in eng.stream(state=...):   # streaming providers only
-    ...
-```
-
-Seed for reproducibility:
-
-```python
-prompt = eng.hydrate(state=..., seed=42)
-```
-
-## Optional routes
-
-```python
-from promptlibretto import Route
-
-reg.routes["raid"] = Route(
-    assembly_order=["runtime_injections", "output_prompt_directions"],
-    generation={"max_tokens": 96, "temperature": 0.4},
-    output_policy={"max_length": 280},
-)
-
-result = await eng.run(state=..., route="raid")
-```
-
-If a registry has no `routes`, the top-level `assembly_order` is the
-only path.
-
-## API reference
-
-Everything lives at the top of the package: `from promptlibretto import …`.
-
-### Model
-
-`Registry`
-: Dataclass for the whole model. `Registry.from_dict(d)` accepts both
-  wrapped (`{"registry": {...}}`) and bare dicts. `reg.to_dict(wrap=True)`
-  serializes it back. Attributes: `version`, `title`, `description`,
-  `assembly_order: list[str]`, `sections: dict[str, Section]`,
-  `routes: dict[str, Route]`, `generation: dict`, `output_policy: dict`.
-
-`Section`
-: One section. `required: bool`, `template_vars: list[str]`,
-  `items: list[dict]`. May also carry studio-state extras
-  (`selected`, `section_random`, `array_modes`, `slider`,
-  `slider_random`, `scale_template`, `template_var_defaults`)
-  when round-tripping through `Export Model JSON`.
-
-`Route`
-: Optional override bundle. `assembly_order: list[str] | None`,
-  `generation: dict`, `output_policy: dict`. Only the fields you set
-  override the registry-level defaults at run time.
-
-`SCHEMA_VERSION` / `SECTION_KEYS`
-: Constants. `SCHEMA_VERSION == 22` for the current schema. `SECTION_KEYS`
-  is the canonical ordered tuple of recognized section names.
-
-### Hydration
-
-`HydrateState`
-: Per-call inputs. Either build it directly or use `HydrateState.from_dict(d)`
-  with the state dict shape:
-
-  ```python
-  HydrateState(
-      selections     = {"sentiment": "positive", "examples": ["normal"]},
-      array_modes    = {"sentiment": {"nudges": "random:1"}},
-      section_random = {"personas": True},
-      sliders        = {"sentiment": 8},
-      slider_random  = {"sentiment": False},
-      template_vars  = {"base_context::location": "the kitchen"},
-  )
-  ```
-
-`hydrate(reg, state, *, route=None, seed=None) -> str`
-: Functional version of `Engine.hydrate`. Returns the assembled prompt.
-  No provider call. Pass `seed` for deterministic random rolls.
-
-### Engine
-
-```python
-class Engine:
-    def __init__(
-        self,
-        registry: Registry | Mapping | None = None,
-        provider: ProviderAdapter | str | None = None,
-        output_processor: OutputProcessor | None = None,
-    ): ...
-
-    def hydrate(self, state, *, route=None, seed=None) -> str: ...
-    async def run(self, state, *, route=None, seed=None) -> GenerationResult: ...
-    async def stream(self, state, *, route=None, seed=None) -> AsyncIterator[GenerationChunk]: ...
-```
-
-`provider="mock"` builds a `MockProvider`. `None` does the same and
-defers — calling `run` without a provider is fine if you only ever
-`hydrate`.
-
-### Results
-
-`GenerationResult`
-: Returned by `Engine.run`. Fields: `text` (cleaned + validated output),
-  `accepted: bool`, `prompt` (the exact string sent to the LLM),
-  `route: Optional[str]`, `reason: Optional[str]` (why a non-accepted
-  result was rejected), `usage: Optional[dict]`, `timing: Optional[dict]`,
-  `raw` (provider-specific payload).
-
-`GenerationChunk`
-: Yielded by `Engine.stream`. `delta: str` for incremental text;
-  `done: bool` for the final chunk; `result: Optional[GenerationResult]`
-  populated on the final chunk only.
-
-### Generation config
-
-```python
-GenerationConfig(
-    provider="ollama",      # informational only
-    model="default",
-    temperature=0.8,
-    top_p=None, top_k=None,
-    max_tokens=256,
-    repeat_penalty=None,
-    timeout_ms=60_000,
-    retries=1,
-    max_prompt_chars=None,
-)
-```
-
-`Engine` builds one of these per call from `registry.generation` merged
-with the active route's `generation`. You don't usually instantiate it
-directly — set fields on the registry/route JSON instead.
-`max_prompt_chars` is stored in the config object but is not enforced by
-the current engine.
-
-### Output policy
-
-```python
-OutputPolicy(
-    min_length=None, max_length=None,
-    strip_prefixes=(),         # tuple/list of strings
-    strip_patterns=(),         # tuple/list of regex strings
-    forbidden_substrings=(),
-    forbidden_patterns=(),
-    require_patterns=(),
-    append_suffix=None,
-    collapse_whitespace=True,
-)
-```
-
-`OutputProcessor.clean(text, ctx, policy)` strips, collapses whitespace,
-truncates to `max_length`, and appends `append_suffix`. `validate(text,
-ctx, policy)` returns a `ValidationResult(ok, reason)`.
-
-Merge semantics on `OutputPolicy.merged_with(overrides)`:
-
-- Sequence fields (`strip_prefixes`, `strip_patterns`,
-  `forbidden_substrings`, `forbidden_patterns`, `require_patterns`) —
-  **additive**: existing rules survive, overrides extend them.
-- Scalars (`max_length`, `min_length`, `append_suffix`,
-  `collapse_whitespace`) — **replace**.
-
-`Engine.run()` currently applies route output policy with a dictionary
-update before constructing `OutputPolicy`. In practice, a route-level
-sequence field replaces the registry-level value for that field rather
-than extending it.
-
-### Providers
-
-`ProviderAdapter` (Protocol)
-: Anything with `async def generate(request: ProviderRequest) -> ProviderResponse`.
-  Drop-in: pass an instance to `Engine(...)`.
-
-`StreamingProviderAdapter` (Protocol)
-: Adds `def stream(request) -> AsyncIterator[ProviderStreamChunk]`. The
-  final chunk has `done=True` and a `response` carrying the aggregated
-  text/usage/timing.
-
-`supports_streaming(provider) -> bool`
-: True iff `provider.stream` is callable.
-
-`OllamaProvider(base_url, chat_path, payload_shape="auto", client=None)`
-: Talks to Ollama or any OpenAI-compatible chat endpoint. `payload_shape`
-  defaults to auto-detect from `chat_path` (presence of `/v1/` ⇒
-  `openai`). Pass a custom `httpx.AsyncClient` to `client` to set
-  timeouts or other transport options.
-
-`MockProvider(responder=None, latency_ms=5.0)`
-: Echoes the user prompt back, optionally transformed by `responder`.
-  Used in tests and demos.
-
-`ProviderRequest` / `ProviderResponse` / `ProviderStreamChunk`
-: Wire-shape dataclasses. `ProviderResponse` carries `text`, `usage`
-  (`prompt_tokens` / `completion_tokens` / `total_tokens`), `timing`
-  (`total_ms` / `load_ms` / `prompt_eval_ms` / `eval_ms`), and `raw`.
-
-### Serialization
-
-`load_registry(source, provider=None, output_processor=None) -> Engine`
-: `source` may be a file path (`str` or `Path`), a JSON string, or an
-  already-parsed `dict`. Returns a ready `Engine`.
-
-`export_json(engine_or_registry, *, indent=2) -> str`
-: Pretty-printed JSON wrapped under `"registry": { … }`. Round-trips
-  through `Registry.from_dict`.
-
-## Where to read next
-
-- [Design rationale](design.md) — how the registry model fits together
-  and why it replaced routes/overlays/injections/presets.
-- [Studio & Builder](server.md) — designing prompts in the browser,
-  the visual registry builder, exporting models, browser-direct LLM,
-  and the registry HTTP API.
+- [Design](design.md)
+- [Studio and server notes](server.md)

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .engine import Engine, GenerationChunk, GenerationResult
-from .hydrate import HydrateState, hydrate
+from .hydrate import hydrate
 from .model import (
     SCHEMA_VERSION,
     SECTION_KEYS,
@@ -10,7 +10,6 @@ from .model import (
     ContextItem,
     Display,
     DynamicMixin,
-    ExampleGroup,
     Fragment,
     Group,
     OutputDirection,
@@ -23,7 +22,6 @@ from .model import (
     ScalableMixin,
     Section,
     Sentiment,
-    SentimentItem,
     StaticInjection,
 )
 from .schema import StateSchema, SectionStateSchema, SelectableItem, derive_state_schema
@@ -36,7 +34,6 @@ __all__ = [
     "GenerationChunk",
     "GenerationResult",
     # State
-    "HydrateState",
     "RegistryState",
     "SectionState",
     # Registry model
@@ -69,7 +66,4 @@ __all__ = [
     "SectionStateSchema",
     "SelectableItem",
     "derive_state_schema",
-    # v22 aliases (kept for migration)
-    "ExampleGroup",
-    "SentimentItem",
 ]

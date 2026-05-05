@@ -30,7 +30,6 @@ from .hydrate import hydrate
 from .model import Registry
 from .state import RegistryState
 
-HydrateState = RegistryState  # backward-compat alias
 
 
 # ── Result types ─────────────────────────────────────────────────

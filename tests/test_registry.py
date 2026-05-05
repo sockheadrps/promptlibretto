@@ -4,17 +4,15 @@ import pytest
 
 from promptlibretto import (
     Engine,
-    HydrateState,
     MockProvider,
     Registry,
+    RegistryState,
     Route,
+    SectionState,
     export_json,
     hydrate,
     load_registry,
 )
-
-
-# ── Roundtrip ────────────────────────────────────────────────────
 
 
 def test_registry_roundtrips_through_dict(twitch_registry: Registry) -> None:
@@ -32,6 +30,13 @@ def test_registry_accepts_bare_dict(twitch_registry: Registry) -> None:
     assert again.title == twitch_registry.title
 
 
+def test_registry_rejects_old_schema_versions(twitch_registry: Registry) -> None:
+    data = twitch_registry.to_dict(wrap=False)
+    data["version"] = 22
+    with pytest.raises(ValueError, match="unsupported registry schema version 22"):
+        Registry.from_dict(data)
+
+
 def test_export_json_string(twitch_registry: Registry) -> None:
     eng = Engine(twitch_registry)
     text = export_json(eng)
@@ -39,24 +44,24 @@ def test_export_json_string(twitch_registry: Registry) -> None:
     assert "Twitch Chatter" in text
 
 
-# ── Hydrate ──────────────────────────────────────────────────────
-
-
 def test_hydrate_default_picks_first_items(twitch_registry: Registry) -> None:
     out = hydrate(twitch_registry)
     assert "Rules: short message." in out
-    assert "Streamer is at" in out
-    assert "the_lurker" not in out  # ids don't leak as text
-    # First persona's context should appear
+    assert "Streamer is at stream." in out
+    assert "the_lurker" not in out
     assert "You usually never speak." in out
-    # Bullet lists for nudges (multi-item)
     assert "- React with excitement." in out
 
 
-def test_hydrate_honors_explicit_selections(twitch_registry: Registry) -> None:
-    state = HydrateState(
-        selections={"sentiment": "negative", "personas": "the_hype_man"},
-        template_vars={"base_context::location": "Times Square"},
+def test_hydrate_honors_explicit_section_state(twitch_registry: Registry) -> None:
+    state = RegistryState(
+        sections={
+            "sentiment": SectionState(selected="negative"),
+            "personas": SectionState(selected="the_hype_man"),
+            "base_context": SectionState(
+                template_vars={"location": "Times Square"}
+            ),
+        }
     )
     out = hydrate(twitch_registry, state)
     assert "Streamer is at Times Square." in out
@@ -65,71 +70,79 @@ def test_hydrate_honors_explicit_selections(twitch_registry: Registry) -> None:
 
 
 def test_hydrate_array_mode_random_is_seeded(twitch_registry: Registry) -> None:
-    state = HydrateState(
-        array_modes={"sentiment": {"nudges": "random:1"}},
+    state = RegistryState(
+        sections={
+            "sentiment": SectionState(
+                array_modes={"groups[positive_cues]": "random:1"}
+            )
+        }
     )
     a = hydrate(twitch_registry, state, seed=42)
     b = hydrate(twitch_registry, state, seed=42)
     c = hydrate(twitch_registry, state, seed=99)
     assert a == b
-    assert a != c  # different seeds → almost always different rolls
+    assert a != c
 
 
-def test_hydrate_array_mode_none_drops_token(twitch_registry: Registry) -> None:
-    state = HydrateState(
-        array_modes={"examples": {"items": "none"}},
+def test_hydrate_array_mode_none_drops_group_token(twitch_registry: Registry) -> None:
+    state = RegistryState(
+        sections={"groups": SectionState(array_modes={"items": "none"})}
     )
     out = hydrate(twitch_registry, state)
     assert "lmao" not in out
     assert "Here are example phrases:" not in out
 
 
-def test_hydrate_pre_context_merge_across_sections(twitch_registry: Registry) -> None:
-    state = HydrateState(
-        selections={"examples": ["normal_examples"], "sentiment": "positive"},
+def test_hydrate_pre_context_merge_across_group_tokens(
+    twitch_registry: Registry,
+) -> None:
+    state = RegistryState(
+        sections={"sentiment": SectionState(selected="positive")}
     )
     out = hydrate(twitch_registry, state, seed=1)
-    # Examples (with pre_context) and sentiment.examples (no pre_context)
-    # share the same heading exactly once.
     assert out.count("Here are example phrases:") == 1
-    assert "- lmao" in out and "- lets gooo" in out
+    assert "- lmao" in out
+    assert "- lets gooo" in out
 
 
-def test_hydrate_runtime_injection_filters_and_appends(twitch_registry: Registry) -> None:
-    state = HydrateState(
-        selections={"runtime_injections": ["raid"]},
-        template_vars={"runtime_injections::raider": "Pokimane"},
+def test_hydrate_runtime_injection_appends(twitch_registry: Registry) -> None:
+    state = RegistryState(
+        sections={
+            "runtime_injections": SectionState(
+                selected=["raid"],
+                template_vars={"raider": "Pokimane"},
+            )
+        }
     )
     out = hydrate(twitch_registry, state)
-    # Filter: only personas section + runtime_injections survive
-    assert "Streamer is at" not in out
-    assert "Rules: short message." not in out
-    # Personas is in include_sections, so its content remains
+    assert "Streamer is at stream." in out
+    assert "Rules: short message." in out
     assert "You usually never speak." in out
-    # Injection text appended at the very end with template-var substituted
     assert out.endswith("IMPORTANT: Pokimane just raided!")
 
 
 def test_hydrate_sentiment_scale_token(twitch_registry: Registry) -> None:
-    state = HydrateState(
-        selections={"sentiment": "positive"},
-        sliders={"sentiment": 8},
+    state = RegistryState(
+        sections={
+            "sentiment": SectionState(selected="positive", slider=8),
+        }
     )
     out = hydrate(twitch_registry, state)
     assert "intensity is 8 on excited" in out
 
 
 def test_hydrate_sentiment_scale_random(twitch_registry: Registry) -> None:
-    state = HydrateState(
-        selections={"sentiment": "negative"},
-        slider_random={"sentiment": True},
+    state = RegistryState(
+        sections={
+            "sentiment": SectionState(
+                selected="negative",
+                slider_random=True,
+            )
+        }
     )
     out = hydrate(twitch_registry, state, seed=7)
     assert "intensity is" in out
     assert "on annoyed" in out
-
-
-# ── Routes ───────────────────────────────────────────────────────
 
 
 def test_routes_override_assembly_order(twitch_registry: Registry) -> None:
@@ -143,14 +156,11 @@ def test_routes_override_assembly_order(twitch_registry: Registry) -> None:
     assert out_short == "Rules: short message."
 
 
-# ── Engine ───────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_engine_run_returns_result(twitch_engine: Engine) -> None:
     result = await twitch_engine.run()
     assert result.accepted is True
-    assert result.text  # MockProvider echoes something
+    assert result.text
     assert "Rules: short message." in result.prompt
 
 

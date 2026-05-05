@@ -42,8 +42,6 @@ _BRACKET_RE = re.compile(r"^([a-z_]+)\[([^\]]+)\]$", re.IGNORECASE)
 _FIELD_BRACKET_RE = re.compile(r"^([a-z_]+)\[([^\]]+)\]$", re.IGNORECASE)
 _COLLAPSE_BLANKS = re.compile(r"\n{3,}")
 
-HydrateState = RegistryState
-
 
 # ── Helpers ────────────────────────────────────────────────────────────
 

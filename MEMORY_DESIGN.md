@@ -14,7 +14,7 @@ Add a local-first, persistent memory system to the library that:
 
 ## Guiding principles
 
-- The registry stays static. `MemoryEngine` produces a mutated `HydrateState` and hands it to the existing `Engine`. No changes to the core hydration pipeline.
+- The registry stays static. `MemoryEngine` produces a mutated `RegistryState` and hands it to the existing `Engine`. No changes to the core hydration pipeline.
 - Everything runs locally. Embeddings come from Ollama (`/api/embed`). The vector store is a single SQLite file via `sqlite-vec`. No cloud, no server, no docker.
 - The library owns the logic. The web app reflects it. If memory works from the CLI, it works in the studio automatically.
 
@@ -52,7 +52,7 @@ user input
 │  3. classifier_call(input, chunks)      │  ← OllamaProvider (small model)
 │     → tags: ["past_conflict", ...]      │
 │  4. router.mutate(base_state, tags)     │  ← Router (registry rules)
-│     → adjusted HydrateState            │
+│     → adjusted RegistryState           │
 │  5. personality.merge(state)            │  ← PersonalityLayer (JSON file)
 │  6. engine.hydrate(state)              │  ← existing Engine (unchanged)
 │  7. provider.generate(prompt)          │
@@ -72,12 +72,14 @@ GenerationResult (same shape as today)
 ```
 promptlibretto/
   memory/
-    __init__.py          # exports MemoryEngine, MemoryStore, PersonalityLayer
+    __init__.py          # exports everything below
     embedder.py          # OllamaEmbedder — POST /api/embed → float[]
     store.py             # MemoryStore — sqlite-vec: upsert, retrieve, forget
     personality.py       # PersonalityLayer — load / amend / save base context JSON
-    classifier.py        # tag extraction via small LLM call
-    router.py            # tag → HydrateState mutations
+    classifier.py        # Classifier — tag extraction via small LLM call
+    router.py            # Router — tag → RegistryState mutations
+    working_notes.py     # WorkingNotesLayer — running per-participant notes updated every N turns
+    system_summary.py    # SystemSummaryLayer — compressed system prompt updated every N turns
     engine.py            # MemoryEngine — orchestrates all of the above
 ```
 
@@ -198,14 +200,14 @@ parsed as JSON; anything that fails to parse returns `[]` gracefully.
 
 ### `Router`
 
-Maps extracted tags to `HydrateState` mutations. Rules are defined in the
+Maps extracted tags to `RegistryState` mutations. Rules are defined in the
 registry under a new top-level key `memory_rules`.
 
 ```python
 class Router:
     def __init__(self, rules: list[MemoryRule])
 
-    def mutate(self, base_state: HydrateState, tags: list[str]) -> HydrateState
+    def mutate(self, base_state: RegistryState, tags: list[str]) -> RegistryState
 ```
 
 **`MemoryRule`** (stored in registry JSON):
@@ -244,7 +246,7 @@ class PersonalityLayer:
     def __init__(self, path: str)
 
     def load(self) -> PersonalityProfile
-    def merge_into_state(self, state: HydrateState) -> HydrateState
+    def merge_into_state(self, state: RegistryState) -> RegistryState
     async def amend(self, session_turns: list[MemoryTurn], provider: ProviderAdapter) -> None
     def save(self) -> None
 ```
@@ -291,30 +293,75 @@ If the response isn't "nothing new", it's appended as a new amendment entry.
 ### `MemoryEngine`
 
 The top-level orchestrator. Wraps `Engine` and is the only public API most users
-need to touch.
+need to touch. The embedder is passed to `MemoryStore`, not to `MemoryEngine` directly.
 
 ```python
 class MemoryEngine:
     def __init__(
         self,
         engine: Engine,
-        store: MemoryStore,
-        embedder: OllamaEmbedder,
+        store: MemoryStore,           # store already holds the embedder
         classifier: Classifier,
         router: Router,
         personality: PersonalityLayer | None = None,
-        session_id: str | None = None,          # auto-generated if omitted
+        session_id: str | None = None,
         top_k: int = 5,
-        classifier_model: str = "llama3.2:1b",
+        history_window: int = 6,
+        working_notes: WorkingNotesLayer | None = None,
+        notes_provider: ProviderAdapter | None = None,
+        notes_model: str | None = None,
+        notes_every_n_turns: int = 3,
+        notes_max_tokens: int = 200,
+        participant_name: str = "you",
+        system_summary: SystemSummaryLayer | None = None,
+        system_summary_every_n_turns: int = 3,
+        system_summary_max_tokens: int = 300,
+        use_classifier: bool = True,
     )
+
+    async def prepare(
+        self,
+        user_input: str,
+        base_state: RegistryState | dict | None = None,
+        *,
+        other_name: str | None = None,
+    ) -> PreparedMemoryState
 
     async def run(
         self,
         user_input: str,
-        base_state: HydrateState | dict | None = None,
+        base_state: RegistryState | dict | None = None,
+        *,
+        route: str | None = None,
+        seed: int | None = None,
     ) -> MemoryGenerationResult
 
-    async def end_session(self) -> None    # triggers personality amendment if configured
+    async def record_turn(
+        self,
+        text: str,
+        role: str,
+        tags: list[str] | None = None,
+        metadata: dict | None = None,
+    ) -> MemoryTurn
+
+    async def end_session(
+        self,
+        provider_model: str | None = None,
+    ) -> bool
+```
+
+`prepare()` returns a `PreparedMemoryState` without generating — useful when the caller owns the generation step (e.g. streaming, Ensemble). `run()` calls `prepare()` → `engine.run()` → `record_turn()` for both user and assistant turns.
+
+**`PreparedMemoryState`**:
+
+```python
+@dataclass
+class PreparedMemoryState:
+    state: RegistryState
+    chunks: list[MemoryChunk]
+    tags: list[str]
+    applied: list[str]
+    clf: ClassifierResult | None
 ```
 
 **`MemoryGenerationResult`** extends `GenerationResult`:
@@ -325,8 +372,24 @@ class MemoryGenerationResult(GenerationResult):
     retrieved_chunks: list[MemoryChunk]
     extracted_tags: list[str]
     applied_rules: list[str]
-    final_state: HydrateState
+    final_state: RegistryState | None
+    classifier_stats: dict
 ```
+
+### Template variables injected by `prepare()`
+
+`prepare()` sets these template variables on the state before hydration:
+
+| Variable | Content |
+|---|---|
+| `user_input` | The current user message |
+| `memory_recall` | Formatted history, retrieved chunks, working notes, and system summary |
+| `rule_ending` | Ending text from any matched memory rule |
+| `other_name` | The other participant's name (Ensemble only) |
+| `thoughts_about_other` | Retrieved chunks about the other speaker (Ensemble only) |
+| `working_notes` | Running summary maintained every N turns |
+
+These slot into the registry via `template_vars` on any item that declares them. A typical `base_context` item might declare `["memory_recall", "rule_ending"]` and render them through `{memory_recall}` and `{rule_ending}` in its text template.
 
 ---
 
@@ -382,20 +445,25 @@ router knows which item maps to which tag:
 
 ---
 
-## Builder UI additions
+## Builder UI
 
-### Memory Rules panel (new section)
+### Memory Config panel
 
-- A collapsible **Memory Rules** section at the bottom of the Builder
-- Each rule: tag name (text input) + a list of actions (type + target)
-- Actions built with dropdowns populated from the current registry's sections/items
-- Known tags list auto-populated from all rules (used as classifier vocabulary)
+Memory Config lives in its own full-width panel in the Builder. It is laid out as a 2×2 card grid with four cards:
 
-### Memory Config panel (in Generation/Policy tab)
+- **Classifier** — classifier URL, model (with fetch + inline test), use_classifier toggle
+- **Embedding** — embed URL, model (with fetch + inline test), use_embed toggle, dimensions
+- **Retrieval** — top_k, retrieval mode
+- **Storage** — personality file, working notes file, system summary file, vector store path
 
-- Classifier model input (defaults to `llama3.2:1b`)
-- Top-k slider (1–10)
-- Personality file path input
+During the new-registry setup flow, Memory Config is the required configuration step when the user chooses to enable memory. The Classifier Rules panel (which maps tags to actions) is only accessible after setup is complete.
+
+### Memory Rules panel
+
+- A collapsible **Memory Rules** section on the Classifiers tab
+- Each rule: tag name + a list of actions (type + target)
+- Actions built with dropdowns populated from the current registry's sections and items
+- Known tags are auto-populated from all rules (used as the classifier vocabulary)
 
 ### Per-item `memory_tag` field
 
@@ -413,20 +481,21 @@ router knows which item maps to which tag:
 ## Usage example
 
 ```python
-from promptlibretto import load_registry, OllamaProvider
-from promptlibretto.memory import MemoryEngine, MemoryStore, OllamaEmbedder, Classifier, Router
+import json
+from promptlibretto import Engine, OllamaProvider, Registry
+from promptlibretto.memory import Classifier, MemoryEngine, MemoryStore, OllamaEmbedder, Router
 
-provider  = OllamaProvider("http://localhost:11434")
-embedder  = OllamaEmbedder("http://localhost:11434", model="nomic-embed-text")
-engine    = load_registry("my_character.json", provider=provider)
-store     = MemoryStore("memory.db", embedder=embedder)
+provider   = OllamaProvider("http://localhost:11434")
+embedder   = OllamaEmbedder("http://localhost:11434", model="nomic-embed-text")
+reg        = Registry.from_dict(json.load(open("my_character.json")))
+engine     = Engine(reg, provider=provider)
+store      = MemoryStore("memory.db", embedder=embedder)   # embedder lives in store
 classifier = Classifier(provider, model="llama3.2:1b")
-router    = Router(rules=engine.registry.memory_rules)
+router     = Router(rules=engine.registry.memory_rules)
 
 mem_engine = MemoryEngine(
     engine=engine,
     store=store,
-    embedder=embedder,
     classifier=classifier,
     router=router,
 )
@@ -436,7 +505,7 @@ print(result.text)
 print(result.extracted_tags)   # ["past_conflict", "recall"]
 print(result.applied_rules)    # ["past_conflict → inject:conflict_note, sentiment:tense"]
 
-await mem_engine.end_session()  # runs personality amendment
+await mem_engine.end_session()
 ```
 
 ---

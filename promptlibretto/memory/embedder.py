@@ -76,6 +76,40 @@ class OllamaEmbedder:
         )
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        if len(texts) == 1:
+            return [await self.embed(texts[0])]
+
+        payload = {"model": self.model, "input": texts}
+        url = f"{self._base_url}{self._embed_path}"
+        try:
+            resp = await self._client.post(url, json=payload, timeout=60.0)
+            resp.raise_for_status()
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            # Server may not support list input — fall back to sequential.
+            return [await self.embed(t) for t in texts]
+
+        data = resp.json()
+
+        # OpenAI: {"data": [{"embedding": [...], "index": N}, ...]}
+        if isinstance(data.get("data"), list) and data["data"]:
+            try:
+                ordered = sorted(data["data"], key=lambda x: x.get("index", 0))
+                vectors = [item["embedding"] for item in ordered]
+                if len(vectors) == len(texts):
+                    return vectors
+            except (KeyError, TypeError):
+                pass
+
+        # Ollama new: {"embeddings": [[...], [...], ...]}
+        if "embeddings" in data:
+            embs = data["embeddings"]
+            if isinstance(embs, list) and embs and isinstance(embs[0], list):
+                if len(embs) == len(texts):
+                    return embs
+
+        # Unexpected shape or count mismatch — fall back to sequential.
         return [await self.embed(t) for t in texts]
 
     async def aclose(self) -> None:

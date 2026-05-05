@@ -13,7 +13,7 @@ class MemoryAction:
     section: Optional[str] = None  # inject: which section; template_var: section owning the var
     item: Optional[str] = None     # inject: item id to activate
     value: Optional[str] = None    # persona / sentiment / template_var: target value
-    key: Optional[str] = None      # template_var: variable name (or "section::var" v22 compat)
+    key: Optional[str] = None      # template_var: variable name
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "MemoryAction":
@@ -136,14 +136,8 @@ class Router:
                     applied.append(f"{rule.tag} → sentiment:{action.value}")
 
                 elif action.type == "template_var" and action.key and action.value:
-                    # Support v22 "section::var" key format and v2 section+key format
-                    key = action.key
-                    if "::" in key:
-                        sec_id, var = key.split("::", 1)
-                    elif action.section:
-                        sec_id, var = action.section, key
-                    else:
-                        sec_id, var = "base_context", key
+                    sec_id = action.section or "base_context"
+                    var = action.key
                     _sec(sec_id).template_vars[var] = action.value
                     applied.append(f"{rule.tag} → tvar:{sec_id}.{var}={action.value}")
 

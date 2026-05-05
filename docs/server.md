@@ -1,198 +1,175 @@
-# promptlibretto studio
+# Studio and Server
 
-A browser-based registry editor for the `promptlibretto` library. Pick
-sections, set runtime modes, hydrate prompts, generate against your own
-local LLM, and export the whole setup as portable JSON.
+The studio is a browser toolset for schema v2 registries. It runs as a FastAPI server and exposes three tools — Studio, Builder, and Ensemble — plus memory and registry HTTP APIs.
 
-## Run it
+## Run
 
 ```bash
 pip install "promptlibretto[studio,ollama]"
 promptlibretto-studio --port 8000
 ```
 
-Open <http://localhost:8000>. The studio renders one card per registry
-section (`personas`, `sentiment`, `examples`, etc.), each with the same
-controls.
+Open <http://localhost:8000>.
 
-## Browser-direct LLM
+## Pages
 
-The studio asks the server to hydrate prompts, then calls **your own**
-local Ollama from the browser. The normal Studio Generate button does
-not run Python-side output-policy validation or retries.
-Configure the connection from the header chip — base URL, chat path,
-shape (Ollama / OpenAI-compatible), and the model name. Settings live
-in `localStorage`.
+| Path | Tool | Purpose |
+| --- | --- | --- |
+| `/` | Studio | Runtime tuning: load a registry, adjust state, preview prompt, generate. |
+| `/builder` | Builder | Visual authoring: build registry JSON from forms, then open it in Studio. |
+| `/ensemble` | Ensemble | Two-participant conversation: model-vs-model or model-vs-human. |
 
-![Connection settings](assets/screenshots/connection-modal.png)
+## Registry Format
 
-If you'd rather have the server make the LLM call (for headless tools,
-Notebooks, etc.), use the registry HTTP API below.
-
-## Builder (`/builder`)
-
-A visual form for constructing a registry from scratch without writing
-JSON by hand. Navigate to `/builder` from the Studio header.
-
-- **Load Example** — populates every section with a complete "Support
-  Bot" example so you can see all fields in one place.
-- **Import JSON** — paste an existing registry to load it into the form.
-- Each section (Base Context, Personas, Sentiment, Static Injections,
-  Runtime Injections, Output Directions, Examples, Prompt Endings) starts
-  collapsed. Click a section header to expand it and use its **Add** button
-  to create items. Fill in the fields; the JSON preview updates live.
-- **Pool items** — most section item forms include an optional `items[]`
-  pool field. Filling it lets you reference the item as a named pool token
-  (e.g. `examples.my_pool`) without needing a separate pool section.
-- **Sentiment — Scale Settings** — a collapsible block inside the Sentiment
-  section exposes `scale_template` (the phrasing for the `sentiment.scale`
-  token) and a per-item `scale_emotion` override for each sentiment item.
-- **Finalizer** panel (right side) — two tabs:
-  - *Registry JSON* — live JSON output of the current registry.
-  - *Example Prompt* — renders a live text preview of the assembled prompt
-    as you build, using your current assembly order and a sample selection
-    from each section. Useful for sanity-checking the output shape without
-    opening the Studio.
-- **Assembly Order** — drag-and-drop the token sequence that controls how
-  sections are woven together. The Named Pools palette auto-refreshes as
-  you add or rename items.
-- **Generation / Policy** tab — set temperature, top_p, max_tokens,
-  output policy rules, etc.
-- **Validate** — sends the current JSON to the server for a schema check.
-- **Generate Registry** — downloads / copies the finished JSON.
-- **Open in Studio** — pushes the registry directly to the Studio tab
-  via `localStorage` so you can start tuning immediately.
-
-![Builder overview](assets/screenshots/builder-overview.png)
-
-## The two tabs
-
-### Compose
-
-The primary surface. For each section:
-
-- **Selection control** — `<select>` for required sections, checkboxes
-  for optional ones.
-- **Random toggle** — *Pick a random item at run time*. Re-rolls on
-  every Pre-generate / Generate. Disabled for `base_context`.
-- **Sentiment slider** *(sentiment only)* — drives the
-  `sentiment.scale` token. Has its own *Random at run time* checkbox.
-- **Inline editor** — pre-filled with the selected item's values; edits
-  write back through to the in-memory registry. To add or remove items,
-  use the **Builder** (`/builder`).
-- **Template vars** — labeled inputs for each declared variable. The
-  `+ var` button on each section adds a new `{var}` placeholder; the
-  `×` next to a var removes it.
-
-![Studio Compose view](assets/screenshots/studio-compose.png)
-
-The Compose tab also has the **Registry** strip at the top:
-
-- **Import JSON…** — paste a registry to load.
-- **Export Model JSON** — copies the canonical registry, with all your
-  current selections, modes, sliders, and generation overrides baked
-  in. Drop it into your app and `load_registry()` it back.
-- **Hydrate → User Input** — pre-fills the engine's input field with
-  the assembled prompt. Useful if you have an external integration
-  watching that field.
-
-### Tuning
-
-- **Generation Overrides** — temperature, top_p, top_k, max_tokens,
-  repeat_penalty, retries, max_prompt_chars. Hover any field name for a
-  tooltip explaining what it does. Empty fields fall through to library
-  defaults. Browser-direct generation uses the sampling fields; `retries`
-  is used by `Engine.run()` and `/api/registry/generate`.
-  `max_prompt_chars` is currently stored/exported but not enforced by
-  the engine.
-- The `examples`, `prompt_endings`, and injection sections also live
-  here (as opposed to Compose) since they're "tuning" choices rather
-  than primary content.
-
-![Studio Tuning view](assets/screenshots/studio-tuning.png)
-
-## Output panel
-
-Two sub-tabs:
-
-- **Output** — the generated text (rendered or raw view).
-- **Pre-generate** — the assembled prompt, exactly as it'll be sent.
-  Pre-generate before Generate to inspect.
-
-![Pre-generate review](assets/screenshots/studio-pregenerate.png)
-
-Above the Output text:
-
-- **`model: <name>`** — the LLM the request will go to.
-- **`✓ ok` / `✗ empty` / `✗ error`** — accepted indicator after a run.
-- **`<n>ms`** — total round-trip.
-- **`<n> tok · <n> chars`** — completion tokens (when the provider
-  returns them) and the response char count.
-
-![Generated output](assets/screenshots/studio-output.png)
-
-## Debug Trace
-
-Far-right pane. Filled fresh on every Generate:
-
-- **Hydrated Prompt** — the exact string sent to the LLM.
-- **Response** — what came back.
-- **Active State** — JSON snapshot of selections / array_modes /
-  section_random / sliders / template_vars at click time. Drop it into
-  `Engine.run(state=...)` to reproduce.
-- **Usage & Timing** — total ms + provider-reported usage.
-- **Resolved Config** — base URL, chat path, model, shape, generation
-  overrides.
-
-![Debug trace](assets/screenshots/studio-debug-trace.png)
-
-## Snapshots
-
-The header **Snapshots** button opens a modal:
-
-- Save the current panel state (registry + selections + modes + slider
-  + template-vars + generation overrides) under a name.
-- Load any saved snapshot back. Restoring rebuilds the panels and
-  re-applies your selections.
-- Delete or **Export** any snapshot to JSON.
-
-Storage is `localStorage` (`pl-registry-snapshots-v1`). Snapshots
-persist across reloads but stay on the device.
-
-![Snapshots modal](assets/screenshots/snapshots-modal.png)
-
-## Registry HTTP API
-
-The studio also mounts these endpoints for headless use:
-
-| Endpoint                      | Purpose                                              |
-| ----------------------------- | ---------------------------------------------------- |
-| `POST /api/registry/load`     | Parse + canonicalize a registry JSON.                |
-| `POST /api/registry/hydrate`  | Build the prompt for a given registry + state.       |
-| `POST /api/registry/generate` | Hydrate + LLM + Python output policy. Returns text + usage. |
-| `GET  /health`                | Liveness check.                                      |
-
-Request body for `hydrate` / `generate`:
+The studio loads and exports the same schema v2 registry shape that `Registry.from_dict()` accepts:
 
 ```json
 {
-  "registry": { "registry": { ... } },
+  "registry": {
+    "version": 2,
+    "assembly_order": ["output_prompt_directions", "personas.context"],
+    "output_prompt_directions": {
+      "required": true,
+      "items": [{"id": "rules", "text": "Reply briefly."}]
+    },
+    "personas": {
+      "required": true,
+      "items": [{"id": "direct", "context": "Be direct."}]
+    }
+  }
+}
+```
+
+Runtime state is section-scoped:
+
+```json
+{
+  "personas": {"selected": "direct"},
+  "sentiment": {
+    "selected": "warm",
+    "slider": 7,
+    "array_modes": {"groups[warm_examples]": "random:1"}
+  }
+}
+```
+
+## Studio
+
+Studio is the runtime tuning surface. It lets you load a registry, select items per section, fill template variables, adjust sliders, set array modes, preview the hydrated prompt, and generate against a local model.
+
+Browser-direct generation connects to a local Ollama or OpenAI-compatible endpoint from the browser. That path skips Python-side output-policy retries. For Python-side policy and retry behavior, use the server generate endpoint or load the exported registry in code with `Registry.from_dict()`.
+
+## Builder
+
+Builder is the visual authoring surface. It constructs registry JSON from forms — no hand-writing JSON required.
+
+Builder supports:
+
+- Guided new-registry setup flow (meta → memory choice → memory config → sections)
+- Loading and importing existing registry JSON
+- Editing sections, items, groups, assembly order, generation config, output policy, and memory config
+- Previewing generated registry JSON
+- Opening the result directly in Studio
+
+Bundled builder examples live in `studio/static/builder-examples/`.
+
+The server endpoint `POST /api/registry/example/save` can save examples back to the allowed static examples directory.
+
+Registry version is always locked to `2`. There are no older schema versions.
+
+## Ensemble
+
+Ensemble runs two participants in conversation. Each participant can be model-driven (with a registry) or human-driven, and memory-enabled or disabled.
+
+Participants each get their own engine, state, provider, and optional memory pipeline. Generation streams back to the browser as server-sent events.
+
+Ensemble memory is isolated per participant. Each participant gets separate:
+
+- Vector store database
+- Personality file
+- Working notes file
+- System summary file
+
+Resetting a participant wipes all of those artifacts. Personality, working notes, and system summary can preserve behavior even after the turn store is cleared.
+
+## Registry HTTP API
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/registry/load` | Parse and canonicalize registry JSON. |
+| `POST /api/registry/hydrate` | Build a prompt for a registry and state. |
+| `POST /api/registry/generate` | Hydrate, call provider, apply output policy. |
+| `POST /api/registry/example/save` | Save a registry JSON file to the builder examples directory. |
+| `GET /health` | Liveness check. |
+
+Hydrate/generate request shape:
+
+```json
+{
+  "registry": {"registry": {"version": 2}},
   "state": {
-    "selections": {...},
-    "array_modes": {...},
-    "section_random": {...},
-    "sliders": {...},
-    "slider_random": {...},
-    "template_vars": {...}
+    "personas": {"selected": "direct"}
   },
   "route": "optional-route-name",
   "seed": 42
 }
 ```
 
-Server-side generation uses `OllamaProvider` by default. Set
-`PROMPT_ENGINE_MOCK=1` to use `MockProvider` instead, or
-`OLLAMA_URL` / `OLLAMA_CHAT_PATH` to point at a different host.
+## Memory HTTP API
+
+Memory routes live under `/api/memory`.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/memory/generate` | Full memory pipeline: embed, retrieve, classify, route, generate, store turn. |
+| `POST /api/memory/reset` | Clear memory store for a registry. |
+| `POST /api/memory/personality` | Load the personality profile. |
+| `POST /api/memory/personality/save` | Save edits to the personality profile. |
+| `POST /api/memory/personality/clear` | Reset personality to seed. |
+| `WebSocket /api/memory/ws/{session_id}` | Browser-delegated embedding and inference (see below). |
+
+The `/api/memory/generate` response includes text, prompt, retrieved chunks, extracted tags, applied rules, timing, usage, and classifier stats.
+
+Memory files (vector store, personality) are resolved from the registry title and `memory_config`. In multi-tenant mode they are nested under a per-user directory in `~/.promptlibretto/memory_stores/`.
+
+## Ensemble HTTP API
+
+Ensemble routes live under `/api/ensemble`.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/ensemble/run` | Start an ensemble session. |
+| `POST /api/ensemble/step/{session_id}` | Advance one turn. |
+| `POST /api/ensemble/submit/{session_id}` | Submit human input for a human-driven participant. |
+| `POST /api/ensemble/reset_store` | Wipe all artifacts for a participant. |
+| `POST /api/ensemble/view_store` | Return recent turns, personality, working notes, and system summary. |
+| `WebSocket /api/ensemble/ws/{session_id}/embed` | Browser-delegated embedding for ensemble memory. |
+
+## Browser-Delegated Inference
+
+Both the memory and ensemble pipelines support a WebSocket-backed delegation mode. When the user's local model is accessible from the browser but not from the server process, the browser opens the relevant WebSocket and handles embedding and inference calls on behalf of the server.
+
+The server sends pending requests over the socket; the browser calls its local model and returns results. This keeps all model traffic client-side without changing the server-side orchestration logic.
+
+## Multi-Tenant Mode
+
+When multi-tenant mode is enabled, the server assigns each visitor a persistent anonymous user ID cookie. Memory files (vector store, personality, working notes, system summary) are then partitioned under:
+
+```
+~/.promptlibretto/memory_stores/{user_id}/
+```
+
+Single-user deployments (the default) share a common store path.
+
+## Environment
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `PROMPT_ENGINE_MOCK` | `0` | Use `MockProvider` for server-side generation. |
+| `OLLAMA_URL` | `http://localhost:11434` | Base URL for server-side `OllamaProvider`. |
+| `OLLAMA_CHAT_PATH` | `/api/chat` | Chat endpoint path. `/v1/` paths use OpenAI-compatible payloads. |
+| `HOST` | `127.0.0.1` | Studio bind host. |
+| `PORT` | `8000` | Studio bind port. |
 
 ## Docker
 
@@ -200,45 +177,4 @@ Server-side generation uses `OllamaProvider` by default. Set
 docker compose up -d
 ```
 
-The container exposes port 8000 and runs the studio with browser-direct
-LLM by default. There's no server-side state — snapshots live in the
-user's browser. Override env vars in `docker-compose.yml` to enable
-mock-mode or a server-side Ollama target.
-
-## CLI
-
-```bash
-promptlibretto-studio [--host HOST] [--port PORT]
-```
-
-`--host` defaults to `127.0.0.1` (or `$HOST`); `--port` defaults to
-`8000` (or `$PORT`).
-
-## Server-side environment variables
-
-These only affect the optional `/api/registry/generate` endpoint. The
-studio's main flow (the browser calling Ollama directly) ignores them.
-
-| Variable             | Default                  | Effect                                           |
-| -------------------- | ------------------------ | ------------------------------------------------ |
-| `PROMPT_ENGINE_MOCK` | `0`                      | `1` / `true` / `yes` — server uses `MockProvider`. |
-| `OLLAMA_URL`         | `http://localhost:11434` | Base URL the server-side `OllamaProvider` hits.  |
-| `OLLAMA_CHAT_PATH`   | `/api/chat`              | Endpoint path. Auto-detects payload shape from `/v1/`. |
-| `HOST`               | `127.0.0.1`              | Studio bind host (overridden by `--host`).       |
-| `PORT`               | `8000`                   | Studio bind port (overridden by `--port`).       |
-
-## Editing fragments
-
-`base_context` items support **conditional fragments** — short pieces
-of text gated by a template variable. Add them in the inline editor's
-*Conditional fragments* row:
-
-| if | text |
-| --- | --- |
-| (always) | You're watching a streamer. |
-| `location` | Currently at `{location}`. |
-| `sublocation` | Specifically: `{sublocation}`. |
-
-A fragment with `if location` only renders when the `location`
-template-var has a value at runtime. So an unfilled `{sublocation}`
-doesn't leave a broken sentence in the output.
+The container exposes the studio on port 8000. Browser state remains in the user's browser storage.

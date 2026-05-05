@@ -56,6 +56,7 @@
         <div class="pcard-row pcard-toggles">
           <label class="inline-toggle"><input type="checkbox" id="a-human" /><span>Human-driven</span></label>
           <label class="inline-toggle model-only"><input type="checkbox" id="a-memory" checked /><span>Memory pipeline</span></label>
+          <span class="pcard-sep"></span>
           <button type="button" class="btn-view-store model-only" onclick="viewStore('a')">View memory</button>
           <button type="button" class="btn-reset-store model-only" onclick="resetStore('a')">Reset memory</button>
           <button type="button" class="btn-view-store model-only" onclick="viewPrompt('a')">View prompt</button>
@@ -74,7 +75,7 @@
         </div>
         <details class="pcard-tuning model-only">
           <summary>Generation <span class="muted small">— temperature, top_p, max_tokens, retries</span></summary>
-          <div class="pcard-row pcard-tuning-grid">
+          <div class="pcard-tuning-grid">
             <label class="pfield"><span>temperature</span><input type="number" step="0.05" min="0" max="2" id="a-gen-temperature" placeholder="0.7" /></label>
             <label class="pfield"><span>top_p</span><input type="number" step="0.01" min="0" max="1" id="a-gen-top_p" placeholder="0.9" /></label>
             <label class="pfield"><span>top_k</span><input type="number" step="1" min="0" id="a-gen-top_k" placeholder="40" /></label>
@@ -85,7 +86,7 @@
         </details>
         <details class="pcard-tuning model-only">
           <summary>Memory tuning <span class="muted small">— history window, working notes</span></summary>
-          <div class="pcard-row pcard-tuning-grid">
+          <div class="pcard-tuning-grid">
             <label class="pfield"><span>history_window</span><input type="number" min="0" step="1" id="a-history_window" placeholder="6" /></label>
             <label class="pfield"><span>top_k</span><input type="number" min="1" step="1" id="a-top_k" placeholder="5" /></label>
             <label class="inline-toggle pfield-toggle"><input type="checkbox" id="a-working_notes_enabled" /><span>Working notes</span></label>
@@ -144,6 +145,7 @@
         <div class="pcard-row pcard-toggles">
           <label class="inline-toggle"><input type="checkbox" id="b-human" /><span>Human-driven</span></label>
           <label class="inline-toggle model-only"><input type="checkbox" id="b-memory" checked /><span>Memory pipeline</span></label>
+          <span class="pcard-sep"></span>
           <button type="button" class="btn-view-store model-only" onclick="viewStore('b')">View memory</button>
           <button type="button" class="btn-reset-store model-only" onclick="resetStore('b')">Reset memory</button>
           <button type="button" class="btn-view-store model-only" onclick="viewPrompt('b')">View prompt</button>
@@ -162,7 +164,7 @@
         </div>
         <details class="pcard-tuning model-only">
           <summary>Generation <span class="muted small">— temperature, top_p, max_tokens, retries</span></summary>
-          <div class="pcard-row pcard-tuning-grid">
+          <div class="pcard-tuning-grid">
             <label class="pfield"><span>temperature</span><input type="number" step="0.05" min="0" max="2" id="b-gen-temperature" placeholder="0.7" /></label>
             <label class="pfield"><span>top_p</span><input type="number" step="0.01" min="0" max="1" id="b-gen-top_p" placeholder="0.9" /></label>
             <label class="pfield"><span>top_k</span><input type="number" step="1" min="0" id="b-gen-top_k" placeholder="40" /></label>
@@ -173,7 +175,7 @@
         </details>
         <details class="pcard-tuning model-only">
           <summary>Memory tuning <span class="muted small">— history window, working notes</span></summary>
-          <div class="pcard-row pcard-tuning-grid">
+          <div class="pcard-tuning-grid">
             <label class="pfield"><span>history_window</span><input type="number" min="0" step="1" id="b-history_window" placeholder="6" /></label>
             <label class="pfield"><span>top_k</span><input type="number" min="1" step="1" id="b-top_k" placeholder="5" /></label>
             <label class="inline-toggle pfield-toggle"><input type="checkbox" id="b-working_notes_enabled" /><span>Working notes</span></label>
@@ -240,7 +242,7 @@
     <div class="conversation-area" id="conversation">
       <div class="empty-state" id="empty-state">
         <div class="empty-state-icon">⇄</div>
-        <div>Configure two participants and hit Run</div>
+        <div>Configure two participants and hit <strong>Run</strong></div>
       </div>
     </div>
 

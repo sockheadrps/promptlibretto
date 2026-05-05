@@ -9,7 +9,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
-from .state import RegistryState, SectionState
+from .state import RegistryState
 
 SCHEMA_VERSION = 2
 
@@ -172,8 +172,7 @@ class ScalableMixin:
 
 @dataclass
 class Group(BaseItem):
-    """Reusable list of prompt snippets. Replaces ExampleGroup, nudges,
-    base_directives."""
+    """Reusable list of prompt snippets."""
 
     pre_context: str = ""
     items: list[str] = field(default_factory=list)
@@ -307,12 +306,6 @@ class PromptEnding(BaseItem):
         return out
 
 
-# ── v22 compatibility aliases ─────────────────────────────────────────
-
-SentimentItem = Sentiment
-ExampleGroup = Group
-
-
 # ── Normalize ─────────────────────────────────────────────────────────
 
 
@@ -321,32 +314,6 @@ def _normalize_item(it: Any) -> dict[str, Any]:
     if hasattr(it, "to_dict") and callable(it.to_dict):
         return dict(it.to_dict())
     return dict(it)
-
-
-# ── v22 state extraction (migration helper) ───────────────────────────
-
-
-def _extract_v22_section_state(sec_data: dict[str, Any]) -> Optional[SectionState]:
-    """Pull tool-state fields out of a v22 section dict into a SectionState."""
-    STATE_KEYS = {"selected", "slider", "slider_random", "section_random", "array_modes", "template_var_defaults"}
-    if not any(k in sec_data for k in STATE_KEYS):
-        return None
-    old_modes: dict[str, Any] = sec_data.get("array_modes") or {}
-    new_modes: dict[str, str] = {}
-    for fld, mode in old_modes.items():
-        if isinstance(mode, str):
-            new_modes[fld] = mode
-    template_vars: dict[str, str] = {}
-    for k, v in (sec_data.get("template_var_defaults") or {}).items():
-        template_vars[str(k)] = str(v) if v is not None else ""
-    return SectionState(
-        selected=sec_data.get("selected"),
-        slider=sec_data.get("slider"),
-        slider_random=bool(sec_data.get("slider_random", False)),
-        section_random=bool(sec_data.get("section_random", False)),
-        array_modes=new_modes,
-        template_vars=template_vars,
-    )
 
 
 # ── Section ───────────────────────────────────────────────────────────
@@ -485,7 +452,11 @@ class Registry:
         if "registry" in data and isinstance(data["registry"], dict):
             data = data["registry"]
 
-        version = int(data.get("version") or 0)
+        version = int(data.get("version") or SCHEMA_VERSION)
+        if version != SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported registry schema version {version}; expected {SCHEMA_VERSION}"
+            )
 
         RESERVED = {
             "version", "title", "description", "assembly_order",
@@ -494,16 +465,11 @@ class Registry:
         }
 
         sections: dict[str, Section] = {}
-        state_sections: dict[str, SectionState] = {}
         for key, value in data.items():
             if key in RESERVED:
                 continue
             if isinstance(value, dict) and "items" in value:
                 sections[key] = Section.from_dict(value, section_id=key)
-                if version < 2:
-                    ss = _extract_v22_section_state(value)
-                    if ss is not None:
-                        state_sections[key] = ss
 
         routes: dict[str, Route] = {}
         for k, v in (data.get("routes") or {}).items():
@@ -513,13 +479,11 @@ class Registry:
         ds_data = data.get("default_state")
         if ds_data:
             default_state: Optional[RegistryState] = RegistryState.from_dict(ds_data)
-        elif state_sections:
-            default_state = RegistryState(sections=state_sections)
         else:
             default_state = None
 
         return cls(
-            version=version or SCHEMA_VERSION,
+            version=version,
             title=str(data.get("title") or ""),
             description=str(data.get("description") or ""),
             assembly_order=[str(t) for t in (data.get("assembly_order") or [])],

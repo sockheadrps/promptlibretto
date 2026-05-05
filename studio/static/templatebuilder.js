@@ -1406,13 +1406,6 @@ function setMemoryChoice(useMemory) {
     // Hide rules panel — setup is for memory config only
     const rulesPanel = document.getElementById("classifier-rules-panel");
     if (rulesPanel) rulesPanel.hidden = true;
-    // Expand memory config collapsible
-    const memPanel = document.getElementById("builder-tab-memory-panel");
-    memPanel?.querySelectorAll("[data-builder-collapse]").forEach((p) => {
-      p.classList.remove("collapsed");
-      const btn = p.querySelector(".collapse-toggle");
-      if (btn) btn.textContent = "Collapse";
-    });
     // Wire continue-button enable
     document.getElementById("mem-classifier-url")?.addEventListener("input", checkMemoryConfigReady);
     checkMemoryConfigReady();
@@ -1613,6 +1606,12 @@ function refreshMemConnChip() {
   }
 }
 
+function toggleClassifierSection() {
+  const cb = document.getElementById("mem-use-classifier");
+  const sec = document.getElementById("mem-classifier-section");
+  if (sec) sec.hidden = !cb?.checked;
+}
+
 function toggleEmbedUrlSection() {
   const cb = document.getElementById("mem-use-embed-url");
   const sec = document.getElementById("mem-embed-url-section");
@@ -1697,6 +1696,57 @@ async function fetchClassifierModels() {
   }
 }
 
+function _setEmbedModelSelect(models, currentValue) {
+  const sel = document.getElementById("mem-embed-model");
+  if (!sel) return;
+  const prev = currentValue ?? sel.value;
+  sel.innerHTML = models.length
+    ? models.map((m) => `<option value="${escapeHtml(m)}" ${m === prev ? "selected" : ""}>${escapeHtml(m)}</option>`).join("")
+    : `<option value="">— no models found —</option>`;
+  if (prev && models.includes(prev)) sel.value = prev;
+}
+
+async function fetchEmbedModels() {
+  const resultEl = document.getElementById("mem-embed-test-result");
+  const useEmbed = document.getElementById("mem-use-embed-url")?.checked;
+  const embedUrlEl = document.getElementById("mem-embed-url");
+  const classifierUrlEl = document.getElementById("mem-classifier-url");
+  const base = ((useEmbed ? embedUrlEl?.value?.trim() : null) || classifierUrlEl?.value?.trim() || "").replace(/\/+$/, "");
+  if (!base) {
+    if (resultEl) { resultEl.textContent = "⚠ no URL"; resultEl.className = "mem-test-result mem-test-warn"; }
+    return;
+  }
+  const sel = document.getElementById("mem-embed-model");
+  if (sel) sel.innerHTML = `<option value="">Loading…</option>`;
+  if (resultEl) { resultEl.textContent = "…"; resultEl.className = "mem-test-result"; }
+  try {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 5000);
+    let models = [];
+    for (const path of ["/api/tags", "/v1/models"]) {
+      try {
+        const resp = await fetch(base + path, { signal: abort.signal });
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        if (Array.isArray(data.models)) { models = data.models.map((m) => m.name).filter(Boolean); break; }
+        if (Array.isArray(data.data))   { models = data.data.map((m) => m.id).filter(Boolean); break; }
+      } catch {}
+    }
+    clearTimeout(timer);
+    if (models.length) {
+      _setEmbedModelSelect(models, registryState.memory_config?.embed_model);
+      if (resultEl) { resultEl.textContent = `✓ ${models.length}`; resultEl.className = "mem-test-result mem-test-ok"; }
+    } else {
+      if (sel) sel.innerHTML = `<option value="">— no models —</option>`;
+      if (resultEl) { resultEl.textContent = "✗ none"; resultEl.className = "mem-test-result mem-test-fail"; }
+    }
+    exportFullModel();
+  } catch {
+    if (sel) sel.innerHTML = `<option value="">— fetch failed —</option>`;
+    if (resultEl) { resultEl.textContent = "✗ failed"; resultEl.className = "mem-test-result mem-test-fail"; }
+  }
+}
+
 async function testEmbedModel() {
   const resultEl = document.getElementById("mem-embed-test-result");
   const model = document.getElementById("mem-embed-model")?.value?.trim() || "nomic-embed-text";
@@ -1751,7 +1801,6 @@ function populateMemoryConfigInputs() {
   const embedSec = document.getElementById("mem-embed-url-section");
   if (embedSec) embedSec.hidden = !hasEmbedUrl;
   set("mem-embed-url",        cfg.embed_url);
-  set("mem-embed-model",      cfg.embed_model);
   set("mem-top-k",            cfg.top_k);
   set("mem-prune-keep",       cfg.prune_keep);
   set("mem-store-path",       cfg.store_path);
@@ -1759,8 +1808,12 @@ function populateMemoryConfigInputs() {
   if (cfg.classifier_model) {
     _setClassifierModelSelect([cfg.classifier_model], cfg.classifier_model);
   }
+  if (cfg.embed_model) {
+    _setEmbedModelSelect([cfg.embed_model], cfg.embed_model);
+  }
   const useClf = document.getElementById("mem-use-classifier");
   if (useClf) useClf.checked = cfg.use_classifier !== false;
+  toggleClassifierSection();
 }
 
 function addMemoryRule() {
@@ -2038,6 +2091,8 @@ window.removeAssemblyToken = removeAssemblyToken;
 window.moveAssemblyToken = moveAssemblyToken;
 window.refreshMemConnChip = refreshMemConnChip;
 window.fetchClassifierModels = fetchClassifierModels;
+window.fetchEmbedModels = fetchEmbedModels;
+window.toggleClassifierSection = toggleClassifierSection;
 window.addMemoryRule = addMemoryRule;
 window.removeMemoryRule = removeMemoryRule;
 window.updateMemoryRuleTag = updateMemoryRuleTag;

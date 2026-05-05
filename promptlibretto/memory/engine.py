@@ -309,6 +309,8 @@ class MemoryEngine:
 
         result = await self._engine.run(mutated, route=route, seed=seed)
 
+        await self.record_system_prompt(result.prompt)
+
         await self.record_turn(user_input, role="user", tags=tags)
         await self.record_turn(
             result.text,
