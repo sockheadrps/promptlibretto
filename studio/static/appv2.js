@@ -1347,6 +1347,8 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   // `slider`, `slider_random`) out of each section and into the
   // matching runtime state objects. Also accepts root-level state in
   // either builder/snapshot camelCase or backend snake_case.
+  let _memorySessionId = null;
+
   function loadRegistryDict(parsed) {
     registry = parsed.registry || parsed;
     Object.keys(tvarValues).forEach((k) => delete tvarValues[k]);
@@ -2071,7 +2073,6 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   }
 
   // ── Memory pipeline ───────────────────────────────────────────────
-  let _memorySessionId = null;
 
   function hasMemoryRules() {
     // Activate the memory pipeline when ANY memory feature is configured —
