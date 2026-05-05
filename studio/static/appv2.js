@@ -2542,6 +2542,62 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         setTrace("trace-attempts", "");
         setTrace("trace-usage", "");
 
+        // Open a WebSocket so the server can delegate model calls to this browser.
+        const wsSessionId = crypto.randomUUID();
+        const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+        const memWs = new WebSocket(`${wsProto}//${location.host}/api/memory/ws/${wsSessionId}`);
+        const mc = registry?.memory_config ?? {};
+        const memEmbedUrl   = (mc.embed_url || mc.classifier_url || conn.baseUrl || "").replace(/\/$/, "") + (mc.embed_path || "/api/embed");
+        const memEmbedModel = mc.embed_model || "nomic-embed-text";
+        const isOpenAI = (conn.chatPath || "").includes("/v1/") || (conn.payloadShape || "") === "openai";
+        const chatUrl   = (conn.baseUrl || "").replace(/\/$/, "") + (conn.chatPath || "/api/chat");
+        memWs.onmessage = async (evt) => {
+          let msg; try { msg = JSON.parse(evt.data); } catch { return; }
+          if (msg.type === "embed_request") {
+            try {
+              const r = await fetch(memEmbedUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: memEmbedModel, input: msg.text }) });
+              if (!r.ok) throw new Error(`embed HTTP ${r.status}`);
+              const d = await r.json();
+              const vectors = d.embeddings?.[0] ?? d.data?.[0]?.embedding ?? d.embedding ?? [];
+              memWs.send(JSON.stringify({ type: "embed_result", id: msg.id, vectors }));
+            } catch (e) { memWs.send(JSON.stringify({ type: "embed_error", id: msg.id, error: String(e.message) })); }
+          } else if (msg.type === "chat_request") {
+            const { id, model, messages, temperature, max_tokens, top_p, top_k, repeat_penalty } = msg;
+            try {
+              let body;
+              if (isOpenAI) {
+                body = { model, messages, temperature, max_tokens, stream: true };
+                if (top_p != null) body.top_p = top_p;
+                if (repeat_penalty != null) body.frequency_penalty = repeat_penalty;
+              } else {
+                const options = {};
+                if (temperature != null) options.temperature = temperature;
+                if (top_p != null) options.top_p = top_p;
+                if (top_k != null) options.top_k = top_k;
+                if (repeat_penalty != null) options.repeat_penalty = repeat_penalty;
+                body = { model, messages, options, stream: true };
+                if (max_tokens != null) body.num_predict = max_tokens;
+              }
+              const r = await fetch(chatUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+              if (!r.ok) throw new Error(`chat HTTP ${r.status}`);
+              const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+              while (true) {
+                const { value, done } = await reader.read(); if (done) break;
+                buf += dec.decode(value, { stream: true });
+                const lines = buf.split("\n"); buf = lines.pop();
+                for (const line of lines) {
+                  const t = line.trim(); if (!t) continue;
+                  let raw = t;
+                  if (isOpenAI) { if (!t.startsWith("data:")) continue; raw = t.slice(5).trim(); if (raw === "[DONE]") continue; }
+                  try { const chunk = JSON.parse(raw); const delta = isOpenAI ? (chunk.choices?.[0]?.delta?.content ?? "") : (chunk.message?.content ?? chunk.content ?? ""); if (delta) memWs.send(JSON.stringify({ type: "chat_chunk", id, delta })); } catch { /* skip */ }
+                }
+              }
+              memWs.send(JSON.stringify({ type: "chat_done", id }));
+            } catch (e) { memWs.send(JSON.stringify({ type: "chat_error", id, error: String(e.message) })); }
+          }
+        };
+        await new Promise((resolve, reject) => { memWs.onopen = resolve; memWs.onerror = () => reject(new Error("memory WS failed to open")); });
+
         try {
           const resp = await fetch("/api/memory/generate", {
             method: "POST",
@@ -2556,7 +2612,8 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
                 payload_shape: conn.payloadShape || conn.payload_shape || "auto",
                 model:         conn.model        || "default",
               },
-              session_id: _memorySessionId,
+              session_id:    _memorySessionId,
+              ws_session_id: wsSessionId,
               generation_overrides: overrides,
               skip_retrieval: !isMemoryRecallSelected(),
             }),
@@ -2616,6 +2673,8 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
           if (pipelineEmptyEl) { pipelineEmptyEl.hidden = false; pipelineEmptyEl.textContent = `Error: ${e.message}`; }
           if (pipelineTrack)   pipelineTrack.hidden = true;
           setTrace("trace-attempts", `error: ${e.message}`);
+        } finally {
+          memWs.close();
         }
         return;
       }

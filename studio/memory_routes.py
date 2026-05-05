@@ -9,12 +9,57 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+import asyncio
+
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from .config import MULTI_TENANT, USER_ID_COOKIE
 
 router = APIRouter(prefix="/api/memory")
+
+# ws_session_id -> (embedder, provider) for browser-delegated model calls.
+_memory_ws: dict[str, tuple] = {}
+
+
+@router.websocket("/ws/{ws_session_id}")
+async def memory_ws(websocket: WebSocket, ws_session_id: str) -> None:
+    """Browser connects here before /generate to delegate all model calls client-side."""
+    await websocket.accept()
+
+    try:
+        from promptlibretto.memory.ws_embedder import WsEmbedder
+        from promptlibretto.memory.ws_provider import WsProvider
+    except ImportError:
+        await websocket.close(code=1011, reason="memory extra not installed")
+        return
+
+    async def send_fn(msg: dict) -> None:
+        await websocket.send_json(msg)
+
+    embedder = WsEmbedder(send_fn)
+    provider = WsProvider(send_fn)
+    _memory_ws[ws_session_id] = (embedder, provider)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            t   = data.get("type")
+            rid = data.get("id", "")
+            if t == "embed_result":
+                embedder.resolve(rid, data.get("vectors", []))
+            elif t == "embed_error":
+                embedder.reject(rid, data.get("error", "unknown"))
+            elif t == "chat_chunk":
+                provider.receive_chunk(rid, data.get("delta", ""))
+            elif t == "chat_done":
+                provider.receive_done(rid)
+            elif t == "chat_error":
+                provider.reject(rid, data.get("error", "unknown"))
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        _memory_ws.pop(ws_session_id, None)
 
 _SAFE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
 
@@ -68,6 +113,7 @@ class MemoryGenerateRequest(BaseModel):
     user_input: str
     connection: ConnectionConfig = Field(default_factory=ConnectionConfig)
     session_id: Optional[str] = None
+    ws_session_id: Optional[str] = None  # links to browser WS for delegated inference
     route: Optional[str] = None
     seed: Optional[int] = None
     generation_overrides: dict[str, Any] = Field(default_factory=dict)
@@ -239,12 +285,15 @@ async def memory_generate(req: MemoryGenerateRequest, request: Request) -> dict[
         prune_keep      = int(cfg.get("prune_keep", 200))
         store_path      = _resolve_store_path(request, reg.title, cfg)
 
-        main_provider = OllamaProvider(
+        _ws = _memory_ws.get(req.ws_session_id or "", (None, None))
+        ws_embedder, ws_provider = _ws[0], _ws[1]
+
+        main_provider = ws_provider if ws_provider is not None else OllamaProvider(
             base_url=req.connection.base_url,
             chat_path=req.connection.chat_path,
             payload_shape=req.connection.payload_shape,
         )
-        classifier_provider = OllamaProvider(
+        classifier_provider = ws_provider if ws_provider is not None else OllamaProvider(
             base_url=classifier_url,
             chat_path=classifier_chat_path,
             payload_shape=classifier_payload_shape,
@@ -259,7 +308,7 @@ async def memory_generate(req: MemoryGenerateRequest, request: Request) -> dict[
 
         embed_path  = cfg.get("embed_path") or "/api/embed"
         embed_shape = cfg.get("embed_payload_shape") or "auto"
-        embedder   = OllamaEmbedder(
+        embedder = ws_embedder if ws_embedder is not None else OllamaEmbedder(
             base_url=embed_url, model=embed_model,
             embed_path=embed_path, payload_shape=embed_shape,
         )
@@ -293,7 +342,8 @@ async def memory_generate(req: MemoryGenerateRequest, request: Request) -> dict[
 
         session_id = mem_engine.session_id
         store.close()
-        await embedder.aclose()
+        if ws_embedder is None:
+            await embedder.aclose()
 
         actual_model = gen.get("model") or "default"
 
