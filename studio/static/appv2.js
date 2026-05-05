@@ -2916,6 +2916,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     embedding: {
       title: "Embedding Layer",
       body: `<p>The embedding layer converts conversation text into vectors for semantic memory search. When a new message arrives, it's embedded and compared against stored conversation history to surface the most relevant past context — this becomes the <code>{memory_recall}</code> variable in your prompt.</p>
+        <p>Embedding calls are made directly from your browser to your local model — the server never touches your data. On memory-enabled runs the server opens a lightweight WebSocket to your browser and delegates embed requests to it; your text goes from browser to local model and back, not through the server.</p>
         <h4>Do I need a separate embed URL?</h4>
         <p>No. If unchecked, embedding runs against the same server as your classifier (<code>classifier_url</code>). Ollama serves both chat and embedding models on the same port, so one server is usually sufficient.</p>
         <p>Enable this only if you want a dedicated embedding server — e.g. a different machine, a specialized service, or a separate Ollama instance with a faster embedding model.</p>

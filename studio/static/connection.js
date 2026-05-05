@@ -72,7 +72,7 @@ function ensureModal() {
         <button class="modal-close" type="button" data-close-conn>×</button>
       </header>
       <div class="modal-body">
-        <p class="hint">The studio sends prompt construction instructions to your browser, which then calls your local model directly. Nothing flows through the studio server.</p>
+        <p class="hint">Your browser calls your local model directly for basic generation. For memory-enabled runs (Studio memory pipeline, Ensemble), the server opens a WebSocket to your browser and asks it to make the model calls on its behalf — your prompts and responses travel from your browser to your local model and back, never through the server. The WebSocket carries only the request/response payloads needed to complete the run; no data is stored or logged server-side.</p>
         <div class="conn-cors-warning">
           <strong>Heads up — CORS.</strong>
           If this studio is hosted on a different origin than your LLM, your Ollama / llama.cpp server needs to allow that origin. Without it the browser's CORS check silently blocks the request and you'll see a "Can't reach server" failure that isn't actually a network problem.
