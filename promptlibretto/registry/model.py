@@ -347,11 +347,18 @@ class Section:
     @classmethod
     def from_dict(cls, data: dict[str, Any], section_id: str = "") -> "Section":
         display_data = data.get("display")
+        items = []
+        for it in (data.get("items") or []):
+            it = dict(it)
+            # Normalize legacy "name" field to "id" so the hydrator only needs id.
+            if "id" not in it and "name" in it:
+                it["id"] = it.pop("name")
+            items.append(it)
         return cls(
             id=section_id or str(data.get("id") or ""),
             label=str(data.get("label") or ""),
             display=_display_from_dict(display_data) if display_data else Display(),
-            items=[dict(it) for it in (data.get("items") or [])],
+            items=items,
             required=bool(data.get("required", True)),
             template_vars=[str(v) for v in (data.get("template_vars") or [])],
         )
@@ -413,6 +420,8 @@ class Registry:
     routes: dict[str, Route] = field(default_factory=dict)
     generation: dict[str, Any] = field(default_factory=dict)
     output_policy: dict[str, Any] = field(default_factory=dict)
+    memory_config: dict[str, Any] = field(default_factory=dict)
+    memory_rules: list[dict[str, Any]] = field(default_factory=list)
     default_state: Optional[RegistryState] = None
 
     def to_dict(self, *, wrap: bool = True) -> dict[str, Any]:
@@ -434,6 +443,10 @@ class Registry:
             body["generation"] = dict(self.generation)
         if self.output_policy:
             body["output_policy"] = dict(self.output_policy)
+        if self.memory_config:
+            body["memory_config"] = dict(self.memory_config)
+        if self.memory_rules:
+            body["memory_rules"] = list(self.memory_rules)
         if self.default_state:
             body["default_state"] = self.default_state.to_dict()
         return {"registry": body} if wrap else body
@@ -452,6 +465,7 @@ class Registry:
         RESERVED = {
             "version", "title", "description", "assembly_order",
             "routes", "generation", "output_policy", "default_state",
+            "memory_config", "memory_rules",
         }
 
         sections: dict[str, Section] = {}
@@ -481,5 +495,7 @@ class Registry:
             routes=routes,
             generation=dict(data.get("generation") or {}),
             output_policy=dict(data.get("output_policy") or {}),
+            memory_config=dict(data.get("memory_config") or {}),
+            memory_rules=list(data.get("memory_rules") or []),
             default_state=default_state,
         )

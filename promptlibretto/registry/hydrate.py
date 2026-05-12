@@ -143,7 +143,7 @@ def _make_working_state(reg: Registry, state: RegistryState) -> RegistryState:
         sel_id = sec_state.selected if isinstance(sec_state.selected, str) else None
         item: Optional[dict[str, Any]] = None
         if sel_id:
-            item = next((it for it in sec.items if (it.get("id") or it.get("name")) == sel_id), None)
+            item = next((it for it in sec.items if it.get("id") == sel_id), None)
         if item is None and sec.required and sec.items:
             item = sec.items[0]
         defaults: dict[str, str] = dict(item.get("template_defaults") or {}) if item else {}
@@ -324,7 +324,7 @@ def _evaluate_selection(
     if isinstance(sel, list):
         return [
             it for it in sec.items
-            if (it.get("id") or it.get("name")) in sel
+            if it.get("id") in sel
         ]
     return []
 
@@ -348,7 +348,7 @@ def _resolve_groups_struct(
             if isinstance(gid_or_obj, dict):
                 # Inline group object — owns its own definition
                 group_item: Optional[dict[str, Any]] = gid_or_obj
-                gid = gid_or_obj.get("id") or gid_or_obj.get("name") or ""
+                gid = gid_or_obj.get("id") or ""
             else:
                 # String ID — look up in the top-level groups index
                 gid = gid_or_obj
@@ -444,7 +444,7 @@ def _resolve_token_struct(
             return None
         sec = reg.sections[sec_key]
         match = next(
-            (it for it in sec.items if (it.get("id") or it.get("name")) == inner_expr),
+            (it for it in sec.items if it.get("id") == inner_expr),
             None,
         )
         if not match:
@@ -511,7 +511,7 @@ def _resolve_token_struct(
     # fallback: look for item with that id/name in the section
     sec = reg.sections[sec_key]
     pool = next(
-        (it for it in sec.items if (it.get("id") or it.get("name")) == sub), None
+        (it for it in sec.items if it.get("id") == sub), None
     )
     if pool:
         if isinstance(pool.get("items"), list):

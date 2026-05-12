@@ -86,7 +86,7 @@ def derive_state_schema(registry: Registry) -> StateSchema:
         array_fields: list[str] = []
 
         for item in sec.items:
-            item_id = item.get("id") or item.get("name") or ""
+            item_id = item.get("id") or ""
             item_label = item.get("label") or ""
             if item_id:
                 selectable.append(SelectableItem(id=item_id, label=item_label))
