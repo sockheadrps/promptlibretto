@@ -209,7 +209,7 @@ def _render_fragments(
     """Render text + conditional fragments. Fragment renders when its
     ``condition`` variable is non-empty in the section state."""
     pieces: list[str] = []
-    base = item.get("text") or item.get("context")
+    base = item.get("text")
     if isinstance(base, str) and base.strip():
         pieces.append(_apply_template_vars(base, sec_key, state))
     for f in item.get("fragments") or []:
