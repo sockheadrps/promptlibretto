@@ -7,14 +7,14 @@ const MEMORY_ENABLED = localStorage.getItem('promptlibretto.memory-enabled.v1') 
 // user's local Ollama (browser-direct). Server is only used as a thin
 // proxy through `/api/registry/*` if needed.
 
-import { mountWorkspaceChip } from "/static/session.js";
-import { mountConnectionChip, getConnection } from "/static/connection.js";
+import { mountWorkspaceChip } from "/static/shared/session.js";
+import { mountConnectionChip, getConnection } from "/static/shared/connection.js";
 import {
   extractFinishReason,
   extractUsage,
   generate as ollamaGenerate,
   streamGenerate,
-} from "/static/ollama_client.js";
+} from "/static/shared/ollama_client.js";
 
 const $ = (id) => document.getElementById(id);
 const STUDIO_INBOX_KEY = "pl-studio-handoff-v1";
@@ -1735,8 +1735,8 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     examplesModal.hidden = false;
     try {
       const examples = await fetchExampleManifest(
-        "/static/builder-examples/index.json",
-        "/static/builder-examples",
+        "/static/builder/examples/index.json",
+        "/static/builder/examples",
         "Example"
       );
       if (!examples.length) {

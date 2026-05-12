@@ -1355,7 +1355,7 @@ function applyRegistryJson(json) {
 async function loadBuilderExample(name) {
   if (!name) return;
   try {
-    const res = await fetch(`/static/builder-examples/${name}.json`);
+    const res = await fetch(`/static/builder/examples/${name}.json`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     applyRegistryJson(await res.json());
     setValidationStatus(`Example "${name}" loaded.`, true);
@@ -2281,7 +2281,7 @@ async function populateExamplePicker() {
 
   let exampleOptions = "";
   try {
-    const res = await fetch("/static/builder-examples/index.json", { cache: "no-cache" });
+    const res = await fetch("/static/builder/examples/index.json", { cache: "no-cache" });
     if (res.ok) {
       const data = await res.json();
       const examples = data.examples || [];

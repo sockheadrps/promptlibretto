@@ -1,5 +1,5 @@
-import { getWorkspaceId, setWorkspaceId } from "/static/session.js";
-import { listModels } from "/static/ollama_client.js";
+import { getWorkspaceId, setWorkspaceId } from "/static/shared/session.js";
+import { listModels } from "/static/shared/ollama_client.js";
 
 // ── Memory toggle ────────────────────────────────────────────
 const MEMORY_ENABLED_KEY = 'promptlibretto.memory-enabled.v1';

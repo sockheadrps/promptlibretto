@@ -12,9 +12,9 @@ _TWITCH_REGISTRY = {
         "assembly_order": [
             "output_prompt_directions",
             "base_context.text",
-            "personas.context",
+            "personas.text",
             "personas.groups",
-            "sentiment.context",
+            "sentiment.text",
             "sentiment.groups[positive_cues]",
             "sentiment.scale",
             "groups[normal_examples]",

@@ -58,28 +58,28 @@ if _static_dir.exists():
 
 @app.get("/")
 def landing() -> FileResponse:
-    return FileResponse(_static_dir / "index.html")
+    return FileResponse(_static_dir / "home" / "index.html")
 
 
 @app.get("/studio")
 @app.get("/v21")  # legacy bookmark
 def studio_page() -> FileResponse:
-    return FileResponse(_static_dir / "indexv2.html")
+    return FileResponse(_static_dir / "studio" / "indexv2.html")
 
 
 @app.get("/builder")
 def builder() -> FileResponse:
-    return FileResponse(_static_dir / "templatebuilder.html")
+    return FileResponse(_static_dir / "builder" / "templatebuilder.html")
 
 
 @app.get("/assistant")
 def chat_builder() -> FileResponse:
-    return FileResponse(_static_dir / "chatbuilder.html")
+    return FileResponse(_static_dir / "assistant" / "chatbuilder.html")
 
 
 @app.get("/ensemble")
 def ensemble() -> FileResponse:
-    return FileResponse(_static_dir / "ensemble.html")
+    return FileResponse(_static_dir / "ensemble" / "ensemble.html")
 
 
 @app.get("/api/config")

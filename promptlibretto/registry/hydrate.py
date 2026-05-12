@@ -21,17 +21,6 @@ from typing import Any, Optional, Union
 from .model import Registry
 from .state import RegistryState, SectionState
 
-# Per-section primary text field for bare "section_id" tokens.
-PRIMARY_FIELD: dict[str, str] = {
-    "base_context": "text",
-    "personas": "context",
-    "sentiment": "context",
-    "static_injections": "text",
-    "runtime_injections": "text",
-    "output_prompt_directions": "text",
-    "prompt_endings": "text",
-}
-
 # Fields whose list items get a ``pre_context`` heading when rendered.
 PRE_CONTEXT_FIELDS: frozenset[str] = frozenset({"items"})
 
@@ -461,7 +450,7 @@ def _resolve_token_struct(
             return _list_struct(
                 match["items"], _get_pre_context(match), sec_key, "items", state, rng
             )
-        return _field_struct(match, PRIMARY_FIELD.get(sec_key, "text"), sec_key, state, rng)
+        return _field_struct(match, "text", sec_key, state, rng)
 
     # ── section or section.field ──────────────────────────────────
     parts = token.split(".")
@@ -473,14 +462,14 @@ def _resolve_token_struct(
     if len(parts) == 1:
         if isinstance(sel, list):
             structs = [
-                _field_struct(it, PRIMARY_FIELD.get(sec_key, "text"), sec_key, state, rng)
+                _field_struct(it, "text", sec_key, state, rng)
                 for it in sel
             ]
             return _combine_structs(structs, sec_key)
         if sel:
             if isinstance(sel.get("items"), list):
                 return _resolve_item_with_items(sel, sec_key, state, rng)
-            return _field_struct(sel, PRIMARY_FIELD.get(sec_key, "text"), sec_key, state, rng)
+            return _field_struct(sel, "text", sec_key, state, rng)
         return None
 
     sub = ".".join(parts[1:])
@@ -516,7 +505,7 @@ def _resolve_token_struct(
     if pool:
         if isinstance(pool.get("items"), list):
             return _resolve_item_with_items(pool, sec_key, state, rng)
-        return _field_struct(pool, PRIMARY_FIELD.get(sec_key, "text"), sec_key, state, rng)
+        return _field_struct(pool, "text", sec_key, state, rng)
     # fallback: pool-shaped selected item
     if sel and not isinstance(sel, list) and isinstance(sel.get("items"), list):
         return _resolve_item_with_items(sel, sec_key, state, rng)

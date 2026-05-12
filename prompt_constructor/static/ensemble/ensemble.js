@@ -40,7 +40,7 @@ let _exampleIndex = null;
 async function getExampleIndex() {
   if (_exampleIndex) return _exampleIndex;
   try {
-    const res = await fetch("/static/builder-examples/index.json", { cache: "no-cache" });
+    const res = await fetch("/static/builder/examples/index.json", { cache: "no-cache" });
     if (!res.ok) return [];
     const data = await res.json();
     _exampleIndex = data.examples || [];
@@ -188,7 +188,7 @@ async function loadSnapshot(side) {
   if (val.startsWith("__example__:")) {
     const file = val.slice("__example__:".length);
     try {
-      const resp = await fetch(`/static/builder-examples/${file}.json`);
+      const resp = await fetch(`/static/builder/examples/${file}.json`);
       if (!resp.ok) throw new Error(`failed to fetch example: ${resp.status}`);
       registry = await resp.json();
     } catch (e) {

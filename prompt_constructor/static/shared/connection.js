@@ -2,7 +2,7 @@
 // Persisted in localStorage, edited via a small modal, and read by the
 // generate/stream paths before every call to the user's local Ollama.
 
-import { DEFAULT_CONNECTION, listModels, testConnection } from "/static/ollama_client.js";
+import { DEFAULT_CONNECTION, listModels, testConnection } from "/static/shared/ollama_client.js";
 
 const STORAGE_KEY = "promptlibretto.connection.v1";
 

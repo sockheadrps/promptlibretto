@@ -12,7 +12,9 @@ from .state import RegistryState
 
 SCHEMA_VERSION = 2
 
-SECTION_KEYS: tuple[str, ...] = (
+# Ordered list of well-known section names — used only for stable serialization
+# ordering in to_dict(). Not enforced: any snake_case key is a valid section.
+WELL_KNOWN_SECTIONS: tuple[str, ...] = (
     "base_context",
     "personas",
     "sentiment",
@@ -22,6 +24,9 @@ SECTION_KEYS: tuple[str, ...] = (
     "groups",
     "prompt_endings",
 )
+
+# Backwards-compatible alias.
+SECTION_KEYS = WELL_KNOWN_SECTIONS
 
 
 # ── Display ───────────────────────────────────────────────────────────
@@ -174,6 +179,43 @@ class ScalableMixin:
 
 
 @dataclass
+class Item(BaseItem, DynamicMixin, ScalableMixin):
+    """Generic item for any section.
+
+    All fields are optional. Use whichever fields the section's assembly
+    tokens reference (``text``, ``groups``, ``scale``, ``items``, etc.).
+    """
+
+    text: str = ""
+    groups: list[Any] = field(default_factory=list)
+    items: list[Any] = field(default_factory=list)
+    pre_context: str = ""
+    include_sections: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        out = self._base_dict()
+        out.update(self._dynamic_dict())
+        out.update(self._scale_dict())
+        if self.text:
+            out["text"] = self.text
+        if self.groups:
+            out["groups"] = list(self.groups)
+        if self.items:
+            out["items"] = list(self.items)
+        if self.pre_context:
+            out["pre_context"] = self.pre_context
+        if self.include_sections:
+            out["include_sections"] = list(self.include_sections)
+        return out
+
+
+# ── Typed convenience aliases ─────────────────────────────────────────
+# These remain for backwards-compatible Python authoring.
+# All serialize to the same generic item shape — "context" is written
+# as "text" so the hydrator never needs to special-case the field name.
+
+
+@dataclass
 class Group(BaseItem):
     """Reusable list of prompt snippets."""
 
@@ -190,7 +232,7 @@ class Group(BaseItem):
 
 @dataclass
 class ContextItem(BaseItem, DynamicMixin):
-    """Item for the ``base_context`` section."""
+    """Convenience builder for a plain-text context item."""
 
     text: str = ""
 
@@ -204,16 +246,16 @@ class ContextItem(BaseItem, DynamicMixin):
 
 @dataclass
 class Persona(BaseItem, DynamicMixin):
-    """Item for the ``personas`` section."""
+    """Convenience builder for a persona item. Serializes ``text`` (not ``context``)."""
 
-    context: str = ""
+    text: str = ""
     groups: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out = self._base_dict()
         out.update(self._dynamic_dict())
-        if self.context:
-            out["context"] = self.context
+        if self.text:
+            out["text"] = self.text
         if self.groups:
             out["groups"] = list(self.groups)
         return out
@@ -221,17 +263,17 @@ class Persona(BaseItem, DynamicMixin):
 
 @dataclass
 class Sentiment(BaseItem, DynamicMixin, ScalableMixin):
-    """Item for the ``sentiment`` section."""
+    """Convenience builder for a sentiment item. Serializes ``text`` (not ``context``)."""
 
-    context: str = ""
+    text: str = ""
     groups: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out = self._base_dict()
         out.update(self._dynamic_dict())
         out.update(self._scale_dict())
-        if self.context:
-            out["context"] = self.context
+        if self.text:
+            out["text"] = self.text
         if self.groups:
             out["groups"] = list(self.groups)
         return out
@@ -239,7 +281,7 @@ class Sentiment(BaseItem, DynamicMixin, ScalableMixin):
 
 @dataclass
 class RuntimeInjection(BaseItem, DynamicMixin):
-    """Item for the ``runtime_injections`` section."""
+    """Convenience builder for a runtime injection item."""
 
     text: str = ""
     include_sections: list[str] = field(default_factory=list)
@@ -256,7 +298,7 @@ class RuntimeInjection(BaseItem, DynamicMixin):
 
 @dataclass
 class StaticInjection(BaseItem):
-    """Item for the ``static_injections`` section."""
+    """Convenience builder for a static injection item."""
 
     text: str = ""
 
@@ -269,13 +311,7 @@ class StaticInjection(BaseItem):
 
 @dataclass
 class OutputDirection(BaseItem, DynamicMixin, ScalableMixin):
-    """Item for the ``output_prompt_directions`` section.
-
-    The optional scale injects a descriptive linguistic register into the prompt —
-    e.g. Scale(scale_descriptor="clinical and detached", template="Register: {value}/10 — {scale_descriptor}.")
-    The slider actuates the descriptor, shaping the model's voice, not a mechanical output parameter.
-    Use ``output_prompt_directions.scale`` in assembly_order to render it.
-    """
+    """Convenience builder for an output direction item."""
 
     text: str = ""
     groups: list[str] = field(default_factory=list)
@@ -293,13 +329,17 @@ class OutputDirection(BaseItem, DynamicMixin, ScalableMixin):
 
 @dataclass
 class PromptEnding(BaseItem):
-    """Item for the ``prompt_endings`` section."""
+    """Convenience builder for a prompt ending item."""
 
+    text: str = ""
     items: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out = self._base_dict()
-        out["items"] = list(self.items)
+        if self.text:
+            out["text"] = self.text
+        if self.items:
+            out["items"] = list(self.items)
         return out
 
 
@@ -350,9 +390,12 @@ class Section:
         items = []
         for it in (data.get("items") or []):
             it = dict(it)
-            # Normalize legacy "name" field to "id" so the hydrator only needs id.
+            # Normalize legacy "name" → "id" so the hydrator only needs id.
             if "id" not in it and "name" in it:
                 it["id"] = it.pop("name")
+            # Normalize "context" → "text" so the hydrator uses a single field name.
+            if "context" in it and "text" not in it:
+                it["text"] = it.pop("context")
             items.append(it)
         return cls(
             id=section_id or str(data.get("id") or ""),
@@ -431,11 +474,11 @@ class Registry:
             "description": self.description,
             "assembly_order": list(self.assembly_order),
         }
-        for k in SECTION_KEYS:
+        for k in WELL_KNOWN_SECTIONS:
             if k in self.sections:
                 body[k] = self.sections[k].to_dict()
         for k, sec in self.sections.items():
-            if k not in SECTION_KEYS:
+            if k not in WELL_KNOWN_SECTIONS:
                 body[k] = sec.to_dict()
         if self.routes:
             body["routes"] = {k: r.to_dict() for k, r in self.routes.items()}
