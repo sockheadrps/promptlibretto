@@ -209,7 +209,7 @@ def _render_fragments(
     """Render text + conditional fragments. Fragment renders when its
     ``condition`` variable is non-empty in the section state."""
     pieces: list[str] = []
-    base = item.get("text")
+    base = item.get("text") or item.get("context")
     if isinstance(base, str) and base.strip():
         pieces.append(_apply_template_vars(base, sec_key, state))
     for f in item.get("fragments") or []:
@@ -369,9 +369,9 @@ def _resolve_groups_struct(
 
 
 def _resolve_scale_struct(
-    sel: Any, state: RegistryState, rng: _random.Random
+    sel: Any, sec_key: str, state: RegistryState, rng: _random.Random
 ) -> Optional[dict[str, Any]]:
-    """Render ``sentiment.scale`` (or any ``section.scale`` token)."""
+    """Render a ``section.scale`` token for any scalable section."""
     if not sel or isinstance(sel, list):
         return None
     scale_dict: dict[str, Any] = sel.get("scale") or {}
@@ -392,7 +392,7 @@ def _resolve_scale_struct(
         scale_dict.get("template")
         or "{label}: {value}/{max_value} — {scale_descriptor}."
     )
-    sec_state = state.get("sentiment")
+    sec_state = state.get(sec_key)
     if sec_state.slider_random or scale_dict.get("randomize"):
         value = rng.uniform(min_val, max_val)
     elif sec_state.slider is not None:
@@ -406,7 +406,7 @@ def _resolve_scale_struct(
         .replace("{label}", label)
         .replace("{max_value}", str(int(max_val)))
     )
-    return {"kind": "plain", "text": text, "section": "sentiment"}
+    return {"kind": "plain", "text": text, "section": sec_key}
 
 
 def _resolve_token_struct(
@@ -487,7 +487,7 @@ def _resolve_token_struct(
 
     # ── section.scale ─────────────────────────────────────────────
     if sub == "scale":
-        s = _resolve_scale_struct(sel, state, rng)
+        s = _resolve_scale_struct(sel, sec_key, state, rng)
         if s:
             s["section"] = sec_key
         return s
