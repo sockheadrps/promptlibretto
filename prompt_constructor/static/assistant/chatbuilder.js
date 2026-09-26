@@ -29,17 +29,13 @@ const regState = {
 // mirrors the "state" block in exported registry files
 const draftState = {}; // section_key → { selected, array_modes, slider, template_vars }
 
-// section keys discovered from the loaded registry that aren't in SECTION_KEYS
-let extraSectionKeys = [];
-
 let currentDetailSection = null; // section currently open in the detail panel
 
-const SECTION_KEYS = [
-  'base_context', 'personas', 'sentiment',
-  'static_injections', 'runtime_injections', 'output_prompt_directions',
-  ...(MEMORY_ENABLED ? ['memory_recall'] : []),
-  'user_message', 'prompt_endings',
-];
+// Non-section keys at the registry top level (used to detect section keys by exclusion).
+const META_KEYS = new Set([
+  'version', 'title', 'description', 'assembly_order', 'default_state',
+  'generation', 'output_policy', 'memory_config', 'memory_rules', 'style_blend',
+]);
 
 const SECTION_LABELS = {
   base_context:               'Base Context',
@@ -55,8 +51,8 @@ const SECTION_LABELS = {
 
 const ASSEMBLY_TOKEN_ALIASES = {
   base_context: 'base_context.text',
-  personas: 'personas.context',
-  sentiment: 'sentiment.context',
+  personas: 'personas.text',
+  sentiment: 'sentiment.text',
   static_injections: 'static_injections.text',
   runtime_injections: 'runtime_injections.text',
   output_prompt_directions: 'output_prompt_directions.text',
@@ -90,23 +86,33 @@ window.addEventListener('storage', e => {
   if (e.key === CONN_KEY) updateConnChip();
 });
 
+function _makeSectionCard(key) {
+  const card = document.createElement('div');
+  card.className = 'cb-section-card';
+  card.id = `sec-card-${key}`;
+  card.innerHTML = `
+    <div class="cb-section-name">${SECTION_LABELS[key] || key}</div>
+    <div class="cb-section-items" id="sec-items-${key}">
+      <span class="cb-sec-empty">Empty</span>
+    </div>
+    <div class="cb-section-vars" id="sec-vars-${key}"></div>
+  `;
+  card.onclick = () => openSectionDetail(key);
+  return card;
+}
+
+function _ensureSectionCard(key) {
+  if (!regState.sections[key]) regState.sections[key] = { vars: [], items: [] };
+  if (!document.getElementById(`sec-card-${key}`)) {
+    document.getElementById('sections-grid').appendChild(_makeSectionCard(key));
+  }
+}
+
 function buildSectionGrid() {
   const grid = document.getElementById('sections-grid');
   grid.innerHTML = '';
-  for (const key of SECTION_KEYS) {
-    regState.sections[key] = { vars: [], items: [] };
-    const card = document.createElement('div');
-    card.className = 'cb-section-card';
-    card.id = `sec-card-${key}`;
-    card.innerHTML = `
-      <div class="cb-section-name">${SECTION_LABELS[key]}</div>
-      <div class="cb-section-items" id="sec-items-${key}">
-        <span class="cb-sec-empty">Empty</span>
-      </div>
-      <div class="cb-section-vars" id="sec-vars-${key}"></div>
-    `;
-    card.onclick = () => openSectionDetail(key);
-    grid.appendChild(card);
+  for (const key of Object.keys(regState.sections)) {
+    grid.appendChild(_makeSectionCard(key));
   }
 }
 
@@ -228,6 +234,30 @@ async function runBrowserDelegatedChat(cfg, thinkingEl) {
     const toolCalls = normalizeToolCalls(msg.tool_calls || []);
 
     if (!toolCalls.length) {
+      const contentCalls = parseContentToolCalls(msg.content || '');
+      if (contentCalls.length) {
+        // Model emitted tool_call code blocks instead of native tool_calls — execute them.
+        const displayText = (msg.content || '').replace(/```tool_call[\s\S]*?```/gi, '').trim();
+        if (displayText) {
+          assistantEl = addMessage('assistant', '');
+          for (let i = 0; i < displayText.length; i += 40) {
+            setMessageText(assistantEl, displayText.slice(0, i + 40));
+            await delayFrame();
+          }
+        }
+        for (const tc of contentCalls) {
+          const toolResult = await dispatchBuilderTool(tc.name, tc.args);
+          if (toolResult.draft_id && toolResult.draft_id !== draftId) {
+            draftId = toolResult.draft_id;
+            updateDraftBadge(draftId);
+          }
+          addToolEvent(toolResult.name, toolResult.args, toolResult.result);
+          applyToolCall(toolResult.name, toolResult.args, toolResult.result);
+        }
+        conversationHistory.push({ role: 'assistant', content: msg.content || '' });
+        return;
+      }
+
       assistantText = msg.content || '';
       if (!assistantText) assistantText = '(no response from model - check your connection settings)';
       assistantEl = addMessage('assistant', '');
@@ -376,6 +406,62 @@ function isNativeToolParseFailure(status, body) {
   return status >= 400 && /tool call arguments|parse tool call|parse_error/i.test(body || '');
 }
 
+function parseKwargs(argsStr) {
+  argsStr = (argsStr || '').trim();
+  if (!argsStr) return {};
+  try { return JSON.parse(argsStr); } catch {}
+  const args = {};
+  let i = 0;
+  while (i < argsStr.length) {
+    while (i < argsStr.length && (argsStr[i] === ',' || argsStr[i] === ' ')) i++;
+    const keyMatch = argsStr.slice(i).match(/^([a-zA-Z_]\w*)\s*=\s*/);
+    if (!keyMatch) break;
+    const key = keyMatch[1];
+    i += keyMatch[0].length;
+    const valStart = i;
+    let depth = 0, inStr = false, strChar = '', escape = false;
+    while (i < argsStr.length) {
+      const ch = argsStr[i];
+      if (escape) { escape = false; i++; continue; }
+      if (ch === '\\') { escape = true; i++; continue; }
+      if (inStr) { if (ch === strChar) inStr = false; i++; continue; }
+      if (ch === '"' || ch === "'") { inStr = true; strChar = ch; i++; continue; }
+      if (ch === '{' || ch === '[') { depth++; i++; continue; }
+      if (ch === '}' || ch === ']') { if (depth === 0) break; depth--; i++; continue; }
+      if (depth === 0 && ch === ',') break;
+      i++;
+    }
+    const raw = argsStr.slice(valStart, i).trim();
+    try { args[key] = JSON.parse(raw.replace(/'/g, '"')); } catch { args[key] = raw; }
+  }
+  return args;
+}
+
+function parseContentToolCalls(content) {
+  if (!content) return [];
+  const results = [];
+  const blockRe = /```tool_call\s*([\s\S]*?)```/gi;
+  let m;
+  while ((m = blockRe.exec(content)) !== null) {
+    for (const rawLine of m[1].split('\n')) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const parenIdx = line.indexOf('(');
+      if (parenIdx < 1) continue;
+      const name = line.slice(0, parenIdx).trim();
+      if (!/^[a-zA-Z][a-zA-Z0-9_.]*$/.test(name)) continue;
+      const lastParen = line.lastIndexOf(')');
+      const args = parseKwargs(lastParen > parenIdx ? line.slice(parenIdx + 1, lastParen) : '');
+      results.push({
+        id: `cblock_${results.length}`,
+        type: 'function',
+        function: { name, arguments: JSON.stringify(args) },
+      });
+    }
+  }
+  return normalizeToolCalls(results);
+}
+
 function parseJsonCommandMessage(text) {
   const trimmed = String(text || '').trim();
   try { return JSON.parse(trimmed); } catch {}
@@ -452,6 +538,7 @@ function applyToolCall(name, args, result) {
     case 'registry.section.add_var': {
       const { section, template_vars } = result;
       if (section && template_vars) {
+        _ensureSectionCard(section);
         regState.sections[section].vars = template_vars;
         refreshSectionVars(section);
       }
@@ -461,6 +548,7 @@ function applyToolCall(name, args, result) {
     case 'registry.section.add_item': {
       const { section, item } = result;
       if (section && item) {
+        _ensureSectionCard(section);
         regState.sections[section].items.push(item);
         addSectionItem(section, item);
         flashCard(section);
@@ -666,7 +754,7 @@ function renderSectionPreview(sectionKey) {
     card.appendChild(hdr);
 
     // ── main text (editable) ──
-    const textField = item.context !== undefined ? 'context' : 'text';
+    const textField = item.text !== undefined ? 'text' : (item.context !== undefined ? 'context' : 'text');
     const mainText = item[textField] || '';
     const textDiv = document.createElement('div');
     textDiv.className = 'cb-detail-item-text';
@@ -784,6 +872,100 @@ function renderSectionPreview(sectionKey) {
 
     body.appendChild(card);
   }
+
+  // ── generate more footer ──
+  const footer = document.createElement('div');
+  footer.className = 'cb-sec-gen-footer';
+
+  const stepper = document.createElement('div');
+  stepper.className = 'cb-gen-stepper';
+  stepper.innerHTML = `
+    <button type="button" class="cb-gen-step-btn" onclick="adjustGenCount(-1)">−</button>
+    <span class="cb-gen-count" id="gen-count-display">2</span>
+    <button type="button" class="cb-gen-step-btn" onclick="adjustGenCount(1)">+</button>
+    <span class="cb-gen-count-label">more items</span>
+  `;
+  footer.appendChild(stepper);
+
+  const genBtn = document.createElement('button');
+  genBtn.type = 'button';
+  genBtn.className = 'cb-gen-btn';
+  genBtn.textContent = 'Generate →';
+  genBtn.onclick = () => generateMoreItems(sectionKey);
+  footer.appendChild(genBtn);
+
+  body.appendChild(footer);
+}
+
+let _generateCount = 2;
+
+function adjustGenCount(delta) {
+  _generateCount = Math.max(1, Math.min(5, _generateCount + delta));
+  const el = document.getElementById('gen-count-display');
+  if (el) el.textContent = _generateCount;
+}
+
+const SECTION_PURPOSE = {
+  base_context:             'establishes the core scenario, role, and situation — each item is a different context variation the runtime can select',
+  personas:                 'defines character identity and behavioral traits — each item is a distinct persona the model adopts',
+  sentiment:                'sets the emotional tone or attitude — each item is a distinct mood or disposition',
+  static_injections:        'injects fixed instructional text into the prompt — each item is a different static snippet',
+  runtime_injections:       'injects dynamic runtime values — each item is a different runtime hook',
+  output_prompt_directions: 'guides how the model should structure and style its response — each item is a different output directive set',
+  memory_recall:            'injects retrieved memory context — each item is a different recall format',
+  prompt_endings:           'provides the final prompt suffix that closes the assembled prompt — each item is a different closing style',
+};
+
+function generateMoreItems(sectionKey) {
+  const sec = regState.sections[sectionKey];
+  if (!sec) return;
+
+  const label = SECTION_LABELS[sectionKey] || sectionKey;
+  const purpose = SECTION_PURPOSE[sectionKey] || `the ${label} section`;
+  const count = _generateCount;
+
+  // summarise existing items
+  const existingLines = sec.items.map(item => {
+    const id = item.id || item.name || '?';
+    const content = item.text || item.context || '';
+    return `  - "${id}": ${content ? content.slice(0, 120) + (content.length > 120 ? '…' : '') : '(empty)'}`;
+  });
+
+  // include base context if available
+  const bcItems = regState.sections.base_context?.items || [];
+  const bcText = bcItems[0]?.text || '';
+
+  const lines = [
+    `Add ${count} more item${count > 1 ? 's' : ''} to the ${label} section of the current draft.`,
+    '',
+    `Section purpose: ${purpose}`,
+    '',
+  ];
+
+  if (bcText) {
+    lines.push('Base context (for reference):');
+    lines.push(`  ${bcText.slice(0, 200)}${bcText.length > 200 ? '…' : ''}`);
+    lines.push('');
+  }
+
+  if (existingLines.length) {
+    lines.push(`Existing ${label} items (do not duplicate these):`);
+    lines.push(...existingLines);
+    lines.push('');
+  }
+
+  lines.push(
+    `Generate ${count} new, distinct item${count > 1 ? 's' : ''} that fit the registry theme and complement what already exists.`,
+    `Use registry.section.add_item for each one. Include real descriptive content — do not leave content fields empty.`,
+  );
+
+  const input = document.getElementById('user-input');
+  if (input) {
+    input.value = lines.join('\n');
+    input.focus();
+    input.setSelectionRange(0, 0);
+    input.scrollTop = 0;
+  }
 }
 
 // ── inline editing helpers ─────────────────────────────────────────────────
@@ -894,8 +1076,18 @@ function setSlider(sectionKey, itemId, value, valEl) {
   if (valEl) valEl.textContent = value;
 }
 
+const KNOWN_SECTION_KEYS = new Set(Object.keys(SECTION_LABELS));
+
 function normalizeAssemblyOrder(order) {
-  return (order || []).map(token => ASSEMBLY_TOKEN_ALIASES[token] || token);
+  return (order || []).map(token => {
+    if (ASSEMBLY_TOKEN_ALIASES[token]) return ASSEMBLY_TOKEN_ALIASES[token];
+    // collapse section.item_id.attribute → section.attribute
+    const parts = token.split('.');
+    if (parts.length === 3 && KNOWN_SECTION_KEYS.has(parts[0])) {
+      return `${parts[0]}.${parts[2]}`;
+    }
+    return token;
+  });
 }
 
 function sanitizeGeneration(generation) {
@@ -916,7 +1108,7 @@ function validSelectedForSection(sectionKey, selected) {
 
 function _buildItemEl(sectionKey, item) {
   const id     = item.id || item.name || '?';
-  const preview = item.context || item.text || '';
+  const preview = item.text || item.context || '';
   const truncated = preview.length > 44 ? preview.slice(0, 44) + '…' : preview;
   const st     = secState(sectionKey);
   const isSelected = st.selected === id;
@@ -1111,13 +1303,36 @@ function addToolEvent(name, args, result) {
   chip.className = 'cb-tool-event';
   const ok = !result.error;
   const argSummary = summarizeArgs(name, args);
+
+  // for validate: show pass/fail badge based on result.ok
+  const validateOk = name === 'registry.draft.validate' ? result.ok : null;
+  const chipOk = validateOk !== null ? validateOk : ok;
   chip.innerHTML = `
     <span class="cb-tool-dot"></span>
     <span class="cb-tool-name">${escHtml(name)}</span>
     ${argSummary ? `<span style="color:var(--muted)">${escHtml(argSummary)}</span>` : ''}
-    <span class="${ok ? 'cb-tool-ok' : 'cb-tool-err'}">${ok ? '✓' : '✗'}</span>
+    <span class="${chipOk ? 'cb-tool-ok' : 'cb-tool-err'}">${chipOk ? '✓' : '✗'}</span>
   `;
   msgs.appendChild(chip);
+
+  // for validate: render error/warning list as a distinct bubble
+  if (name === 'registry.draft.validate') {
+    const errors   = result.errors   || [];
+    const warnings = result.warnings || [];
+    if (errors.length || warnings.length) {
+      const bubble = document.createElement('div');
+      bubble.className = 'cb-validate-bubble';
+      const lines = [];
+      for (const e of errors)   lines.push(`<div class="cb-vld-error">✗ ${escHtml(e.path)} — ${escHtml(e.message)}</div>`);
+      for (const w of warnings) lines.push(`<div class="cb-vld-warn">⚠ ${escHtml(w.path)} — ${escHtml(w.message)}</div>`);
+      bubble.innerHTML = `
+        <div class="cb-vld-header">${errors.length ? `${errors.length} error${errors.length > 1 ? 's' : ''}` : ''}${errors.length && warnings.length ? ', ' : ''}${warnings.length ? `${warnings.length} warning${warnings.length > 1 ? 's' : ''}` : ''}</div>
+        ${lines.join('')}
+      `;
+      msgs.appendChild(bubble);
+    }
+  }
+
   msgs.scrollTop = msgs.scrollHeight;
 
   // activity strip
@@ -1153,6 +1368,174 @@ function summarizeArgs(name, args) {
 
 function removeWelcome() {
   document.querySelector('.cb-welcome')?.remove();
+  document.getElementById('intake-card')?.remove();
+}
+
+function _intakeCardHTML() {
+  return `
+    <div class="cb-intake" id="intake-card">
+      <div class="cb-intake-head">
+        <div class="cb-welcome-icon">✦</div>
+        <p class="cb-intake-title">What are you building?</p>
+        <p class="cb-intake-sub">Fill in what you know — leave anything blank and the assistant will decide.</p>
+      </div>
+      <div class="cb-intake-fields">
+        <div class="cb-intake-field">
+          <label class="cb-intake-label" for="intake-idea">Registry idea <span class="cb-intake-req">required</span></label>
+          <textarea id="intake-idea" class="cb-intake-textarea" placeholder="Describe the scenario or model you want to build…" rows="3"></textarea>
+        </div>
+        <div class="cb-intake-row">
+          <div class="cb-intake-field">
+            <label class="cb-intake-label" for="intake-personas">Personas <span class="cb-intake-hint">who the model IS</span></label>
+            <input id="intake-personas" class="cb-intake-input" type="text" placeholder="e.g. friendly guide, strict coach" />
+          </div>
+          <div class="cb-intake-field">
+            <label class="cb-intake-label" for="intake-sentiment">Sentiment <span class="cb-intake-hint">tone or range</span></label>
+            <input id="intake-sentiment" class="cb-intake-input" type="text" placeholder="e.g. impressed, unimpressed" />
+          </div>
+        </div>
+        <div class="cb-intake-field">
+          <label class="cb-intake-label">Scene variations <span class="cb-intake-hint">who/what the model talks to — each becomes a static injection</span></label>
+          <div class="cb-intake-scene-list" id="intake-scene-list">
+            <div class="cb-intake-scene-row">
+              <input class="cb-intake-input cb-intake-scene-input" type="text" placeholder="e.g. good prospect" />
+              <button type="button" class="cb-intake-scene-remove" onclick="removeSceneRow(this)" style="display:none">×</button>
+            </div>
+          </div>
+          <button type="button" class="cb-intake-scene-add" onclick="addSceneRow()">+ Add variation</button>
+        </div>
+        <div class="cb-intake-row">
+          <div class="cb-intake-field cb-intake-field--narrow">
+            <label class="cb-intake-label">Memory system</label>
+            <label class="cb-intake-toggle-row">
+              <span class="cb-intake-toggle"><input type="checkbox" id="intake-memory" /></span>
+              <span class="cb-intake-toggle-label">Include memory</span>
+            </label>
+          </div>
+          <div class="cb-intake-field">
+            <label class="cb-intake-label">Extra sections <span class="cb-intake-hint">optional</span></label>
+            <div class="cb-intake-chips">
+              <label class="cb-intake-chip"><input type="checkbox" value="runtime_injections" /> Runtime inject</label>
+            </div>
+          </div>
+        </div>
+        <div class="cb-intake-field">
+          <label class="cb-intake-label" for="intake-notes">Additional notes <span class="cb-intake-hint">optional</span></label>
+          <textarea id="intake-notes" class="cb-intake-textarea cb-intake-textarea--sm" placeholder="Anything else the assistant should know…" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="cb-intake-actions">
+        <button type="button" class="cb-intake-submit" onclick="submitIntake()">Start Building →</button>
+      </div>
+    </div>
+  `;
+}
+
+function addSceneRow() {
+  const list = document.getElementById('intake-scene-list');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.className = 'cb-intake-scene-row';
+  row.innerHTML = `
+    <input class="cb-intake-input cb-intake-scene-input" type="text" placeholder="e.g. bad prospect" />
+    <button type="button" class="cb-intake-scene-remove" onclick="removeSceneRow(this)">×</button>
+  `;
+  list.appendChild(row);
+  row.querySelector('input').focus();
+  _updateSceneRemoveBtns();
+}
+
+function removeSceneRow(btn) {
+  const list = document.getElementById('intake-scene-list');
+  if (!list) return;
+  const rows = list.querySelectorAll('.cb-intake-scene-row');
+  if (rows.length > 1) {
+    btn.closest('.cb-intake-scene-row').remove();
+    _updateSceneRemoveBtns();
+  }
+}
+
+function _updateSceneRemoveBtns() {
+  const list = document.getElementById('intake-scene-list');
+  if (!list) return;
+  const rows = list.querySelectorAll('.cb-intake-scene-row');
+  rows.forEach(row => {
+    const btn = row.querySelector('.cb-intake-scene-remove');
+    if (btn) btn.style.display = rows.length > 1 ? '' : 'none';
+  });
+}
+
+function submitIntake() {
+  const idea = document.getElementById('intake-idea')?.value.trim();
+  if (!idea) {
+    document.getElementById('intake-idea')?.focus();
+    return;
+  }
+
+  const personas  = document.getElementById('intake-personas')?.value.trim();
+  const sentiment = document.getElementById('intake-sentiment')?.value.trim();
+  const sceneInputEls = [...document.querySelectorAll('#intake-scene-list .cb-intake-scene-input')];
+  const scenes    = sceneInputEls.map(el => el.value.trim()).filter(Boolean).join(',') || '';
+  const memory    = document.getElementById('intake-memory')?.checked;
+  const notes     = document.getElementById('intake-notes')?.value.trim();
+  const extras    = [...document.querySelectorAll('.cb-intake-chips input:checked')].map(el => el.value);
+
+  const personaList   = personas  ? personas.split(',').map(s => s.trim()).filter(Boolean)  : null;
+  const sentimentList = sentiment ? sentiment.split(',').map(s => s.trim()).filter(Boolean) : null;
+  const sceneList     = scenes    ? scenes.split(',').map(s => s.trim()).filter(Boolean)    : null;
+
+  const personaLine = personaList
+    ? `Create one separate item per persona: ${personaList.map(p => `"${p}"`).join(', ')} — do NOT combine them into one item. Personas describe who the model IS (its own character identity).`
+    : '[you decide based on the idea — create one item per distinct persona, describing who the model IS]';
+  const sentimentLine = sentimentList
+    ? `Create one separate item per sentiment: ${sentimentList.map(s => `"${s}"`).join(', ')} — do NOT combine them into one item`
+    : '[you decide based on the idea — create one item per distinct sentiment]';
+
+  // if scenes are specified, auto-include static_injections
+  const allExtras = sceneList ? [...new Set([...extras, 'static_injections'])] : extras;
+
+  const sceneLine = sceneList
+    ? `Create one separate item per scene in the static_injections section: ${sceneList.map(s => `"${s}"`).join(', ')} — do NOT combine them. Scene variation content describes who/what the model is talking to or the situational context, NOT the model's own character.`
+    : null;
+
+  const lines = [
+    `Build a registry for the following idea:\n${idea}`,
+    '',
+    'Structural preferences — follow exactly what is specified; use your own judgment for anything marked [you decide]:',
+    `- Personas (who the model IS): ${personaLine}`,
+    `- Sentiment: ${sentimentLine}`,
+    sceneLine ? `- Scene variations (static_injections): ${sceneLine}` : null,
+    `- Memory system: ${memory ? 'yes — include memory_recall section and configure memory' : 'no'}`,
+    `- Additional sections: ${allExtras.length ? allExtras.filter(e => e !== 'static_injections').join(', ') || 'none' : 'none'}`,
+  ].filter(l => l !== null);
+
+  if (notes) lines.push('', `Additional notes: ${notes}`);
+
+  const memorySteps = memory
+    ? [
+        '',
+        'Memory system is enabled. After the base build steps, complete ALL of the following memory wiring steps without stopping:',
+        '1. Add a memory_recall section item: id="recall", text="{memory_recall}", template_vars=["memory_recall"].',
+        '2. Update prompt_endings item text to include {system_summary} and {rule_ending} — format: "{system_summary}\\n\\n{rule_ending}\\n" followed by the chat prefix (e.g. "you say:"). Add template_vars ["system_summary", "rule_ending"] to the prompt_endings section.',
+        '3. Include memory_recall.text in the assembly order immediately before output_prompt_directions — so the model reads recalled context before it reads the output instructions. Correct order: [..., sentiment.text, memory_recall.text, output_prompt_directions.text, prompt_endings.endings].',
+        '4. Call registry.memory.configure with appropriate settings for the scenario.',
+        '5. Call registry.classifier_rule.add for each sentiment item, mapping each tag to the correct emotional response.',
+        '6. Validate and export.',
+      ]
+    : [];
+
+  lines.push(
+    '',
+    `The user has confirmed all steps. Proceed through the full build sequence without stopping to ask for confirmation at each step: create draft, set meta, add all section items with real descriptive content, set assembly order, set generation params.${memory ? ' Then complete all memory wiring steps listed above.' : ' Validate and export when done.'}`,
+    ...memorySteps,
+  );
+
+  const text = lines.join('\n');
+
+  removeWelcome();
+  addMessage('user', text);
+  conversationHistory.push({ role: 'user', content: text });
+  runChat();
 }
 
 function addMessage(role, text) {
@@ -1326,7 +1709,7 @@ function _buildClientRegistry(serverRegistry) {
 
   // Sections: prefer server data when it has items (server has fragments/groups from add_fragment/add_group);
   // fall back to client regState when server section is empty.
-  for (const key of [...SECTION_KEYS, ...extraSectionKeys]) {
+  for (const key of Object.keys(regState.sections)) {
     const serverSec = serverRegistry?.[key] || {};
     const clientSec = regState.sections[key] || { vars: [], items: [] };
     const serverHasItems = (serverSec.items || []).length > 0;
@@ -1417,7 +1800,10 @@ function openLoadModal() {
       const row = document.createElement('div');
       row.className = 'cb-load-row';
       const date = snap.savedAt ? new Date(snap.savedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
-      const secCount = Object.keys(snap.registry || {}).filter(k => SECTION_KEYS.includes(k)).length;
+      const secCount = Object.keys(snap.registry || {}).filter(k => {
+        const v = snap.registry[k];
+        return !META_KEYS.has(k) && v && typeof v === 'object' && Array.isArray(v.items);
+      }).length;
       row.innerHTML = `
         <div class="cb-load-row-main">
           <span class="cb-load-name">${escHtml(snap.name || 'Untitled')}</span>
@@ -1446,6 +1832,7 @@ function loadRegistrySnap(snap) {
 
   // reset all state first (rebuilds section cards too)
   resetConversation();
+  removeWelcome();
 
   // populate top-level regState
   regState.title       = reg.title || '';
@@ -1457,42 +1844,19 @@ function loadRegistrySnap(snap) {
   regState.style_blend   = reg.style_blend || {};
   regState.memory_rules  = reg.memory_rules || [];
 
-  // detect registry section keys not in SECTION_KEYS and create cards for them
-  const META_KEYS = new Set([
-    'version', 'title', 'description', 'assembly_order', 'default_state',
-    'generation', 'output_policy', 'memory_config', 'memory_rules', 'style_blend',
-  ]);
-  const knownKeys = new Set(SECTION_KEYS);
-  extraSectionKeys = Object.keys(reg).filter(
-    k => !META_KEYS.has(k) && !knownKeys.has(k) && reg[k] && typeof reg[k] === 'object' && Array.isArray(reg[k].items)
-  );
-  if (extraSectionKeys.length) {
-    const grid = document.getElementById('sections-grid');
-    for (const key of extraSectionKeys) {
-      regState.sections[key] = { vars: [], items: [] };
-      const card = document.createElement('div');
-      card.className = 'cb-section-card';
-      card.id = `sec-card-${key}`;
-      card.innerHTML = `
-        <div class="cb-section-name">${SECTION_LABELS[key] || key}</div>
-        <div class="cb-section-items" id="sec-items-${key}">
-          <span class="cb-sec-empty">Empty</span>
-        </div>
-        <div class="cb-section-vars" id="sec-vars-${key}"></div>
-      `;
-      card.onclick = () => openSectionDetail(key);
-      grid.appendChild(card);
-    }
+  // populate all section keys found in the registry (any non-meta key with an items array)
+  for (const [key, val] of Object.entries(reg)) {
+    if (META_KEYS.has(key)) continue;
+    if (!val || typeof val !== 'object' || !Array.isArray(val.items)) continue;
+    regState.sections[key] = {
+      vars:  val.template_vars || [],
+      items: val.items || [],
+    };
   }
 
-  // populate sections (buildSectionGrid already reset them to empty)
-  for (const key of [...SECTION_KEYS, ...extraSectionKeys]) {
-    const sec = reg[key];
-    if (!sec) continue;
-    regState.sections[key] = {
-      vars:  sec.template_vars || [],
-      items: sec.items || [],
-    };
+  buildSectionGrid();
+
+  for (const key of Object.keys(regState.sections)) {
     refreshSectionItems(key);
     refreshSectionVars(key);
   }
@@ -1518,8 +1882,52 @@ function loadRegistrySnap(snap) {
   // enable export
   document.getElementById('export-btn').disabled = false;
 
-  // post a system note in the chat so the user knows what was loaded
+  // post a system note in the chat
   addMessage('assistant', `Registry "${regState.title || 'Untitled'}" loaded. Describe what you'd like to change and I'll help you update it.`);
+
+  // import into a server draft so tool calls work, then inject context for the model
+  _importRegistryDraft(reg);
+}
+
+async function _importRegistryDraft(reg) {
+  try {
+    const resp = await fetch('/api/builder/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ registry: reg }),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.draft_id) {
+      draftId = data.draft_id;
+      updateDraftBadge(draftId);
+      document.getElementById('export-btn').disabled = false;
+    }
+  } catch {}
+
+  // inject a context summary into conversation history so the model knows the registry contents
+  const lines = [
+    `[Registry loaded — current state for your reference]`,
+    `Title: "${regState.title || 'Untitled'}"`,
+    `Draft ID: ${draftId || '(pending)'}`,
+    `Assembly order: ${regState.assembly.join(' → ') || '(none)'}`,
+    '',
+    'Sections:',
+  ];
+  for (const [key, sec] of Object.entries(regState.sections)) {
+    const label = SECTION_LABELS[key] || key;
+    const itemSummaries = sec.items.map(item => {
+      const id = item.id || item.name || '?';
+      const content = item.text || item.context || '';
+      return `    - ${id}: "${content.slice(0, 100)}${content.length > 100 ? '…' : ''}"`;
+    });
+    lines.push(`  ${label} (${sec.items.length} item${sec.items.length !== 1 ? 's' : ''}):`);
+    lines.push(...itemSummaries);
+  }
+  lines.push('', 'Make targeted edits using the builder tools. Do not recreate the registry from scratch.');
+
+  conversationHistory.push({ role: 'user', content: lines.join('\n') });
+  conversationHistory.push({ role: 'assistant', content: `Got it — I can see the full registry. What would you like to change?` });
 }
 
 function downloadExport() {
@@ -1545,20 +1953,13 @@ function resetConversation() {
   regState.assembly = []; regState.generation = {};
   regState.output_policy = {}; regState.memory_config = {};
   regState.style_blend = {}; regState.memory_rules = [];
-  extraSectionKeys = [];
-  for (const k of SECTION_KEYS) regState.sections[k] = { vars: [], items: [] };
+  Object.keys(regState.sections).forEach(k => delete regState.sections[k]);
 
   // close detail view if open
   closeSectionDetail();
 
   // reset DOM
-  document.getElementById('messages').innerHTML = `
-    <div class="cb-welcome">
-      <div class="cb-welcome-icon">✦</div>
-      <p class="cb-welcome-head">Build a registry through conversation.</p>
-      <p class="cb-welcome-sub">Describe the model you want to create — the assistant will ask the right questions and build the registry structure for you, one step at a time.</p>
-    </div>
-  `;
+  document.getElementById('messages').innerHTML = _intakeCardHTML();
   document.getElementById('draft-id-badge').hidden = true;
   document.getElementById('export-btn').disabled = true;
   document.getElementById('reg-title').textContent = 'Untitled';

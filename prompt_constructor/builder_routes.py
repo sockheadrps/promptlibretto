@@ -80,18 +80,18 @@ Rules:
 - Use user_message only as an assembly_order token; do not create a user_message section.
 - Required core sections are base_context, personas, sentiment, output_prompt_directions, and prompt_endings.
 - prompt_endings item should use name "endings" and may include items ["you say:"].
-- Use assembly_order field tokens like base_context.text, personas.context, sentiment.context, output_prompt_directions.text, memory_recall.text, prompt_endings.endings. Do not use bare section names.
+- Use assembly_order field tokens like base_context.text, personas.text, sentiment.text, output_prompt_directions.text, memory_recall.text, prompt_endings.endings. Do not use bare section names.
 - Valid generation keys only: max_prompt_chars, max_tokens, model, provider, repeat_penalty, retries, temperature, timeout_ms, top_k, top_p. Do not use presence_penalty or frequency_penalty.
 - For memory registries, add memory_recall with text "{memory_recall}", configure memory, add useful classifier rules, and include memory_recall.text in assembly_order.
-- Section field types: base_context → fields={"text": "..."}. personas/sentiment → fields={"context": "..."}. output_prompt_directions/static_injections/runtime_injections → fields={"text": "..."}. prompt_endings → fields={"name": "endings", "text": "..."}.
+- Section field types: base_context → fields={"text": "..."}. personas/sentiment/any custom section → fields={"text": "..."}. output_prompt_directions/static_injections/runtime_injections → fields={"text": "..."}. prompt_endings → fields={"name": "endings", "text": "..."}.
 - fields must contain the actual written prompt text for that section — never empty strings, never placeholders. Write real content based on what the user asked for.
 - Keep tool-call arguments compact and valid. After tool calls are applied, answer with a short summary of what was built.
 """
 
 _ASSEMBLY_TOKEN_ALIASES = {
     "base_context": "base_context.text",
-    "personas": "personas.context",
-    "sentiment": "sentiment.context",
+    "personas": "personas.text",
+    "sentiment": "sentiment.text",
     "static_injections": "static_injections.text",
     "runtime_injections": "runtime_injections.text",
     "output_prompt_directions": "output_prompt_directions.text",
@@ -165,6 +165,14 @@ def _normalize_tool_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
                 out["fields"] = fields
                 for key in fields:
                     out.pop(key, None)
+        # remap context → text for sections where text is the correct field name
+        # (personas and sentiment legitimately use context, so skip those)
+        _context_uses_text = {"base_context", "output_prompt_directions", "static_injections",
+                               "runtime_injections", "prompt_endings"}
+        fields = out.get("fields")
+        if (isinstance(fields, dict) and "context" in fields and "text" not in fields
+                and out.get("section_key") in _context_uses_text):
+            fields["text"] = fields.pop("context")
 
     if name == "registry.item.add_fragment":
         fragment = out.pop("fragment", None)
@@ -193,6 +201,15 @@ def _normalize_tool_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
         out["policy"] = out.pop("output_policy")
     if name == "registry.memory.configure" and "memory_config" in out and "config" not in out:
         out["config"] = out.pop("memory_config")
+
+    if name == "registry.draft.create":
+        out.pop("draft_id", None)
+        draft = out.pop("draft", None)
+        if isinstance(draft, dict):
+            out.setdefault("title", draft.get("registry_name") or draft.get("title") or draft.get("name"))
+            for key in ("description", "template"):
+                if key in draft:
+                    out.setdefault(key, draft[key])
 
     if name == "registry.assembly.set_order" and isinstance(out.get("order"), list):
         out["order"] = [_ASSEMBLY_TOKEN_ALIASES.get(token, token) for token in out["order"]]
@@ -429,7 +446,7 @@ _TOOLS: list[dict[str, Any]] = [
             "name": "registry.assembly.set_order",
             "description": (
                 "Set the assembly_order list. "
-                "Common tokens: base_context.text, personas.context, sentiment.context, "
+                "Common tokens: base_context.text, personas.text, sentiment.text, "
                 "memory_recall.text, user_message.text, output_prompt_directions.text, prompt_endings.text"
             ),
             "parameters": {
@@ -691,6 +708,17 @@ async def builder_session(req: BuilderSessionRequest) -> dict[str, Any]:
         "system_prompt": _BROWSER_BUILDER_PROMPT,
         "tools": _browser_tools(),
     }
+
+
+class ImportRegistryRequest(BaseModel):
+    registry: dict[str, Any]
+
+
+@router.post("/import")
+async def import_registry(req: ImportRegistryRequest) -> dict[str, Any]:
+    """Create a server-side draft from an existing registry JSON."""
+    result = api.draft_import(req.registry)
+    return result
 
 
 @router.post("/tool")

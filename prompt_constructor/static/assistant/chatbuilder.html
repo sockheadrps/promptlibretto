@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Manrope:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/chatbuilder.css" />
+  <link rel="stylesheet" href="/static/assistant/chatbuilder.css" />
 </head>
 <body>
 
@@ -54,10 +54,62 @@
       </div>
 
       <div class="cb-messages" id="messages">
-        <div class="cb-welcome">
-          <div class="cb-welcome-icon">✦</div>
-          <p class="cb-welcome-head">Build a registry through conversation.</p>
-          <p class="cb-welcome-sub">Describe the model you want to create — the assistant will ask the right questions and build the registry structure for you, one step at a time.</p>
+        <div class="cb-intake" id="intake-card">
+          <div class="cb-intake-head">
+            <div class="cb-welcome-icon">✦</div>
+            <p class="cb-intake-title">What are you building?</p>
+            <p class="cb-intake-sub">Fill in what you know — leave anything blank and the assistant will decide.</p>
+          </div>
+          <div class="cb-intake-fields">
+            <div class="cb-intake-field">
+              <label class="cb-intake-label" for="intake-idea">Registry idea <span class="cb-intake-req">required</span></label>
+              <textarea id="intake-idea" class="cb-intake-textarea" placeholder="Describe the scenario or model you want to build…" rows="3"></textarea>
+            </div>
+            <div class="cb-intake-row">
+              <div class="cb-intake-field">
+                <label class="cb-intake-label" for="intake-personas">Personas <span class="cb-intake-hint">who the model IS</span></label>
+                <input id="intake-personas" class="cb-intake-input" type="text" placeholder="e.g. friendly guide, strict coach" />
+              </div>
+              <div class="cb-intake-field">
+                <label class="cb-intake-label" for="intake-sentiment">Sentiment <span class="cb-intake-hint">tone or range</span></label>
+                <input id="intake-sentiment" class="cb-intake-input" type="text" placeholder="e.g. impressed, unimpressed" />
+              </div>
+            </div>
+            <div class="cb-intake-field">
+              <label class="cb-intake-label">Scene variations <span class="cb-intake-hint">who/what the model talks to — each becomes a static injection</span></label>
+              <div class="cb-intake-scene-list" id="intake-scene-list">
+                <div class="cb-intake-scene-row">
+                  <input class="cb-intake-input cb-intake-scene-input" type="text" placeholder="e.g. good prospect" />
+                  <button type="button" class="cb-intake-scene-remove" onclick="removeSceneRow(this)" style="display:none">×</button>
+                </div>
+              </div>
+              <button type="button" class="cb-intake-scene-add" onclick="addSceneRow()">+ Add variation</button>
+            </div>
+            <div class="cb-intake-row">
+              <div class="cb-intake-field cb-intake-field--narrow">
+                <label class="cb-intake-label">Memory system</label>
+                <label class="cb-intake-toggle-row">
+                  <span class="cb-intake-toggle">
+                    <input type="checkbox" id="intake-memory" />
+                  </span>
+                  <span class="cb-intake-toggle-label">Include memory</span>
+                </label>
+              </div>
+              <div class="cb-intake-field">
+                <label class="cb-intake-label">Extra sections <span class="cb-intake-hint">optional</span></label>
+                <div class="cb-intake-chips">
+                  <label class="cb-intake-chip"><input type="checkbox" value="runtime_injections" /> Runtime inject</label>
+                </div>
+              </div>
+            </div>
+            <div class="cb-intake-field">
+              <label class="cb-intake-label" for="intake-notes">Additional notes <span class="cb-intake-hint">optional</span></label>
+              <textarea id="intake-notes" class="cb-intake-textarea cb-intake-textarea--sm" placeholder="Anything else the assistant should know…" rows="2"></textarea>
+            </div>
+          </div>
+          <div class="cb-intake-actions">
+            <button type="button" class="cb-intake-submit" onclick="submitIntake()">Start Building →</button>
+          </div>
         </div>
       </div>
 
@@ -162,7 +214,7 @@
     </div>
   </div>
 
-  <script type="module" src="/static/session.js"></script>
-  <script src="/static/chatbuilder.js"></script>
+  <script type="module" src="/static/shared/session.js"></script>
+  <script src="/static/assistant/chatbuilder.js"></script>
 </body>
 </html>

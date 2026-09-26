@@ -7,6 +7,7 @@ Import this from mcp_registry_server.py — no MCP dependencies here.
 """
 from __future__ import annotations
 
+import copy
 import uuid
 from typing import Any
 
@@ -17,6 +18,7 @@ KNOWN_SECTIONS: tuple[str, ...] = (
     "static_injections",
     "runtime_injections",
     "output_prompt_directions",
+    "memory_recall",
     "prompt_endings",
 )
 
@@ -101,12 +103,33 @@ def draft_reset(draft_id: str) -> dict[str, Any]:
     return {"draft_id": draft_id, "reset": True}
 
 
+def draft_import(registry: dict[str, Any]) -> dict[str, Any]:
+    """Import an existing registry JSON into a new draft. Returns {draft_id}."""
+    draft_id = str(uuid.uuid4())[:8]
+    reg = _initial_registry()
+    for field in ("title", "description", "assembly_order", "generation",
+                  "output_policy", "memory_config", "style_blend", "memory_rules", "default_state"):
+        if field in registry:
+            reg[field] = copy.deepcopy(registry[field])
+    for key in KNOWN_SECTIONS:
+        if key in registry:
+            src = registry[key]
+            reg[key] = {
+                "required": key in REQUIRED_SECTIONS,
+                "template_vars": list(src.get("template_vars") or []),
+                "items": copy.deepcopy(src.get("items") or []),
+            }
+    _drafts[draft_id] = reg
+    return {"draft_id": draft_id}
+
+
 def draft_validate(draft_id: str) -> dict[str, Any]:
     """Validate the draft. Returns {ok, errors, warnings}."""
     reg = _get(draft_id)
     errors: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
 
+    # required sections must have items
     for sec_key in REQUIRED_SECTIONS:
         if not reg.get(sec_key, {}).get("items"):
             errors.append({
@@ -114,23 +137,75 @@ def draft_validate(draft_id: str) -> dict[str, Any]:
                 "message": "Required section has no items.",
             })
 
+    # assembly order tokens must reference known sections and use correct format
+    seen_section_tokens: dict[str, str] = {}
     for token in reg.get("assembly_order", []):
-        sec = token.split(".")[0]
+        parts = token.split(".")
+        sec = parts[0]
         if sec not in KNOWN_SECTIONS:
             warnings.append({
                 "path": "assembly_order",
                 "message": f"Token '{token}' references unknown section '{sec}'.",
             })
+        elif len(parts) == 3:
+            errors.append({
+                "path": "assembly_order",
+                "message": (
+                    f"Token '{token}' incorrectly includes an item ID. "
+                    f"Use '{sec}.{parts[2]}' instead — the selected item is "
+                    f"determined by default_state, not the token."
+                ),
+            })
+        elif token in seen_section_tokens:
+            warnings.append({
+                "path": "assembly_order",
+                "message": f"Duplicate token '{token}' in assembly_order.",
+            })
+        else:
+            seen_section_tokens[token] = sec
 
+    # default_state selected items must exist in their sections
+    default_state = reg.get("default_state", {})
+    for sec_key, state in default_state.items():
+        selected = state.get("selected")
+        if not selected:
+            continue
+        sec = reg.get(sec_key, {})
+        item_ids = {item.get("id") or item.get("name") for item in sec.get("items", [])} - {None}
+        if item_ids and selected not in item_ids:
+            errors.append({
+                "path": f"default_state.{sec_key}.selected",
+                "message": (
+                    f"Selected item '{selected}' does not exist in section '{sec_key}'. "
+                    f"Available item IDs: {sorted(item_ids)}. "
+                    f"Fix with registry.draft.set_default_state or registry.item.update."
+                ),
+            })
+
+    # items should have non-empty content
     for sec_key in KNOWN_SECTIONS:
         sec = reg.get(sec_key, {})
         tvars = set(sec.get("template_vars", []))
         for item in sec.get("items", []):
+            item_id = item.get("id") or item.get("name") or "?"
+            content = item.get("text") or item.get("context") or ""
+            has_groups = bool(item.get("groups"))
+            has_fragments = bool(item.get("fragments"))
+            if not str(content).strip() and not has_groups and not has_fragments:
+                field = "context" if sec_key in ("personas", "sentiment") else "text"
+                warnings.append({
+                    "path": f"{sec_key}.items[{item_id}]",
+                    "message": (
+                        f"Item '{item_id}' in '{sec_key}' has empty content. "
+                        f"Call registry.item.update with field='{field}' to add content."
+                    ),
+                })
+            # fragment condition vars
             for frag in item.get("fragments", []):
                 cond = frag.get("condition", "")
                 if cond and cond not in tvars:
                     warnings.append({
-                        "path": f"{sec_key}.items[{item.get('id', item.get('name', '?'))}].fragments",
+                        "path": f"{sec_key}.items[{item_id}].fragments",
                         "message": f"Fragment condition '{cond}' not declared in section template_vars.",
                     })
 
@@ -240,11 +315,17 @@ def section_add_item(
             if opt in fields:
                 item[opt] = fields[opt]
     elif section_key == "personas":
-        item = {"id": item_id, "context": fields.get("context", "")}
+        ctx = fields.get("context") or fields.get("text") or ""
+        item = {"id": item_id}
+        if ctx:
+            item["context"] = ctx
         if "groups" in fields:
             item["groups"] = fields["groups"]
     elif section_key == "sentiment":
-        item = {"id": item_id, "context": fields.get("context", "")}
+        ctx = fields.get("context") or fields.get("text") or ""
+        item = {"id": item_id}
+        if ctx:
+            item["context"] = ctx
         if "groups" in fields:
             item["groups"] = fields["groups"]
         if "scale" in fields:
@@ -258,7 +339,19 @@ def section_add_item(
         item.update({k: v for k, v in fields.items() if k != "id"})
 
     sec["items"].append(item)
-    return {"section": section_key, "item": item}
+
+    content_value = item.get("text") or item.get("context") or ""
+    warning = (
+        f"WARNING: item '{item_id}' was added to '{section_key}' with empty content. "
+        f"Call registry.item.update with the correct content field "
+        f"({'context' if section_key in ('personas', 'sentiment') else 'text'}) "
+        f"before exporting."
+    ) if not str(content_value).strip() else None
+
+    result: dict[str, Any] = {"section": section_key, "item": item}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 # ── item ─────────────────────────────────────────────────────────────────────
@@ -276,6 +369,10 @@ def item_update(
         raise KeyError(f"Item '{item_id}' not found in section '{section_key}'.")
     if "template_vars" in fields:
         fields["template_vars"] = [_normalize_var(v) for v in fields["template_vars"]]
+    # for sections that use context as the content field, remap text → context
+    if section_key in ("personas", "sentiment") and "text" in fields and "context" not in fields:
+        fields = dict(fields)
+        fields["context"] = fields.pop("text")
     for k, v in fields.items():
         if k not in ("id", "name"):
             item[k] = v
@@ -369,16 +466,29 @@ def group_add_item(draft_id: str, group_id: str, directive: str) -> dict[str, An
 def assembly_set_order(draft_id: str, order: list[str]) -> dict[str, Any]:
     """Set the assembly_order list."""
     reg = _get(draft_id)
-    reg["assembly_order"] = list(order)
+    normalized = []
+    for token in order:
+        parts = token.split(".")
+        # collapse section.item_id.attribute → section.attribute
+        if len(parts) == 3 and parts[0] in KNOWN_SECTIONS:
+            token = f"{parts[0]}.{parts[2]}"
+        normalized.append(token)
+    # deduplicate while preserving order
+    seen: set[str] = set()
+    deduped = [t for t in normalized if not (t in seen or seen.add(t))]  # type: ignore[func-returns-value]
+    reg["assembly_order"] = deduped
     return {"assembly_order": reg["assembly_order"]}
 
 
 # ── generation ───────────────────────────────────────────────────────────────
 
+_GENERATION_KEYS = {"temperature", "top_p", "top_k", "max_tokens", "repeat_penalty", "retries"}
+
 def generation_set(draft_id: str, params: dict[str, Any]) -> dict[str, Any]:
     """Merge generation params (temperature, top_p, top_k, max_tokens, repeat_penalty, retries)."""
     reg = _get(draft_id)
-    reg["generation"].update(params)
+    filtered = {k: v for k, v in (params or {}).items() if k in _GENERATION_KEYS}
+    reg["generation"].update(filtered)
     return {"generation": reg["generation"]}
 
 

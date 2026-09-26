@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Manrope:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/stylev2.css" />
+  <link rel="stylesheet" href="/static/shared/stylev2.css" />
 </head>
 <body>
   <header>
@@ -182,6 +182,11 @@
           <button class="help" type="button" data-help="output">?</button>
           <span class="spacer"></span>
           <div class="gen-controls">
+            <label class="switch" title="enable memory pipeline">
+              <input id="memory-toggle" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+              <span class="switch-label">memory</span>
+            </label>
             <label class="switch" title="stream tokens as they arrive" hidden>
               <input id="stream-toggle" type="checkbox" />
               <span class="switch-track"><span class="switch-thumb"></span></span>
@@ -200,6 +205,10 @@
         </div>
       </header>
       <div id="tvar-warning" class="tvar-warning" hidden></div>
+      <div id="user-input-row" class="user-input-row" hidden>
+        <label class="user-input-label" for="user-input-test">User input <span class="muted">(test)</span></label>
+        <textarea id="user-input-test" class="user-input-test" rows="2" placeholder="Type the user's message for this test run…"></textarea>
+      </div>
       <nav class="output-tabs" role="tablist">
         <div class="output-tab" data-output-tab="output" role="tab" aria-selected="true">Output</div>
         <div class="output-tab" data-output-tab="stage" role="tab" aria-selected="false">Pre-generate <span id="stage-tab-badge" class="muted" hidden>· staged</span></div>
@@ -232,49 +241,46 @@
               <div class="pipeline-step" id="pipe-input-step">
                 <div class="pipeline-node"></div>
                 <div class="pipeline-connector"></div>
-                <div class="pipeline-step-content">
-                  <div class="pipeline-step-label">Message</div>
+                <details class="pipeline-step-content" open>
+                  <summary class="pipeline-step-label">Message</summary>
                   <div id="pipe-input-body" class="pipeline-step-body"></div>
-                </div>
+                </details>
               </div>
 
               <div class="pipeline-step" id="pipe-chunks-step">
                 <div class="pipeline-node"></div>
                 <div class="pipeline-connector"></div>
-                <div class="pipeline-step-content">
-                  <div class="pipeline-step-label">Memory Retrieval <span id="pipe-chunks-meta" class="pipeline-meta muted"></span></div>
+                <details class="pipeline-step-content" open>
+                  <summary class="pipeline-step-label">Memory Retrieval <span id="pipe-chunks-meta" class="pipeline-meta muted"></span></summary>
                   <div id="pipe-chunks-body" class="pipeline-step-body"></div>
-                </div>
+                </details>
               </div>
 
               <div class="pipeline-step" id="pipe-tags-step">
                 <div class="pipeline-node"></div>
                 <div class="pipeline-connector"></div>
-                <div class="pipeline-step-content">
-                  <div class="pipeline-step-label">Classifier <span id="pipe-tags-meta" class="pipeline-meta muted"></span></div>
+                <details class="pipeline-step-content" open>
+                  <summary class="pipeline-step-label">Classifier <span id="pipe-tags-meta" class="pipeline-meta muted"></span></summary>
                   <div id="pipe-tags-body" class="pipeline-step-body"></div>
-                </div>
+                </details>
               </div>
 
               <div class="pipeline-step" id="pipe-rules-step">
                 <div class="pipeline-node"></div>
                 <div class="pipeline-connector"></div>
-                <div class="pipeline-step-content">
-                  <div class="pipeline-step-label">Rules Applied <span id="pipe-rules-meta" class="pipeline-meta muted"></span></div>
+                <details class="pipeline-step-content" open>
+                  <summary class="pipeline-step-label">Rules Applied <span id="pipe-rules-meta" class="pipeline-meta muted"></span></summary>
                   <div id="pipe-rules-body" class="pipeline-step-body"></div>
-                </div>
+                </details>
               </div>
 
               <div class="pipeline-step" id="pipe-prompt-step">
                 <div class="pipeline-node"></div>
                 <div class="pipeline-connector"></div>
-                <div class="pipeline-step-content">
-                  <div class="pipeline-step-label">
-                    Assembled Prompt
-                    <button id="pipe-prompt-toggle" type="button" class="ghost small">show</button>
-                  </div>
-                  <div id="pipe-prompt-body" class="pipeline-step-body pipeline-prompt-body" hidden></div>
-                </div>
+                <details class="pipeline-step-content">
+                  <summary class="pipeline-step-label">Assembled Prompt</summary>
+                  <div id="pipe-prompt-body" class="pipeline-step-body pipeline-prompt-body"></div>
+                </details>
               </div>
 
               <div class="pipeline-step pipeline-step--final" id="pipe-response-step">
@@ -593,6 +599,6 @@
     </div>
   </div>
 
-  <script type="module" src="/static/appv2.js"></script>
+  <script type="module" src="/static/studio/appv2.js"></script>
 </body>
 </html>

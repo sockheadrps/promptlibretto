@@ -1,4 +1,4 @@
-const MEMORY_ENABLED = localStorage.getItem('promptlibretto.memory-enabled.v1') === 'true';
+let memoryEnabled = localStorage.getItem('promptlibretto.memory-enabled.v1') === 'true';
 
 // promptlibretto studio — registry client.
 //
@@ -7,14 +7,14 @@ const MEMORY_ENABLED = localStorage.getItem('promptlibretto.memory-enabled.v1') 
 // user's local Ollama (browser-direct). Server is only used as a thin
 // proxy through `/api/registry/*` if needed.
 
-import { mountWorkspaceChip } from "/static/session.js";
-import { mountConnectionChip, getConnection } from "/static/connection.js";
+import { mountWorkspaceChip } from "/static/shared/session.js";
+import { mountConnectionChip, getConnection } from "/static/shared/connection.js";
 import {
   extractFinishReason,
   extractUsage,
   generate as ollamaGenerate,
   streamGenerate,
-} from "/static/ollama_client.js";
+} from "/static/shared/ollama_client.js";
 
 const $ = (id) => document.getElementById(id);
 const STUDIO_INBOX_KEY = "pl-studio-handoff-v1";
@@ -58,6 +58,9 @@ function normalizeRegistryTemplateVars(reg) {
     }
     for (const item of Array.isArray(sec.items) ? sec.items : []) {
       if (!item || typeof item !== "object") continue;
+      // Mirror backend Section.from_dict() normalizations so pasted JSON works the same.
+      if (item.name !== undefined && item.id === undefined) { item.id = item.name; delete item.name; }
+      if (item.context !== undefined && item.text === undefined) { item.text = item.context; delete item.context; }
       if (Array.isArray(item.template_vars)) {
         item.template_vars = Array.from(
           new Set(item.template_vars.map(normalizeTemplateVarName).filter(Boolean))
@@ -320,14 +323,25 @@ function renderMarkdown(text) {
       continue;
     }
 
-    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      const level = heading[1].length;
-      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
-      continue;
+    if (lines.length === 1) {
+      const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+      if (heading) {
+        html.push(`<h${heading[1].length}>${renderInlineMarkdown(heading[2])}</h${heading[1].length}>`);
+        continue;
+      }
     }
 
-    html.push(`<p>${lines.map(renderInlineMarkdown).join("<br>")}</p>`);
+    // Mixed block: process line-by-line so headings within a paragraph block still render.
+    let paraLines = [];
+    const flushPara = () => {
+      if (paraLines.length) { html.push(`<p>${paraLines.map(renderInlineMarkdown).join("<br>")}</p>`); paraLines = []; }
+    };
+    for (const line of lines) {
+      const h = line.trim().match(/^(#{1,6})\s+(.+)$/);
+      if (h) { flushPara(); html.push(`<h${h[1].length}>${renderInlineMarkdown(h[2])}</h${h[1].length}>`); }
+      else { paraLines.push(line); }
+    }
+    flushPara();
   }
 
   return html.join("");
@@ -444,12 +458,12 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     ],
     personas: [
       { field: "id", label: "ID", type: "text" },
-      { field: "context", label: "Context", type: "textarea" },
+      { field: "text", label: "Text", type: "textarea" },
       { field: "groups", label: "Groups", type: "group-ids" },
     ],
     sentiment: [
       { field: "id", label: "ID", type: "text" },
-      { field: "context", label: "Context", type: "textarea" },
+      { field: "text", label: "Text", type: "textarea" },
       { field: "groups", label: "Groups", type: "group-ids" },
     ],
     groups: [
@@ -469,16 +483,17 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       { field: "required", label: "Required", type: "bool" },
     ],
     output_prompt_directions: [
-      { field: "name", label: "Name", type: "text" },
+      { field: "id", label: "ID", type: "text" },
       { field: "text", label: "Text", type: "textarea" },
       { field: "items", label: "Pool items", type: "lines" },
     ],
     examples: [
-      { field: "name", label: "Name", type: "text" },
+      { field: "id", label: "ID", type: "text" },
       { field: "items", label: "Items", type: "lines" },
     ],
     prompt_endings: [
-      { field: "name", label: "Name", type: "text" },
+      { field: "id", label: "ID", type: "text" },
+      { field: "text", label: "Text", type: "textarea" },
       { field: "items", label: "Items", type: "lines" },
     ],
   };
@@ -490,6 +505,9 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     "working_notes",
     "emotional_state",
   ]);
+  // user_input is handled by the dedicated test field in the Output panel,
+  // not by the section tvar inputs — exclude from the missing-tvar warning.
+  const USER_PROMPT_VARS = new Set(["user_input"]);
 
   function collectMissingTvars() {
     if (!registry) return [];
@@ -498,12 +516,48 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       if (!sec || !Array.isArray(sec.template_vars)) continue;
       for (const v of sec.template_vars) {
         const bare = normalizeTemplateVarName(v);
-        if (RUNTIME_INJECTED_VARS.has(bare)) continue;
+        if (RUNTIME_INJECTED_VARS.has(bare) || USER_PROMPT_VARS.has(bare)) continue;
         const val = (tvarValues[`${secKey}::${bare}`] || "").trim();
         if (!val) missing.push({ section: secKey, varName: templateVarToken(bare) });
       }
     }
     return missing;
+  }
+
+  function refreshUserInputRow() {
+    const row = document.getElementById("user-input-row");
+    if (!row) return;
+
+    // Find every section that declares user_input as a template var.
+    const userInputKeys = [];
+    if (registry) {
+      for (const [secKey, sec] of Object.entries(registry)) {
+        if (!sec || !Array.isArray(sec.template_vars)) continue;
+        for (const v of sec.template_vars) {
+          if (normalizeTemplateVarName(v) === "user_input") {
+            userInputKeys.push(`${secKey}::user_input`);
+          }
+        }
+      }
+    }
+
+    if (!userInputKeys.length) { row.hidden = true; return; }
+    row.hidden = false;
+
+    const textarea = document.getElementById("user-input-test");
+    if (!textarea) return;
+
+    // Seed from tvarValues if any section already has a stored value.
+    const existing = userInputKeys.map(k => tvarValues[k] || "").find(v => v);
+    if (existing && !textarea.value) textarea.value = existing;
+
+    // Sync textarea → tvarValues for all matching section keys.
+    textarea.oninput = () => {
+      for (const k of userInputKeys) tvarValues[k] = textarea.value;
+      showTvarWarning(collectMissingTvars());
+    };
+    // Apply current textarea value to tvarValues immediately.
+    for (const k of userInputKeys) tvarValues[k] = textarea.value;
   }
 
   function showTvarWarning(missing) {
@@ -720,6 +774,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         const sel = host.querySelector(`select[data-section="${key}"]`);
         const id = sel ? sel.value : null;
         if (id === "__random__") { s[key] = null; continue; }
+        if (id === "__all__") { s[key] = sec.items; continue; }
         s[key] = sec.items.find((it) => (it.id || it.name) === id) || null;
       } else {
         const checked = Array.from(
@@ -834,7 +889,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
   // Edits write straight back to the underlying registry item.
   function renderItemEditor(item, sectionKey) {
     const schema = ITEM_SCHEMA[sectionKey] || [
-      { field: "name", label: "Name", type: "text" },
+      { field: "id", label: "ID", type: "text" },
       { field: "text", label: "Text", type: "textarea" },
     ];
     const itemId = item.id || item.name || "";
@@ -1251,7 +1306,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     if (tuningEmptyEl) tuningEmptyEl.hidden = true;
 
     for (const key of sectionKeys()) {
-      if (key === 'memory_recall' && !MEMORY_ENABLED) continue;
+      if (key === 'memory_recall' && !memoryEnabled) continue;
       const sec = registry[key];
       const label = SECTION_LABELS[key] || key;
       const hasItems = (sec.items || []).length > 0;
@@ -1308,11 +1363,15 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       } else {
         const itemCount = Array.isArray(sec.items) ? sec.items.length : 0;
         const showRandom = sectionRandomEligible(key) && itemCount > 1;
+        const allOpt = itemCount > 1
+          ? `<option value="__all__">— use all —</option>`
+          : "";
         const randomOpt = showRandom
-          ? `<option value="__random__"${sectionRandom[key] ? " selected" : ""}>— random at run time —</option>`
+          ? `<option value="__random__">— random at run time —</option>`
           : "";
         inputHtml =
           `<select data-section="${escapeHtml(key)}">` +
+          allOpt +
           randomOpt +
           sec.items
             .map((it, idx) => {
@@ -1361,6 +1420,14 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
                 `<div class="registry-tvar-row registry-tvar-row--runtime">` +
                 `<span class="registry-tvar-name">${escapeHtml(templateVarToken(bare))}</span>` +
                 `<span class="registry-tvar-runtime-badge">runtime</span>` +
+                `</div>`
+              );
+            }
+            if (USER_PROMPT_VARS.has(bare)) {
+              return (
+                `<div class="registry-tvar-row registry-tvar-row--runtime">` +
+                `<span class="registry-tvar-name">${escapeHtml(templateVarToken(bare))}</span>` +
+                `<span class="registry-tvar-runtime-badge">test field ↑</span>` +
                 `</div>`
               );
             }
@@ -1458,16 +1525,6 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
           if (slider) slider.disabled = el.checked;
         });
       });
-      host.querySelectorAll("input[data-scale-template]").forEach((el) => {
-        el.addEventListener("input", () => {
-          if (!registry.sentiment) return;
-          if (el.value.trim()) {
-            registry.sentiment.scale_template = el.value;
-          } else {
-            delete registry.sentiment.scale_template;
-          }
-        });
-      });
     }
 
     refreshSectionPreviews();
@@ -1554,6 +1611,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     applyGenOverridesToInputs(registry.generation || {});
     populatePolicyEditor(registry.output_policy || {});
     buildControls();
+    refreshUserInputRow();
     const loadedSelections = { ...bakedSelections };
     defaultArrayModesForSelection(loadedSelections);
     applySelections(loadedSelections);
@@ -1735,8 +1793,8 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     examplesModal.hidden = false;
     try {
       const examples = await fetchExampleManifest(
-        "/static/builder-examples/index.json",
-        "/static/builder-examples",
+        "/static/builder/examples/index.json",
+        "/static/builder/examples",
         "Example"
       );
       if (!examples.length) {
@@ -1863,7 +1921,12 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       const host = containerFor(key);
       if (sec.required) {
         const sel = host.querySelector(`select[data-section="${key}"]`);
-        sels[key] = sel ? sel.value : null;
+        const val = sel ? sel.value : null;
+        if (val === "__all__") {
+          sels[key] = sec.items.map(it => it.id || it.name || "").filter(Boolean);
+        } else {
+          sels[key] = val;
+        }
       } else {
         sels[key] = Array.from(
           host.querySelectorAll(`input[data-section="${key}"]:checked`)
@@ -1885,7 +1948,17 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         });
       } else if (val != null) {
         const sel = host.querySelector(`select[data-section="${key}"]`);
-        if (sel) sel.value = sectionRandom[key] ? "__random__" : val;
+        if (sel) {
+          if (sectionRandom[key]) {
+            sel.value = "__random__";
+          } else if (Array.isArray(val)) {
+            // If every item in the section is selected, restore __all__; otherwise pick first.
+            const allIds = (registry[key]?.items || []).map(it => it.id || it.name || "").filter(Boolean);
+            sel.value = allIds.length && allIds.every(id => val.includes(id)) ? "__all__" : (val[0] || "");
+          } else {
+            sel.value = val;
+          }
+        }
       }
     }
   }
@@ -2302,7 +2375,10 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       const prefix = key + "::";
       const tvars = {};
       for (const [k, v] of Object.entries(tvarValues)) {
-        if (k.startsWith(prefix)) tvars[k.slice(prefix.length)] = v;
+        if (!k.startsWith(prefix)) continue;
+        const bare = k.slice(prefix.length);
+        if (USER_PROMPT_VARS.has(bare)) continue;
+        tvars[bare] = v;
       }
       if (Object.keys(tvars).length) sec.template_vars = tvars;
       if (Object.keys(sec).length) sections[key] = sec;
@@ -2353,7 +2429,8 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       rules.length > 0 ||
       !!cfg.working_notes_enabled ||
       !!cfg.system_summary_enabled ||
-      !!(cfg.personality_file && String(cfg.personality_file).trim())
+      !!(cfg.personality_file && String(cfg.personality_file).trim()) ||
+      !!registry.memory_recall
     );
   }
 
@@ -2374,7 +2451,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     const resetBtn         = $("memory-reset-btn");
     const memCfgFieldset   = $("memory-config-fieldset");
     const infoPanelEl      = $("memory-info-panel");
-    const active           = MEMORY_ENABLED && hasMemoryRules();
+    const active           = memoryEnabled && hasMemoryRules();
 
     if (memPipeline)    memPipeline.hidden    = !active;
     if (normalOutput)   normalOutput.hidden   =  active;
@@ -2616,19 +2693,10 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
     }
     setStepActive("pipe-rules-step", rules.length > 0);
 
-    // 5. Assembled Prompt (collapsible toggle)
-    const promptBody   = $("pipe-prompt-body");
-    const promptToggle = $("pipe-prompt-toggle");
+    // 5. Assembled Prompt (collapsed by default via <details>)
+    const promptBody = $("pipe-prompt-body");
     if (promptBody) {
       promptBody.textContent = result.prompt || "(none)";
-      promptBody.hidden = true;
-    }
-    if (promptToggle) {
-      promptToggle.textContent = "show";
-      promptToggle.onclick = () => {
-        const hidden = promptBody.hidden = !promptBody.hidden;
-        promptToggle.textContent = hidden ? "show" : "hide";
-      };
     }
     setStepActive("pipe-prompt-step", true);
 
@@ -2666,6 +2734,19 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
         memResetBtn.textContent = "Reset Session";
         memResetBtn.disabled = false;
       }
+    });
+  }
+
+  // ── Use-memory toggle ─────────────────────────────────────────────
+
+  const memToggleEl = $("memory-toggle");
+  if (memToggleEl) {
+    memToggleEl.checked = memoryEnabled;
+    memToggleEl.addEventListener("change", () => {
+      memoryEnabled = memToggleEl.checked;
+      localStorage.setItem('promptlibretto.memory-enabled.v1', memoryEnabled ? 'true' : 'false');
+      buildControls();
+      refreshMemoryUI();
     });
   }
 
@@ -2823,7 +2904,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
       syncPolicyEditorToRegistry();
 
       // — Memory pipeline path —
-      if (MEMORY_ENABLED && hasMemoryRules()) {
+      if (memoryEnabled && hasMemoryRules()) {
         const userInputKey = Object.keys(tvarValues).find(k => k.endsWith("::user_input"));
         const userInput = userInputKey ? (tvarValues[userInputKey] || "").trim() : "";
 
@@ -2946,7 +3027,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
                 payload_shape: conn.payloadShape || conn.payload_shape || "auto",
                 model:         conn.model        || "default",
               },
-              session_id:    _memorySessionId,
+              session_id:    isMemoryRecallSelected() ? _memorySessionId : null,
               ws_session_id: wsSessionId,
               generation_overrides: overrides,
               skip_retrieval: !isMemoryRecallSelected(),
@@ -2954,7 +3035,7 @@ document.querySelectorAll("label.switch[hidden], .gen-controls-sep[hidden]").for
           });
           if (!resp.ok) throw new Error(await resp.text());
           const result = await resp.json();
-          _memorySessionId = result.session_id;
+          if (isMemoryRecallSelected()) _memorySessionId = result.session_id;
 
           // Render the full pipeline flow in the Output tab
           renderMemoryPipeline(userInput, result);

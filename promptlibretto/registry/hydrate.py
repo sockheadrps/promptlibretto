@@ -21,17 +21,6 @@ from typing import Any, Optional, Union
 from .model import Registry
 from .state import RegistryState, SectionState
 
-# Per-section primary text field for bare "section_id" tokens.
-PRIMARY_FIELD: dict[str, str] = {
-    "base_context": "text",
-    "personas": "context",
-    "sentiment": "context",
-    "static_injections": "text",
-    "runtime_injections": "text",
-    "output_prompt_directions": "text",
-    "prompt_endings": "text",
-}
-
 # Fields whose list items get a ``pre_context`` heading when rendered.
 PRE_CONTEXT_FIELDS: frozenset[str] = frozenset({"items"})
 
@@ -143,7 +132,7 @@ def _make_working_state(reg: Registry, state: RegistryState) -> RegistryState:
         sel_id = sec_state.selected if isinstance(sec_state.selected, str) else None
         item: Optional[dict[str, Any]] = None
         if sel_id:
-            item = next((it for it in sec.items if (it.get("id") or it.get("name")) == sel_id), None)
+            item = next((it for it in sec.items if it.get("id") == sel_id), None)
         if item is None and sec.required and sec.items:
             item = sec.items[0]
         defaults: dict[str, str] = dict(item.get("template_defaults") or {}) if item else {}
@@ -315,17 +304,17 @@ def _evaluate_selection(
         return rng.choice(sec.items)
 
     sel = sec_state.selected
+    if isinstance(sel, list):
+        matched = [it for it in sec.items if (it.get("id") or it.get("name")) in sel]
+        if matched:
+            return matched
+        # list was given but nothing matched — fall through to default below
     if sec.required:
         if isinstance(sel, str):
             for it in sec.items:
                 if (it.get("id") or it.get("name")) == sel:
                     return it
         return sec.items[0]
-    if isinstance(sel, list):
-        return [
-            it for it in sec.items
-            if (it.get("id") or it.get("name")) in sel
-        ]
     return []
 
 
@@ -348,7 +337,7 @@ def _resolve_groups_struct(
             if isinstance(gid_or_obj, dict):
                 # Inline group object — owns its own definition
                 group_item: Optional[dict[str, Any]] = gid_or_obj
-                gid = gid_or_obj.get("id") or gid_or_obj.get("name") or ""
+                gid = gid_or_obj.get("id") or ""
             else:
                 # String ID — look up in the top-level groups index
                 gid = gid_or_obj
@@ -369,9 +358,9 @@ def _resolve_groups_struct(
 
 
 def _resolve_scale_struct(
-    sel: Any, state: RegistryState, rng: _random.Random
+    sel: Any, sec_key: str, state: RegistryState, rng: _random.Random
 ) -> Optional[dict[str, Any]]:
-    """Render ``sentiment.scale`` (or any ``section.scale`` token)."""
+    """Render a ``section.scale`` token for any scalable section."""
     if not sel or isinstance(sel, list):
         return None
     scale_dict: dict[str, Any] = sel.get("scale") or {}
@@ -392,7 +381,7 @@ def _resolve_scale_struct(
         scale_dict.get("template")
         or "{label}: {value}/{max_value} — {scale_descriptor}."
     )
-    sec_state = state.get("sentiment")
+    sec_state = state.get(sec_key)
     if sec_state.slider_random or scale_dict.get("randomize"):
         value = rng.uniform(min_val, max_val)
     elif sec_state.slider is not None:
@@ -406,7 +395,7 @@ def _resolve_scale_struct(
         .replace("{label}", label)
         .replace("{max_value}", str(int(max_val)))
     )
-    return {"kind": "plain", "text": text, "section": "sentiment"}
+    return {"kind": "plain", "text": text, "section": sec_key}
 
 
 def _resolve_token_struct(
@@ -444,7 +433,7 @@ def _resolve_token_struct(
             return None
         sec = reg.sections[sec_key]
         match = next(
-            (it for it in sec.items if (it.get("id") or it.get("name")) == inner_expr),
+            (it for it in sec.items if it.get("id") == inner_expr),
             None,
         )
         if not match:
@@ -461,7 +450,7 @@ def _resolve_token_struct(
             return _list_struct(
                 match["items"], _get_pre_context(match), sec_key, "items", state, rng
             )
-        return _field_struct(match, PRIMARY_FIELD.get(sec_key, "text"), sec_key, state, rng)
+        return _field_struct(match, "text", sec_key, state, rng)
 
     # ── section or section.field ──────────────────────────────────
     parts = token.split(".")
@@ -473,21 +462,21 @@ def _resolve_token_struct(
     if len(parts) == 1:
         if isinstance(sel, list):
             structs = [
-                _field_struct(it, PRIMARY_FIELD.get(sec_key, "text"), sec_key, state, rng)
+                _field_struct(it, "text", sec_key, state, rng)
                 for it in sel
             ]
             return _combine_structs(structs, sec_key)
         if sel:
             if isinstance(sel.get("items"), list):
                 return _resolve_item_with_items(sel, sec_key, state, rng)
-            return _field_struct(sel, PRIMARY_FIELD.get(sec_key, "text"), sec_key, state, rng)
+            return _field_struct(sel, "text", sec_key, state, rng)
         return None
 
     sub = ".".join(parts[1:])
 
     # ── section.scale ─────────────────────────────────────────────
     if sub == "scale":
-        s = _resolve_scale_struct(sel, state, rng)
+        s = _resolve_scale_struct(sel, sec_key, state, rng)
         if s:
             s["section"] = sec_key
         return s
@@ -511,12 +500,12 @@ def _resolve_token_struct(
     # fallback: look for item with that id/name in the section
     sec = reg.sections[sec_key]
     pool = next(
-        (it for it in sec.items if (it.get("id") or it.get("name")) == sub), None
+        (it for it in sec.items if it.get("id") == sub), None
     )
     if pool:
         if isinstance(pool.get("items"), list):
             return _resolve_item_with_items(pool, sec_key, state, rng)
-        return _field_struct(pool, PRIMARY_FIELD.get(sec_key, "text"), sec_key, state, rng)
+        return _field_struct(pool, "text", sec_key, state, rng)
     # fallback: pool-shaped selected item
     if sel and not isinstance(sel, list) and isinstance(sel.get("items"), list):
         return _resolve_item_with_items(sel, sec_key, state, rng)
@@ -604,11 +593,22 @@ def hydrate(
     # Resolve tokens
     resolved: list[dict[str, Any]] = []
     injections_in_order = any(t == "injections" for t in order)
+    prefixes = reg.assembly_prefixes or {}
+    applied_prefix_sections: set[str] = set()
     for tok in order:
         sec = _token_section(tok, reg)
         s = _resolve_token_struct(tok, reg, rs, evaluated, rng, group_index, active)
         if not s:
             continue
+        # Token-specific prefix wins; section-level prefix applies once per section
+        prefix = prefixes.get(tok, "").strip()
+        if not prefix and sec not in applied_prefix_sections:
+            prefix = prefixes.get(sec, "").strip()
+            if prefix:
+                applied_prefix_sections.add(sec)
+        if prefix:
+            body = _struct_to_text(s)
+            s = {"kind": "plain", "text": prefix + "\n" + body, "section": sec}
         s["_section"] = sec
         resolved.append(s)
 

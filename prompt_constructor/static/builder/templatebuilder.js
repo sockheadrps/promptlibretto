@@ -1,6 +1,20 @@
 const MEMORY_ENABLED = localStorage.getItem('promptlibretto.memory-enabled.v1') === 'true';
+const IS_HOSTED = window.location.hostname === "promptlibretto.readtheerror.com";
 
-const SECTION_KEYS = [
+const DEFAULT_EMOTION_DIMS = ["warmth", "tension", "trust", "playfulness"];
+
+function _getEmotionDimensions() {
+  const raw = document.getElementById("mem-emotion-dimensions")?.value?.trim();
+  if (raw) {
+    const parsed = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parsed.length) return parsed;
+  }
+  return DEFAULT_EMOTION_DIMS;
+}
+
+// Advisory ordered list used only to seed a new empty registry.
+// Section presence is always derived from the loaded registry, not enforced here.
+const WELL_KNOWN_SECTIONS = [
   "base_context",
   "personas",
   "sentiment",
@@ -10,7 +24,32 @@ const SECTION_KEYS = [
   "memory_recall",
   "user_message",
   "prompt_endings",
+  "examples",
+  "knowledge_layers",
 ];
+
+// Sections shown in the wizard picker, in display order.
+const SECTION_PICKER_DEFS = [
+  { key: "personas",                label: "Personas",           desc: "Named character or role configurations — one is selected at runtime." },
+  { key: "prompt_endings",          label: "Prompt Endings",     desc: "Closing cue lines appended after all content (e.g. 'Your message:')." },
+  { key: "base_context",            label: "Base Context",       desc: "Static framing text always rendered, with optional conditional fragments." },
+  { key: "sentiment",               label: "Sentiment",          desc: "Emotional tone items and a scale for blending between them." },
+  { key: "output_prompt_directions",label: "Output Directions",  desc: "Style and formatting rules the model sees before the context." },
+  { key: "static_injections",       label: "Static Injections",  desc: "Fixed content blocks included at a set position in the prompt." },
+  { key: "runtime_injections",      label: "Runtime Injections", desc: "Dynamic per-turn content blocks with their own template vars." },
+  { key: "memory_recall",           label: "Memory Recall",      desc: "Slot for injected memory retrieval results ({memory_recall})." },
+  { key: "knowledge_layers",        label: "Knowledge Layers",   desc: "Domain knowledge blocks selected at runtime." },
+  { key: "examples",                label: "Examples",           desc: "Few-shot examples injected into the prompt." },
+];
+// Pre-checked in the picker for a new registry.
+const SECTION_PICKER_DEFAULTS = new Set(["personas", "prompt_endings"]);
+
+// Top-level registry keys that are never section keys.
+const META_SCHEMA_KEYS = new Set([
+  "version", "title", "description", "assembly_order",
+  "generation", "output_policy", "memory_rules", "memory_config", "style_blend",
+  "assembly_prefixes",
+]);
 
 const SECTION_LABELS = {
   base_context: "Base Context",
@@ -22,6 +61,8 @@ const SECTION_LABELS = {
   memory_recall: "Memory Recall",
   user_message: "User Message",
   prompt_endings: "Prompt Endings",
+  examples: "Examples",
+  knowledge_layers: "Knowledge Layers",
   groups: "Groups",
 };
 
@@ -56,14 +97,29 @@ const POLICY_LIST_FIELDS = [
 const DEFAULT_ASSEMBLY_ORDER = [
   "output_prompt_directions",
   "base_context.text",
-  "personas.context",
+  "personas.text",
   "personas.groups",
-  "sentiment.context",
+  "sentiment.text",
   "sentiment.groups",
   "sentiment.scale",
   "memory_recall.text",
   "prompt_endings.endings",
 ];
+
+// Default assembly tokens emitted for each well-known section.
+// Custom sections fall back to [{key}.text].
+const SECTION_DEFAULT_TOKENS = {
+  output_prompt_directions: ["output_prompt_directions"],
+  base_context:             ["base_context.text"],
+  personas:                 ["personas.text", "personas.groups"],
+  sentiment:                ["sentiment.text", "sentiment.groups", "sentiment.scale"],
+  static_injections:        ["static_injections"],
+  runtime_injections:       ["injections"],
+  memory_recall:            ["memory_recall.text"],
+  prompt_endings:           ["prompt_endings.endings"],
+  knowledge_layers:         ["knowledge_layers.text"],
+  examples:                 ["examples.text"],
+};
 
 let registryState = createEmptyRegistryState();
 let currentModalContext = null;
@@ -96,17 +152,8 @@ function createEmptyRegistryState() {
     memory_rules: [],
     memory_config: {},
     style_blend: {},
+    assembly_prefixes: {},
   };
-
-  const optional = new Set(["static_injections", "runtime_injections", "memory_recall", "user_message", "groups"]);
-  SECTION_KEYS.forEach((key) => {
-    state.sections[key] = {
-      required: !optional.has(key),
-      template_vars: [],
-      items: [],
-      extras: {},
-    };
-  });
 
   return state;
 }
@@ -213,8 +260,11 @@ function buildExportPayload() {
   if (registryState.style_blend && Object.keys(registryState.style_blend).length) {
     registry.style_blend = JSON.parse(JSON.stringify(registryState.style_blend));
   }
+  if (registryState.assembly_prefixes && Object.keys(registryState.assembly_prefixes).length) {
+    registry.assembly_prefixes = { ...registryState.assembly_prefixes };
+  }
 
-  SECTION_KEYS.forEach((key) => {
+  Object.keys(registryState.sections).forEach((key) => {
     const sectionData = registryState.sections[key];
     const items = sectionData.items.map(({ _ui_id, template_var_defaults, ...rest }) => {
       const out = { ...rest };
@@ -222,22 +272,16 @@ function buildExportPayload() {
       if (out.scale) {
         if (!out.scale.scale_descriptor && !out.scale.template) delete out.scale;
       }
-      // Strip empty fragments array on base_context items
-      if (key === "base_context" && Array.isArray(out.fragments) && !out.fragments.length) {
-        delete out.fragments;
-      }
-      // Strip empty pre_context on groups items
-      if (key === "groups" && !out.pre_context) delete out.pre_context;
-      // Strip empty groups arrays on personas/sentiment/static_injections
-      if ((key === "personas" || key === "sentiment" || key === "static_injections") && Array.isArray(out.groups) && !out.groups.length) {
-        delete out.groups;
-      }
-      // Strip empty template_vars arrays and legacy fields on runtime_injections
-      if (key === "runtime_injections") {
-        if (Array.isArray(out.template_vars) && !out.template_vars.length) delete out.template_vars;
-        delete out.memory_tag;
-        delete out.include_sections;
-      }
+      // Strip empty fragments array
+      if (Array.isArray(out.fragments) && !out.fragments.length) delete out.fragments;
+      // Strip empty pre_context
+      if (!out.pre_context) delete out.pre_context;
+      // Strip empty groups arrays
+      if (Array.isArray(out.groups) && !out.groups.length) delete out.groups;
+      // Strip empty template_vars arrays and legacy fields
+      if (Array.isArray(out.template_vars) && !out.template_vars.length) delete out.template_vars;
+      delete out.memory_tag;
+      delete out.include_sections;
       return out;
     });
 
@@ -515,6 +559,30 @@ function isPromptEndingsToken(token) {
   return token === "prompt_endings" || token.startsWith("prompt_endings.");
 }
 
+function toggleSectionPrefix(key) {
+  const chk = document.getElementById(`sec-pfx-chk-${key}`);
+  const txt = document.getElementById(`sec-pfx-txt-${key}`);
+  if (!chk || !txt) return;
+  if (chk.checked) {
+    txt.hidden = false;
+    txt.focus();
+  } else {
+    txt.hidden = true;
+    if (registryState.assembly_prefixes) delete registryState.assembly_prefixes[key];
+    exportFullModel();
+  }
+}
+
+function updateSectionPrefix(key, value) {
+  if (!registryState.assembly_prefixes) registryState.assembly_prefixes = {};
+  if (value) {
+    registryState.assembly_prefixes[key] = value;
+  } else {
+    delete registryState.assembly_prefixes[key];
+  }
+  exportFullModel();
+}
+
 function moveAssemblyToken(index, delta) {
   const next = index + delta;
   if (next < 0 || next >= registryState.assembly_order.length) return;
@@ -558,14 +626,14 @@ function describeAssemblyToken(token) {
   if (token.startsWith("output_prompt_directions.")) {
     return { title: `Output Direction: ${token.split(".").slice(1).join(".")}`, detail: "Adds one named output-direction item." };
   }
-  if (token === "personas.context") {
-    return { title: "Personas — context", detail: "Adds the chosen persona's context text." };
+  if (token === "personas.text" || token === "personas.context") {
+    return { title: "Personas — text", detail: "Adds the chosen persona's text." };
   }
   if (token === "personas.groups") {
     return { title: "Personas — groups", detail: "Adds directive/example groups attached to the chosen persona." };
   }
-  if (token === "sentiment.context") {
-    return { title: "Sentiment — context", detail: "Adds the chosen sentiment's context text." };
+  if (token === "sentiment.text" || token === "sentiment.context") {
+    return { title: "Sentiment — text", detail: "Adds the chosen sentiment's text." };
   }
   if (token === "sentiment.groups") {
     return { title: "Sentiment — groups", detail: "Adds nudge/example groups attached to the chosen sentiment." };
@@ -608,7 +676,7 @@ function describeAssemblyToken(token) {
           : "Prompt Endings — add items in the Sections tab.";
     return { title: "Prompt Endings", detail };
   }
-  return { title: "Custom Token", detail: "Advanced token — preserved exactly as typed." };
+  return { title: token, detail: "Custom section token." };
 }
 
 function assemblyGroups() {
@@ -620,9 +688,9 @@ function assemblyGroups() {
       items: [
         { token: "output_prompt_directions", label: "Output Directions" },
         { token: "base_context.text", label: "Base Context — text" },
-        { token: "personas.context", label: "Personas — context" },
+        { token: "personas.text", label: "Personas — text" },
         { token: "personas.groups", label: "Personas — groups" },
-        { token: "sentiment.context", label: "Sentiment — context" },
+        { token: "sentiment.text", label: "Sentiment — text" },
         { token: "sentiment.groups", label: "Sentiment — groups" },
         { token: "sentiment.scale", label: "Sentiment — scale" },
         { token: "memory_recall.text", label: "Memory Recall" },
@@ -712,7 +780,7 @@ function renderAssemblyOrderEditor() {
 function openModal(key) {
   currentModalContext = key;
   document.getElementById("modal-input").value = "";
-  document.getElementById("modal-title").textContent = `${SECTION_LABELS[key]} Variables`;
+  document.getElementById("modal-title").textContent = `${SECTION_LABELS[key] || key} Variables`;
   document.getElementById("modal-overlay").style.display = "flex";
   setTimeout(() => document.getElementById("modal-input").focus(), 50);
 }
@@ -764,6 +832,35 @@ function removeEntryVar(type, uiId, varName) {
 function updateSectionStatus(key, isRequired) {
   registryState.sections[key].required = isRequired;
   exportFullModel();
+}
+
+function removeSection(key) {
+  if (!registryState.sections[key]) return;
+  if (Object.keys(registryState.sections).length <= 1) { alert("A registry must have at least one section."); return; }
+  if (!confirm(`Remove the "${SECTION_LABELS[key] || key}" section? This cannot be undone.`)) return;
+  delete registryState.sections[key];
+  // Remove any assembly order tokens that reference this section
+  registryState.assembly_order = registryState.assembly_order.filter((t) => !t.startsWith(key + ".") && t !== key);
+  initApp();
+  exportFullModel();
+}
+
+function addNewSection() {
+  const inp = document.getElementById("add-section-input");
+  if (!inp) return;
+  const key = inp.value.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+  if (!key) return;
+  if (META_SCHEMA_KEYS.has(key)) { alert(`"${key}" is a reserved registry key.`); return; }
+  if (registryState.sections[key]) { alert(`Section "${key}" already exists.`); return; }
+  registryState.sections[key] = _blankSection(key);
+  const newTokens = SECTION_DEFAULT_TOKENS[key] || [`${key}.text`];
+  newTokens.forEach((t) => { if (!registryState.assembly_order.includes(t)) registryState.assembly_order.push(t); });
+  inp.value = "";
+  initApp();
+  exportFullModel();
+  // Scroll to the new section
+  const el = document.getElementById(`section-${key}`);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 
@@ -1018,6 +1115,8 @@ function updateInlineGroupItem(type, uiId, gIdx, iIdx, value) {
 
 function _refreshStyleBlendDropdowns(sec) {
   const cfg = (registryState.style_blend || {})[sec] || {};
+  const axEl = document.getElementById(`sb-${sec}-axis`);
+  if (axEl) axEl.innerHTML = _sbAxisOptions(axEl.value || cfg.axis || "");
   for (const role of ["primary", "secondary"]) {
     const el = document.getElementById(`sb-${sec}-${role}`);
     if (el) el.innerHTML = _sbItemOptions(sec, cfg[role] || "");
@@ -1261,22 +1360,15 @@ function applyRegistryJson(json) {
   next.style_blend = reg.style_blend && typeof reg.style_blend === "object"
     ? JSON.parse(JSON.stringify(reg.style_blend))
     : {};
+  next.assembly_prefixes = reg.assembly_prefixes && typeof reg.assembly_prefixes === "object" && !Array.isArray(reg.assembly_prefixes)
+    ? { ...reg.assembly_prefixes }
+    : {};
 
-  const knownTopLevel = new Set([
-    "version",
-    "title",
-    "description",
-    "assembly_order",
-    "generation",
-    "output_policy",
-    "memory_rules",
-    "memory_config",
-    "style_blend",
-    ...SECTION_KEYS,
-  ]);
-  // default_state and any other unrecognised top-level keys round-trip via extraTopLevel
+  // Any non-meta key with an items array is a section; everything else round-trips via extraTopLevel.
   for (const [k, v] of Object.entries(reg)) {
-    if (!knownTopLevel.has(k)) next.extraTopLevel[k] = v;
+    if (META_SCHEMA_KEYS.has(k)) continue;
+    if (v && typeof v === "object" && Array.isArray(v.items)) continue;
+    next.extraTopLevel[k] = v;
   }
 
   // Build a lookup from any top-level groups section so string ID refs can be inlined.
@@ -1297,11 +1389,13 @@ function applyRegistryJson(json) {
     });
   }
 
-  SECTION_KEYS.forEach((key) => {
-    const importedSection = reg[key] || {};
+  for (const [key, importedSection] of Object.entries(reg)) {
+    if (META_SCHEMA_KEYS.has(key)) continue;
+    if (!importedSection || typeof importedSection !== "object" || !Array.isArray(importedSection.items)) continue;
     const { required, template_vars, template_var_defaults, items, ...extras } = importedSection;
+    const existing = next.sections[key];
     next.sections[key] = {
-      required: required !== undefined ? required : next.sections[key].required,
+      required: required !== undefined ? required : (existing ? existing.required : false),
       template_vars: Array.isArray(template_vars)
         ? Array.from(new Set(template_vars.map(normalizeTemplateVarName).filter(Boolean)))
         : [],
@@ -1320,13 +1414,13 @@ function applyRegistryJson(json) {
           }));
         }
         if (key === "runtime_injections" && !Array.isArray(entry.template_vars)) entry.template_vars = [];
-        if ((key === "personas" || key === "sentiment") && Array.isArray(entry.groups)) {
+        if (Array.isArray(entry.groups)) {
           entry.groups = inlineGroupRefs(entry.groups);
         }
         return entry;
       }),
     };
-  });
+  }
 
   registryState = next;
   populateMemoryConfigInputs();
@@ -1355,7 +1449,7 @@ function applyRegistryJson(json) {
 async function loadBuilderExample(name) {
   if (!name) return;
   try {
-    const res = await fetch(`/static/builder-examples/${name}.json`);
+    const res = await fetch(`/static/builder/examples/${name}.json`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     applyRegistryJson(await res.json());
     setValidationStatus(`Example "${name}" loaded.`, true);
@@ -1490,7 +1584,7 @@ function initApp() {
   const list = document.getElementById("section-list");
   list.innerHTML = "";
 
-  SECTION_KEYS.forEach((key) => {
+  Object.keys(registryState.sections).forEach((key) => {
     // user_message is now handled by prompt_endings — hide from the sections list
     if (key === "user_message") return;
     const config = registryState.sections[key];
@@ -1505,12 +1599,15 @@ function initApp() {
       )
       .join(" ");
 
+    const sectionPrefix = (registryState.assembly_prefixes || {})[key] || "";
+    const prefixEnabled = !!sectionPrefix;
+
     section.innerHTML = `
       <div class="section-header font-bold" onclick="toggleSection(this.parentElement)">
         <div class="flex items-center gap-3">
           <svg class="chevron w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
           <div class="flex flex-col">
-            <span class="text-sm">${SECTION_LABELS[key]}</span>
+            <span class="text-sm">${SECTION_LABELS[key] || key}</span>
             <div id="vars-display-${key}" class="flex gap-1 mt-1">${varBadges}</div>
           </div>
         </div>
@@ -1518,6 +1615,7 @@ function initApp() {
           <button onclick="event.stopPropagation(); openModal('${key}')" class="text-[10px] text-purple-400 hover:underline">+ Add Var</button>
           <button onclick="event.stopPropagation(); openSectionInfo('${key}')" class="section-info-btn" title="What is this section?">?</button>
           <span class="text-[10px] text-slate-500 uppercase tracking-widest px-2">${config.items.length} Items</span>
+          <button onclick="event.stopPropagation(); removeSection('${key}')" class="section-remove-btn" title="Remove section">✕</button>
         </div>
       </div>
       <div class="collapsible-content">
@@ -1536,16 +1634,36 @@ function initApp() {
               </div>
             </div>
           </div>
+          <div class="section-prefix-row">
+            <label class="section-prefix-label" onclick="event.stopPropagation()">
+              <span class="toggle-switch"><input type="checkbox" id="sec-pfx-chk-${key}"${prefixEnabled ? " checked" : ""} onchange="toggleSectionPrefix('${key}')"></span>
+              Pre-pended context
+            </label>
+            <textarea id="sec-pfx-txt-${key}" class="section-prefix-input"${prefixEnabled ? "" : " hidden"} placeholder="Text prepended before this section's content at runtime…" oninput="updateSectionPrefix('${key}', this.value)">${escapeHtml(sectionPrefix)}</textarea>
+          </div>
         </div>
         <div id="${key}-container" class="p-4"></div>
         <div class="p-4 pt-0">
-          <button onclick="addEntry('${key}')" class="btn-add">+ Add ${SECTION_LABELS[key]} Entry</button>
+          <button onclick="addEntry('${key}')" class="btn-add">+ Add ${SECTION_LABELS[key] || key} Entry</button>
         </div>
       </div>
     `;
     list.appendChild(section);
     renderItems(key);
   });
+
+  // Add Section row
+  const addSectionRow = document.getElementById("add-section-row");
+  if (addSectionRow) {
+    addSectionRow.hidden = false;
+  } else {
+    const row = document.createElement("div");
+    row.id = "add-section-row";
+    row.className = "add-section-row";
+    row.innerHTML = `<input type="text" id="add-section-input" class="add-section-input" placeholder="new_section_key" />
+      <button type="button" class="btn-add" onclick="addNewSection()">+ Add Section</button>`;
+    list.after(row);
+  }
 
   renderAssemblyOrderEditor();
   renderMemoryRulesPanel();
@@ -1562,16 +1680,74 @@ function initSetupFlow() {
   _onMetaInput();
 }
 
+function _blankSection(key) {
+  const optional = new Set(["static_injections", "runtime_injections", "memory_recall", "user_message", "groups", "examples", "knowledge_layers"]);
+  return { required: !optional.has(key), template_vars: [], items: [], extras: {} };
+}
+
 function _onMetaInput() {
   if (_setupPhase !== "meta") return;
   const t = document.getElementById("model-title-input")?.value?.trim();
   const d = document.getElementById("model-desc-input")?.value?.trim();
   if (t && d) {
-    if (!MEMORY_ENABLED) { setMemoryChoice(false); return; }
-    _setupPhase = "memory-choice";
-    const card = document.getElementById("builder-setup-card");
+    _setupPhase = "section-choice";
+    _buildSectionPicker();
+    const card = document.getElementById("builder-section-card");
     if (card) card.hidden = false;
   }
+}
+
+function _buildSectionPicker() {
+  const grid = document.getElementById("section-picker-grid");
+  if (!grid) return;
+  grid.innerHTML = SECTION_PICKER_DEFS.map(({ key, label, desc }) => {
+    const checked = SECTION_PICKER_DEFAULTS.has(key) ? " checked" : "";
+    return `<label class="section-picker-item">
+      <input type="checkbox" class="section-picker-cb" value="${key}"${checked}>
+      <span class="section-picker-name">${label}</span>
+      <span class="section-picker-desc">${desc}</span>
+    </label>`;
+  }).join("");
+}
+
+function addCustomSectionToPicker() {
+  const inp = document.getElementById("custom-section-input");
+  if (!inp) return;
+  const key = inp.value.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+  if (!key) return;
+  inp.value = "";
+  const grid = document.getElementById("section-picker-grid");
+  if (!grid || grid.querySelector(`input[value="${key}"]`)) return;
+  const item = document.createElement("label");
+  item.className = "section-picker-item section-picker-item--custom";
+  item.innerHTML = `<input type="checkbox" class="section-picker-cb" value="${key}" checked>
+    <span class="section-picker-name">${key}</span>
+    <span class="section-picker-desc muted">Custom section</span>`;
+  grid.appendChild(item);
+}
+
+function confirmSectionChoice() {
+  const cbs = document.querySelectorAll(".section-picker-cb:checked");
+  const keys = Array.from(cbs).map((cb) => cb.value).filter(Boolean);
+  if (!keys.length) { alert("Select at least one section."); return; }
+  // Seed registryState.sections with chosen keys only
+  Object.keys(registryState.sections).forEach((k) => delete registryState.sections[k]);
+  keys.forEach((key) => { registryState.sections[key] = _blankSection(key); });
+  // Build a sensible default assembly order from chosen sections.
+  // Use SECTION_DEFAULT_TOKENS ordering; unknowns get appended as {key}.text.
+  const orderedKeys = SECTION_PICKER_DEFS.map((d) => d.key).filter((k) => keys.includes(k));
+  const extraKeys = keys.filter((k) => !orderedKeys.includes(k));
+  registryState.assembly_order = [
+    ...orderedKeys.flatMap((k) => SECTION_DEFAULT_TOKENS[k] || [`${k}.text`]),
+    ...extraKeys.map((k) => `${k}.text`),
+  ];
+  // Hide section card, show memory card or skip
+  const secCard = document.getElementById("builder-section-card");
+  if (secCard) secCard.hidden = true;
+  if (!MEMORY_ENABLED) { setMemoryChoice(false); return; }
+  _setupPhase = "memory-choice";
+  const memCard = document.getElementById("builder-setup-card");
+  if (memCard) memCard.hidden = false;
 }
 
 function setMemoryChoice(useMemory) {
@@ -1616,6 +1792,8 @@ function completeSetup() {
   if (tabsRow) tabsRow.hidden = false;
   const memTabBtn = document.getElementById("tab-memory");
   if (memTabBtn) memTabBtn.hidden = !_useMemory;
+  const styleBendPanel = document.getElementById("style-blend-panel");
+  if (styleBendPanel) styleBendPanel.hidden = false;
   // Restore rules panel visibility
   const rulesPanel = document.getElementById("classifier-rules-panel");
   if (rulesPanel) rulesPanel.hidden = false;
@@ -1642,6 +1820,8 @@ function _bypassSetup() {
   _useMemory = MEMORY_ENABLED && !!(registryState.memory_config && Object.keys(registryState.memory_config).length > 0);
   const card = document.getElementById("builder-setup-card");
   if (card) card.hidden = true;
+  const secCard = document.getElementById("builder-section-card");
+  if (secCard) secCard.hidden = true;
   const banner = document.getElementById("setup-phase-banner");
   if (banner) banner.hidden = true;
   const mainGrid = document.getElementById("builder-main-grid");
@@ -1650,6 +1830,8 @@ function _bypassSetup() {
   if (tabsRow) tabsRow.hidden = false;
   const memTabBtn = document.getElementById("tab-memory");
   if (memTabBtn) memTabBtn.hidden = !_useMemory;
+  const styleBendPanel = document.getElementById("style-blend-panel");
+  if (styleBendPanel) styleBendPanel.hidden = false;
 }
 
 const SECTION_INFO = {
@@ -1812,23 +1994,35 @@ function readMemoryConfig() {
   const pruneKeep      = document.getElementById("mem-prune-keep")?.value;
   const storePath      = document.getElementById("mem-store-path")?.value?.trim();
   const file           = document.getElementById("mem-personality-file")?.value?.trim();
-  const out = {};
+  // Merge back fields not surfaced in the UI so they're not silently dropped.
+  const out = { ...(registryState.memory_config || {}) };
   if (classifierUrl)   out.classifier_url   = classifierUrl;
   if (classifierModel) out.classifier_model = classifierModel;
   if (embedUrl)        out.embed_url        = embedUrl;
   if (embedModel)      out.embed_model      = embedModel;
   const k = parseInt(topK, 10);
-  if (Number.isFinite(k) && k > 0) out.top_k = k;
+  if (Number.isFinite(k) && k > 0) out.top_k = k; else delete out.top_k;
   const p = parseInt(pruneKeep, 10);
-  if (Number.isFinite(p) && p > 0) out.prune_keep = p;
-  if (!window.STUDIO_CONFIG?.multi_tenant) {
-    if (storePath) out.store_path = storePath;
-    if (file)      out.personality_file = file;
+  if (Number.isFinite(p) && p > 0) out.prune_keep = p; else delete out.prune_keep;
+  if (!window.STUDIO_CONFIG?.multi_tenant && !IS_HOSTED) {
+    if (storePath) out.store_path = storePath; else delete out.store_path;
+    if (file)      out.personality_file = file; else delete out.personality_file;
   }
   const useClf = document.getElementById("mem-use-classifier");
-  if (useClf && !useClf.checked) out.use_classifier = false;
+  if (useClf && !useClf.checked) out.use_classifier = false; else delete out.use_classifier;
   const autoInj = document.getElementById("mem-auto-inject");
-  if (autoInj && autoInj.checked) out.auto_inject = true;
+  if (autoInj && autoInj.checked) out.auto_inject = true; else delete out.auto_inject;
+  // Emotional state
+  const emotionEnabled = document.getElementById("mem-emotional-state-enabled")?.checked;
+  if (emotionEnabled) out.emotional_state_enabled = true; else delete out.emotional_state_enabled;
+  const emotionDimsRaw = document.getElementById("mem-emotion-dimensions")?.value?.trim();
+  if (emotionDimsRaw) {
+    const dims = emotionDimsRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (dims.length) out.emotion_dimensions = dims; else delete out.emotion_dimensions;
+  } else { delete out.emotion_dimensions; }
+  const decayRaw = document.getElementById("mem-emotion-decay-rate")?.value;
+  const decay = parseFloat(decayRaw);
+  if (Number.isFinite(decay)) out.emotion_decay_rate = decay; else delete out.emotion_decay_rate;
   return out;
 }
 
@@ -2002,6 +2196,26 @@ function populateMemoryConfigInputs() {
   const autoInj = document.getElementById("mem-auto-inject");
   if (autoInj) autoInj.checked = !!cfg.auto_inject;
   toggleClassifierSection();
+  // Emotional state
+  const emotionCb = document.getElementById("mem-emotional-state-enabled");
+  if (emotionCb) emotionCb.checked = !!cfg.emotional_state_enabled;
+  const emotionDimsEl = document.getElementById("mem-emotion-dimensions");
+  if (emotionDimsEl) emotionDimsEl.value = Array.isArray(cfg.emotion_dimensions) ? cfg.emotion_dimensions.join(", ") : "";
+  set("mem-emotion-decay-rate", cfg.emotion_decay_rate);
+  _refreshAllStyleBlendAxes();
+}
+
+function _sbAxisOptions(currentAxis) {
+  const dims = _getEmotionDimensions();
+  const current = currentAxis || dims[0] || "warmth";
+  return dims.map((d) => `<option value="${escapeHtml(d)}"${d === current ? " selected" : ""}>${escapeHtml(d)}</option>`).join("");
+}
+
+function _refreshAllStyleBlendAxes() {
+  for (const sec of ["personas", "sentiment"]) {
+    const axEl = document.getElementById(`sb-${sec}-axis`);
+    if (axEl) axEl.innerHTML = _sbAxisOptions(axEl.value);
+  }
 }
 
 function _sbItemOptions(secKey, currentValue) {
@@ -2025,7 +2239,7 @@ function populateStyleBlendInputs() {
     const cbEl = document.getElementById(`sb-${sec}-enabled`);
     if (cbEl) cbEl.checked = enabled;
     const axEl = document.getElementById(`sb-${sec}-axis`);
-    if (axEl) axEl.value = cfg.axis || "warmth";
+    if (axEl) { axEl.innerHTML = _sbAxisOptions(cfg.axis || ""); }
     const prEl = document.getElementById(`sb-${sec}-primary`);
     if (prEl) prEl.innerHTML = _sbItemOptions(sec, cfg.primary || "");
     const seEl = document.getElementById(`sb-${sec}-secondary`);
@@ -2052,6 +2266,7 @@ function updateStyleBlend() {
     }
     const confEl = document.getElementById(`sb-${sec}-config`);
     if (confEl) confEl.hidden = !enabled;
+    if (enabled) _refreshStyleBlendDropdowns(sec);
   }
   registryState.style_blend = sb;
   exportFullModel();
@@ -2281,7 +2496,7 @@ async function populateExamplePicker() {
 
   let exampleOptions = "";
   try {
-    const res = await fetch("/static/builder-examples/index.json", { cache: "no-cache" });
+    const res = await fetch("/static/builder/examples/index.json", { cache: "no-cache" });
     if (res.ok) {
       const data = await res.json();
       const examples = data.examples || [];
@@ -2315,6 +2530,19 @@ consumeStudioHandoff();
 initApp();
 populateExamplePicker();
 initSetupFlow();
+
+function openStorageHostedHelp() {
+  alert("Running on the hosted demo at promptlibretto.readtheerror.com\n\nStorage paths are managed by the server and cannot be customised here. To set custom paths, run Prompt Constructor locally.");
+}
+
+if (IS_HOSTED) {
+  const storePath = document.getElementById("mem-store-path");
+  const persFile  = document.getElementById("mem-personality-file");
+  if (storePath) { storePath.disabled = true; storePath.title = "Not editable on the hosted demo"; }
+  if (persFile)  { persFile.disabled  = true; persFile.title  = "Not editable on the hosted demo"; }
+  const helpBtn = document.getElementById("storage-hosted-help");
+  if (helpBtn) helpBtn.hidden = false;
+}
 
 fetch("/api/config")
   .then((r) => r.json())
@@ -2350,6 +2578,14 @@ window.toggleBuilderCollapse = toggleBuilderCollapse;
 window.openSectionInfo = openSectionInfo;
 window.closeSectionInfo = closeSectionInfo;
 window.openEmbedHelp = openEmbedHelp;
+window.openStorageHostedHelp = openStorageHostedHelp;
+window._refreshAllStyleBlendAxes = _refreshAllStyleBlendAxes;
+window.toggleSectionPrefix = toggleSectionPrefix;
+window.updateSectionPrefix = updateSectionPrefix;
+window.confirmSectionChoice = confirmSectionChoice;
+window.addCustomSectionToPicker = addCustomSectionToPicker;
+window.removeSection = removeSection;
+window.addNewSection = addNewSection;
 window.closeInfoModal = closeInfoModal;
 window.switchCorsTab = switchCorsTab;
 window.switchPreviewTab = switchPreviewTab;

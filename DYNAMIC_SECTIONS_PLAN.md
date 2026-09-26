@@ -110,6 +110,30 @@ The section key name is irrelevant to hydration. What matters is whether the sel
 
 ---
 
+## Pre-refactor standalone fixes
+
+### A. `name`/`id` dual lookup cleanup (`hydrate.py`, `model.py`)
+Four places use `it.get("id") or it.get("name")` for item lookup — backwards-compat cruft. Standardize to `id` as the single item identifier. Items that only have `name` (old format) should be migrated or rejected at load time.
+
+### B. `memory_config` / `memory_rules` on `Registry` dataclass (`model.py`)
+These fields are parsed from JSON and passed around as raw dicts but never mapped onto the `Registry` dataclass — causes `AttributeError: 'Registry' object has no attribute 'memory_config'` in two tests. Add as proper typed fields on `Registry`.
+
+### C. `PRIMARY_FIELD` dict in hydrator
+Hardcodes the `text`/`context` split. Goes away when item fields unify to `text` — do not patch independently.
+
+### D. `_build_group_index` hardcodes `groups` section key
+Only canonical `groups` section is indexed for cross-section group lookup. With dynamic sections, any section could serve as a group source. Address in refactor scope.
+
+---
+
+## Pre-refactor fixes already landed
+
+- **`_resolve_scale_struct` sec_key hardcode** (`hydrate.py`): was always reading `state.get("sentiment")` and emitting `"section": "sentiment"` regardless of which section was being resolved. Fixed — now takes `sec_key` as a parameter.
+
+- **`_render_fragments` context fallback**: `_render_fragments` only reads `item["text"]` for the base. Persona/Sentiment items use `context`, so fragments on those items silently drop the base. **Do not patch with a `text or context` fallback** — that encodes the split deeper. Fix by unifying to `text` in the item schema (Step 1 of this refactor).
+
+---
+
 ## Migration / Compatibility
 
 - All existing v2 registries with canonical sections continue to work unchanged

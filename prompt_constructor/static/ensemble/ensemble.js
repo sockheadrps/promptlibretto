@@ -1,7 +1,33 @@
 const SNAPSHOT_KEY = "pl-registry-snapshots-v1";
 const REGISTRY_KEY = "pl-registry-v2";
 const CONN_KEY = "promptlibretto.connection.v1";
+const EMBED_KEY = "promptlibretto.embed.v1";
+const CLASS_KEY = "promptlibretto.classifier.v1";
 const MEMORY_ENABLED = localStorage.getItem('promptlibretto.memory-enabled.v1') === 'true';
+
+function getHomeEmbedConfig() {
+  try { const r = localStorage.getItem(EMBED_KEY); if (r) return JSON.parse(r); } catch (_) {}
+  return null;
+}
+function getHomeClassifierConfig() {
+  try { const r = localStorage.getItem(CLASS_KEY); if (r) return JSON.parse(r); } catch (_) {}
+  return null;
+}
+
+// Populate empty memory-endpoint fields from Home's saved settings.
+// Only fills blanks — never overwrites a value the user has typed.
+function prefillMemoryEndpointsFromHome(side) {
+  const emb = getHomeEmbedConfig() || {};
+  const cls = getHomeClassifierConfig() || {};
+  const setIfEmpty = (id, val) => {
+    if (!val) return;
+    const el = document.getElementById(id);
+    if (el && !el.value.trim()) el.value = val;
+  };
+  setIfEmpty(`${side}-classifier_url`, cls.baseUrl);
+  setIfEmpty(`${side}-embed_url`, emb.baseUrl);
+  setIfEmpty(`${side}-embed_path`, emb.embedPath);
+}
 
 function applyGlobalMemoryFlag() {
   if (!MEMORY_ENABLED) document.body.classList.add('memory-globally-disabled');
@@ -40,7 +66,7 @@ let _exampleIndex = null;
 async function getExampleIndex() {
   if (_exampleIndex) return _exampleIndex;
   try {
-    const res = await fetch("/static/builder-examples/index.json", { cache: "no-cache" });
+    const res = await fetch("/static/builder/examples/index.json", { cache: "no-cache" });
     if (!res.ok) return [];
     const data = await res.json();
     _exampleIndex = data.examples || [];
@@ -188,7 +214,7 @@ async function loadSnapshot(side) {
   if (val.startsWith("__example__:")) {
     const file = val.slice("__example__:".length);
     try {
-      const resp = await fetch(`/static/builder-examples/${file}.json`);
+      const resp = await fetch(`/static/builder/examples/${file}.json`);
       if (!resp.ok) throw new Error(`failed to fetch example: ${resp.status}`);
       registry = await resp.json();
     } catch (e) {
@@ -483,9 +509,11 @@ async function startEnsemble() {
     const aboutOther = text(`${side}-notes_about_other_prompt`);
     if (aboutMe)    out.notes_about_me_prompt    = aboutMe;
     if (aboutOther) out.notes_about_other_prompt = aboutOther;
+    const clfUrl    = text(`${side}-classifier_url`);
     const clfPath   = text(`${side}-classifier_chat_path`);
     const embedUrl  = text(`${side}-embed_url`);
     const embedPath = text(`${side}-embed_path`);
+    if (clfUrl)    out.classifier_url = clfUrl;
     if (clfPath)   out.classifier_chat_path = clfPath;
     if (embedUrl)  out.embed_url  = embedUrl;
     if (embedPath) out.embed_path = embedPath;
@@ -659,11 +687,26 @@ async function startEnsemble() {
               }
               try {
                 const chunk = JSON.parse(raw);
-                const delta = isOpenAI
-                  ? (chunk.choices?.[0]?.delta?.content ?? "")
-                  : (chunk.message?.content ?? chunk.content ?? "");
+                let delta;
+                if (isOpenAI) {
+                  const d = chunk.choices?.[0]?.delta || {};
+                  // llama-server --reasoning on streams thinking tokens in
+                  // reasoning_content; fall back to it so the bubble fills
+                  // even when the model spends its budget in thought.
+                  delta = d.content || d.reasoning_content || d.reasoning || "";
+                } else {
+                  const m = chunk.message || {};
+                  delta = m.content || m.reasoning_content || m.reasoning || chunk.content || "";
+                }
+                if (window.__PL_DEBUG_CHAT_STREAM) {
+                  console.log("[chat_stream]", { raw, chunk, delta });
+                }
                 if (delta) sendEmbedWs(embedWs, { type: "chat_chunk", id, delta });
-              } catch { /* skip malformed */ }
+              } catch (err) {
+                if (window.__PL_DEBUG_CHAT_STREAM) {
+                  console.warn("[chat_stream] parse failed:", raw, err);
+                }
+              }
             }
           }
           sendEmbedWs(embedWs, { type: "chat_done", id });
@@ -2505,7 +2548,7 @@ function syncHumanUI() {
 const PARTICIPANT_SETTINGS_KEY = "pl-ensemble-participant-settings.v1";
 
 const PERSISTED_FIELDS = {
-  text:   ["name", "model", "notes_about_me_prompt", "notes_about_other_prompt", "tts-voice", "embed_url", "embed_path"],
+  text:   ["name", "model", "notes_about_me_prompt", "notes_about_other_prompt", "tts-voice", "classifier_url", "classifier_chat_path", "embed_url", "embed_path"],
   number: ["history_window", "top_k", "working_notes_every_n_turns", "working_notes_max_tokens",
            "system_summary_every_n_turns", "system_summary_max_tokens",
            "gen-temperature", "gen-top_p", "gen-top_k", "gen-max_tokens", "gen-repeat_penalty", "gen-retries",
@@ -2586,6 +2629,9 @@ window.addEventListener("load", () => {
   }
   applyGlobalMemoryFlag();
   loadParticipantSettings();
+  // Fill any endpoint fields still blank from Home's saved embed/classifier config.
+  prefillMemoryEndpointsFromHome("a");
+  prefillMemoryEndpointsFromHome("b");
   bindSettingsAutosave();
   document.getElementById("a-human")?.addEventListener("change", () => { syncHumanUI(); syncMemoryUI(); syncTtsUI(); });
   document.getElementById("b-human")?.addEventListener("change", () => { syncHumanUI(); syncMemoryUI(); syncTtsUI(); });
@@ -2687,4 +2733,166 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("storage", (e) => {
   if (e.key === SNAPSHOT_KEY || e.key === REGISTRY_KEY) loadSnapshots();
   if (e.key === CONN_KEY) renderConnChip();
+  if (e.key === EMBED_KEY || e.key === CLASS_KEY) {
+    prefillMemoryEndpointsFromHome("a");
+    prefillMemoryEndpointsFromHome("b");
+  }
+});
+
+// ── Endpoint test buttons (memory tuning) ─────────────────────────────────
+function _setTestStatus(el, cls, text) {
+  if (!el) return;
+  el.classList.remove("ok", "warn", "err", "busy");
+  if (cls) el.classList.add(cls);
+  el.textContent = text || "";
+}
+
+async function _testChatEndpoint(side, statusEls) {
+  const conn = getStudioConnection();
+  const urlOverride = document.getElementById(`${side}-classifier_url`)?.value?.trim();
+  const base = urlOverride || conn?.baseUrl;
+  if (!base) {
+    statusEls.forEach(el => _setTestStatus(el, "err", "no classifier_url and no studio connection"));
+    return;
+  }
+  const pathVal = document.getElementById(`${side}-classifier_chat_path`)?.value?.trim();
+  // If path isn't set, only fall back to conn.chatPath when we're using conn.baseUrl.
+  // A custom classifier_url should get a sensible default, not the main-model's path.
+  const path = pathVal || (urlOverride ? "/api/chat" : (conn?.chatPath || "/api/chat"));
+  const url = base.replace(/\/+$/, "") + (path.startsWith("/") ? path : "/" + path);
+  // Model precedence differs based on whether classifier_url is overridden.
+  //   With override: Home's classifier model wins (the registry's model was
+  //     likely set for the default classifier endpoint, not this one).
+  //   Without override: registry's memory_config.classifier_model → main
+  //     chat model → conn.model → "test".
+  let registryClassifierModel = null;
+  try {
+    const raw = document.getElementById(`${side}-registry`)?.value?.trim();
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const mc = (parsed?.registry ?? parsed)?.memory_config ?? {};
+      if (mc.classifier_model) registryClassifierModel = mc.classifier_model;
+    }
+  } catch (_) {}
+  const homeCls = getHomeClassifierConfig() || {};
+  const model = urlOverride
+    ? (homeCls.model || registryClassifierModel || "llama3.2:1b")
+    : (registryClassifierModel
+       || document.getElementById(`${side}-model`)?.value?.trim()
+       || conn?.model || "test");
+  const isOpenAI = path.includes("/v1/") || (!urlOverride && conn?.payloadShape === "openai");
+  const payload = isOpenAI
+    ? { model, messages: [{ role: "user", content: "ping" }], max_tokens: 1, temperature: 0, stream: false }
+    : { model, messages: [{ role: "user", content: "ping" }], stream: false, options: { num_predict: 1, temperature: 0 } };
+  statusEls.forEach(el => _setTestStatus(el, "busy", `POST ${url} …`));
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (r.ok) {
+      statusEls.forEach(el => _setTestStatus(el, "ok", `✓ 200 OK (${isOpenAI ? "openai" : "ollama"} shape)`));
+      return;
+    }
+    const body = (await r.text()).slice(0, 200);
+    // Ollama returns 404 for both missing path AND missing model — differentiate.
+    if (r.status === 404 && /model.*(not\s*found|does not exist|no such)/i.test(body)) {
+      statusEls.forEach(el => _setTestStatus(el, "warn", `⚠ 404 — endpoint reachable, model not pulled: ${body}`));
+    } else if (r.status === 404) {
+      statusEls.forEach(el => _setTestStatus(el, "err", `✗ 404 — path not found at ${url}: ${body}`));
+    } else {
+      statusEls.forEach(el => _setTestStatus(el, "warn", `⚠ ${r.status} — endpoint reachable, ${body}`));
+    }
+  } catch (e) {
+    const msg = e?.name === "AbortError" ? "timed out after 15s" : (e?.message || String(e));
+    statusEls.forEach(el => _setTestStatus(el, "err", `✗ ${msg}`));
+  }
+}
+
+async function _testEmbedEndpoint(side, statusEls) {
+  const conn = getStudioConnection();
+  const urlOverride = document.getElementById(`${side}-embed_url`)?.value?.trim();
+  const pathOverride = document.getElementById(`${side}-embed_path`)?.value?.trim();
+  const base = urlOverride || conn?.baseUrl;
+  if (!base) {
+    statusEls.forEach(el => _setTestStatus(el, "err", "no embed_url and no studio connection"));
+    return;
+  }
+  // Path decides shape: /v1/ → OpenAI, else Ollama. Base URL is independent.
+  const isOpenAI = (pathOverride || "").includes("/v1/");
+  const path = pathOverride || (isOpenAI ? "/v1/embeddings" : "/api/embed");
+  const url = base.replace(/\/+$/, "") + (path.startsWith("/") ? path : "/" + path);
+  // Model precedence: registry memory_config.embed_model → Home's saved embed
+  // model → nomic-embed-text. Never use the main chat model — it's a
+  // completion model, not an embedder.
+  const homeEmb = getHomeEmbedConfig() || {};
+  let embedModel = homeEmb.model || "nomic-embed-text";
+  try {
+    const raw = document.getElementById(`${side}-registry`)?.value?.trim();
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const mc = (parsed?.registry ?? parsed)?.memory_config ?? {};
+      if (mc.embed_model) embedModel = mc.embed_model;
+    }
+  } catch (_) { /* leave default */ }
+  const model = embedModel;
+  const payload = { model, input: "ping" };
+  statusEls.forEach(el => _setTestStatus(el, "busy", `POST ${url} (model=${model}) …`));
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (r.ok) {
+      const d = await r.json().catch(() => null);
+      const dim =
+        (Array.isArray(d?.embeddings) && Array.isArray(d.embeddings[0]) && d.embeddings[0].length) ||
+        (Array.isArray(d?.data) && Array.isArray(d.data[0]?.embedding) && d.data[0].embedding.length) ||
+        (Array.isArray(d?.embedding) && d.embedding.length) ||
+        null;
+      statusEls.forEach(el => _setTestStatus(el, "ok", `✓ 200 OK${dim ? ` — ${dim}-dim vector` : ""}`));
+      return;
+    }
+    const body = (await r.text()).slice(0, 200);
+    // Ollama returns 404 for both missing path AND missing model — differentiate.
+    if (r.status === 404 && /model.*(not\s*found|does not exist|no such)/i.test(body)) {
+      statusEls.forEach(el => _setTestStatus(el, "warn", `⚠ 404 — endpoint reachable, model not pulled: ${body}`));
+    } else if (r.status === 404) {
+      statusEls.forEach(el => _setTestStatus(el, "err", `✗ 404 — path not found at ${url}: ${body}`));
+    } else {
+      statusEls.forEach(el => _setTestStatus(el, "warn", `⚠ ${r.status} — endpoint reachable, ${body}`));
+    }
+  } catch (e) {
+    const msg = e?.name === "AbortError" ? "timed out after 15s" : (e?.message || String(e));
+    statusEls.forEach(el => _setTestStatus(el, "err", `✗ ${msg}`));
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest?.(".pfield-test[data-endpoint-test]");
+  if (!btn) return;
+  e.preventDefault();
+  const kind = btn.dataset.endpointTest;
+  const side = btn.dataset.side;
+  if (!side) return;
+  const runWithBusy = async (fn, statusIds) => {
+    const els = statusIds.map(id => document.getElementById(id)).filter(Boolean);
+    btn.disabled = true;
+    try { await fn(side, els); } finally { btn.disabled = false; }
+  };
+  if (kind === "chat") {
+    runWithBusy(_testChatEndpoint, [`${side}-classifier_url-status`, `${side}-classifier_chat_path-status`]);
+  } else if (kind === "embed") {
+    runWithBusy(_testEmbedEndpoint, [`${side}-embed_url-status`, `${side}-embed_path-status`]);
+  }
 });

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Manrope:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="/static/templatebuilder.css" />
+  <link rel="stylesheet" href="/static/builder/templatebuilder.css" />
 </head>
 <body>
   <header>
@@ -98,6 +98,21 @@
         <input type="text" id="model-desc-input" value="" oninput="exportFullModel()" />
       </div>
     </section>
+
+    <div id="builder-section-card" hidden class="builder-setup-card">
+      <div class="setup-card-inner setup-card-inner--wide">
+        <h3 class="setup-card-title">Which sections does this registry need?</h3>
+        <p class="setup-card-body">Choose the building blocks for your registry. You can add or remove sections later in the builder.</p>
+        <div id="section-picker-grid" class="section-picker-grid"></div>
+        <div class="section-picker-custom">
+          <input type="text" id="custom-section-input" class="section-picker-custom-input" placeholder="custom_section_key" />
+          <button type="button" class="setup-btn-ghost" onclick="addCustomSectionToPicker()">+ Custom</button>
+        </div>
+        <div class="setup-card-actions">
+          <button type="button" class="setup-btn setup-btn-yes" onclick="confirmSectionChoice()">Continue →</button>
+        </div>
+      </div>
+    </div>
 
     <div id="builder-setup-card" hidden class="builder-setup-card">
       <div class="setup-card-inner">
@@ -232,12 +247,12 @@
               <div class="mem-config-card">
                 <div class="mem-config-card-title">Classifier</div>
                 <label class="mem-toggle-row">
-                  <input id="mem-use-classifier" type="checkbox" checked onchange="toggleClassifierSection(); exportFullModel()" />
-                  <span>use_classifier <span class="label-hint">run LLM classifier to extract tags</span></span>
+                  <span class="toggle-switch"><input id="mem-use-classifier" type="checkbox" checked onchange="toggleClassifierSection(); exportFullModel()" /></span>
+                  <span class="toggle-label-block">use_classifier<span class="label-hint">run LLM classifier to extract tags</span></span>
                 </label>
                 <label class="mem-toggle-row">
-                  <input id="mem-auto-inject" type="checkbox" onchange="exportFullModel()" />
-                  <span>auto_inject <span class="label-hint">append memory recall to prompt when no memory_recall section exists</span></span>
+                  <span class="toggle-switch"><input id="mem-auto-inject" type="checkbox" onchange="exportFullModel()" /></span>
+                  <span class="toggle-label-block">auto_inject<span class="label-hint">append memory recall to prompt when no memory_recall section exists</span></span>
                 </label>
                 <div id="mem-classifier-section">
                   <label><span>classifier_url <span class="label-hint">base URL for tag classifier</span></span>
@@ -259,8 +274,8 @@
               <div class="mem-config-card">
                 <div class="mem-config-card-title">Embedding <button type="button" class="mem-help-btn" onclick="openEmbedHelp(); event.preventDefault()">?</button></div>
                 <label class="mem-toggle-row">
-                  <input type="checkbox" id="mem-use-embed-url" onchange="toggleEmbedUrlSection(); exportFullModel()" />
-                  <span>Separate embed URL <span class="label-hint">if unchecked, uses classifier_url</span></span>
+                  <span class="toggle-switch"><input type="checkbox" id="mem-use-embed-url" onchange="toggleEmbedUrlSection(); exportFullModel()" /></span>
+                  <span class="toggle-label-block">Separate embed URL<span class="label-hint">if unchecked, uses classifier_url</span></span>
                 </label>
                 <div id="mem-embed-url-section" hidden>
                   <label><span>embed_url</span>
@@ -291,7 +306,7 @@
               </div>
 
               <div class="mem-config-card" id="mem-server-managed-paths">
-                <div class="mem-config-card-title">Storage</div>
+                <div class="mem-config-card-title">Storage <button type="button" class="mem-help-btn" id="storage-hosted-help" onclick="openStorageHostedHelp(); event.preventDefault()" hidden>?</button></div>
                 <label><span>store_path <span class="label-hint">leave blank for workspace + registry default</span></span>
                   <input id="mem-store-path" type="text" placeholder="memory.db" oninput="exportFullModel()" />
                 </label>
@@ -303,28 +318,42 @@
             </div>
           </section>
 
-          <section class="panel field-panel">
+          <section class="panel field-panel" id="style-blend-panel" hidden>
             <div class="panel-head">
               <div>
                 <span class="panel-title">Style Blend</span>
-                <span class="panel-note">Blend between persona and sentiment items as emotional state shifts. Requires emotional state to be enabled in the ensemble.</span>
+                <span class="panel-note">Blend between persona and sentiment items as emotional state shifts.</span>
               </div>
             </div>
+
+            <div class="sb-prereqs">
+              <div class="sb-prereqs-title">Emotional State</div>
+              <div class="sb-prereqs-fields">
+                <label class="mem-toggle-row">
+                  <span class="toggle-switch"><input type="checkbox" id="mem-emotional-state-enabled" onchange="exportFullModel(); _refreshAllStyleBlendAxes()" /></span>
+                  <span class="toggle-label-block">Emotional State<span class="label-hint">track and inject emotion state each turn</span></span>
+                </label>
+                <label><span>dimensions <span class="label-hint">comma-separated axis names — define the axes available below</span></span>
+                  <input id="mem-emotion-dimensions" type="text" placeholder="warmth, tension, trust, playfulness" oninput="exportFullModel(); _refreshAllStyleBlendAxes()" />
+                </label>
+                <label><span>decay_rate <span class="label-hint">per-turn decay 0–1 (default 0.05)</span></span>
+                  <input id="mem-emotion-decay-rate" type="number" step="0.01" min="0" max="1" placeholder="0.05" oninput="exportFullModel()" />
+                </label>
+              </div>
+            </div>
+
             <div class="mem-config-grid">
 
               <div class="mem-config-card">
                 <div class="mem-config-card-title">Personas</div>
                 <label class="mem-toggle-row">
-                  <input type="checkbox" id="sb-personas-enabled" onchange="updateStyleBlend()" />
+                  <span class="toggle-switch"><input type="checkbox" id="sb-personas-enabled" onchange="updateStyleBlend()" /></span>
                   <span>Enable persona blend</span>
                 </label>
                 <div id="sb-personas-config" hidden>
                   <label><span>axis <span class="label-hint">emotion dimension that drives the blend</span></span>
                     <select id="sb-personas-axis" onchange="updateStyleBlend()">
                       <option value="warmth">warmth</option>
-                      <option value="tension">tension</option>
-                      <option value="trust">trust</option>
-                      <option value="playfulness">playfulness</option>
                     </select>
                   </label>
                   <label><span>primary <span class="label-hint">item when dimension is at or below threshold</span></span>
@@ -342,16 +371,13 @@
               <div class="mem-config-card">
                 <div class="mem-config-card-title">Sentiment</div>
                 <label class="mem-toggle-row">
-                  <input type="checkbox" id="sb-sentiment-enabled" onchange="updateStyleBlend()" />
+                  <span class="toggle-switch"><input type="checkbox" id="sb-sentiment-enabled" onchange="updateStyleBlend()" /></span>
                   <span>Enable sentiment blend</span>
                 </label>
                 <div id="sb-sentiment-config" hidden>
                   <label><span>axis</span>
                     <select id="sb-sentiment-axis" onchange="updateStyleBlend()">
                       <option value="warmth">warmth</option>
-                      <option value="tension">tension</option>
-                      <option value="trust">trust</option>
-                      <option value="playfulness">playfulness</option>
                     </select>
                   </label>
                   <label><span>primary</span>
@@ -385,6 +411,7 @@
               <button onclick="openInStudio()" class="primary-btn compact">Open in Studio</button>
             </div>
           </div>
+          <div id="validation-status" class="validation-status"></div>
 
           <div id="preview-json-panel">
             <pre id="output-json" class="output-json"></pre>
@@ -405,6 +432,6 @@
     </section>
   </main>
 
-  <script defer src="/static/templatebuilder.js"></script>
+  <script defer src="/static/builder/templatebuilder.js"></script>
 </body>
 </html>

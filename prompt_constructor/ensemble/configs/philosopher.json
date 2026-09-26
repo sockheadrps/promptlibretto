@@ -3,7 +3,7 @@
     "version": 22,
     "title": "Philosopher",
     "assembly_order": [
-      "personas.context",
+      "personas.text",
       "output_prompt_directions"
     ],
     "personas": {
