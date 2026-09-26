@@ -459,12 +459,14 @@ class Registry:
     title: str = ""
     description: str = ""
     assembly_order: list[str] = field(default_factory=list)
+    assembly_prefixes: dict[str, str] = field(default_factory=dict)
     sections: dict[str, Section] = field(default_factory=dict)
     routes: dict[str, Route] = field(default_factory=dict)
     generation: dict[str, Any] = field(default_factory=dict)
     output_policy: dict[str, Any] = field(default_factory=dict)
     memory_config: dict[str, Any] = field(default_factory=dict)
     memory_rules: list[dict[str, Any]] = field(default_factory=list)
+    style_blend: dict[str, Any] = field(default_factory=dict)
     default_state: Optional[RegistryState] = None
 
     def to_dict(self, *, wrap: bool = True) -> dict[str, Any]:
@@ -474,6 +476,8 @@ class Registry:
             "description": self.description,
             "assembly_order": list(self.assembly_order),
         }
+        if self.assembly_prefixes:
+            body["assembly_prefixes"] = dict(self.assembly_prefixes)
         for k in WELL_KNOWN_SECTIONS:
             if k in self.sections:
                 body[k] = self.sections[k].to_dict()
@@ -490,6 +494,8 @@ class Registry:
             body["memory_config"] = dict(self.memory_config)
         if self.memory_rules:
             body["memory_rules"] = list(self.memory_rules)
+        if self.style_blend:
+            body["style_blend"] = dict(self.style_blend)
         if self.default_state:
             body["default_state"] = self.default_state.to_dict()
         return {"registry": body} if wrap else body
@@ -506,9 +512,9 @@ class Registry:
             )
 
         RESERVED = {
-            "version", "title", "description", "assembly_order",
+            "version", "title", "description", "assembly_order", "assembly_prefixes",
             "routes", "generation", "output_policy", "default_state",
-            "memory_config", "memory_rules",
+            "memory_config", "memory_rules", "style_blend",
         }
 
         sections: dict[str, Section] = {}
@@ -534,11 +540,13 @@ class Registry:
             title=str(data.get("title") or ""),
             description=str(data.get("description") or ""),
             assembly_order=[str(t) for t in (data.get("assembly_order") or [])],
+            assembly_prefixes={str(k): str(v) for k, v in (data.get("assembly_prefixes") or {}).items()},
             sections=sections,
             routes=routes,
             generation=dict(data.get("generation") or {}),
             output_policy=dict(data.get("output_policy") or {}),
             memory_config=dict(data.get("memory_config") or {}),
             memory_rules=list(data.get("memory_rules") or []),
+            style_blend=dict(data.get("style_blend") or {}),
             default_state=default_state,
         )

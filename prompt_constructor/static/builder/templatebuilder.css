@@ -473,6 +473,87 @@ header h1 {
   vertical-align: middle;
 }
 
+.section-prefix-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.section-prefix-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  user-select: none;
+}
+
+.section-prefix-input {
+  display: block;
+  margin-top: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 56px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+/* ── Sliding toggle ──────────────────────────────────────── */
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 30px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-switch::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.toggle-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 11px;
+  height: 11px;
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  transition: transform 0.2s ease, background 0.2s;
+}
+
+.toggle-switch:has(input:checked)::before {
+  background: rgba(201, 139, 64, 0.25);
+  border-color: rgba(201, 139, 64, 0.55);
+}
+
+.toggle-switch:has(input:checked)::after {
+  transform: translateX(13px);
+  background: rgb(201, 139, 64);
+}
+
 .assembly-token-groups {
   display: flex;
   flex-direction: column;
@@ -875,9 +956,16 @@ select:focus {
 }
 
 .validation-status {
-  margin-top: 4px;
   font-size: 12px;
   color: var(--muted);
+  min-height: 0;
+  margin-top: -8px;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.validation-status:empty {
+  margin: 0;
 }
 
 .validation-status.ok {
@@ -2628,7 +2716,7 @@ details[open] > .inline-group-summary::before {
 }
 
 /* Inputs inside cards — slightly more compact */
-.mem-config-card input,
+.mem-config-card input:not([type="checkbox"]),
 .mem-config-card select,
 .mem-config-card textarea {
   font-size: 12px;
@@ -2679,7 +2767,7 @@ details[open] > .inline-group-summary::before {
 .mem-toggle-row {
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.02);
@@ -2695,7 +2783,7 @@ details[open] > .inline-group-summary::before {
   transition: border-color 140ms, color 140ms;
 }
 
-.mem-toggle-row input[type="checkbox"] {
+.mem-toggle-row > input[type="checkbox"] {
   width: auto;
   flex-shrink: 0;
   margin: 0;
@@ -2709,6 +2797,25 @@ details[open] > .inline-group-summary::before {
   letter-spacing: 0;
   color: var(--text-dim);
   line-height: 1.4;
+}
+
+.mem-toggle-row .toggle-switch {
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.toggle-label-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.toggle-label-block .label-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+  line-height: 1.3;
 }
 
 .mem-toggle-row:hover {
@@ -3026,4 +3133,174 @@ select.header-nav-btn optgroup {
 
 .frag-remove-btn:hover {
   color: var(--accent-rose);
+}
+
+/* ── Section Picker (wizard step) ─────────────────────────────── */
+.setup-card-inner--wide {
+  max-width: 680px;
+}
+
+.section-picker-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.section-picker-item {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 1px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.section-picker-item:hover {
+  border-color: var(--accent);
+  background: rgba(201, 139, 64, 0.05);
+}
+
+.section-picker-item input[type="checkbox"] {
+  grid-row: 1 / 3;
+  align-self: center;
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.section-picker-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.section-picker-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.section-picker-item--custom .section-picker-name {
+  color: var(--accent-2);
+}
+
+.section-picker-custom {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.section-picker-custom-input {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 7px 10px;
+  font-family: var(--font-mono);
+}
+
+.setup-btn-ghost {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s, border-color 0.12s;
+}
+.setup-btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+/* ── Section Remove Button ─────────────────────────────────────── */
+.section-remove-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted-soft);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.12s;
+}
+.section-remove-btn:hover { color: var(--accent-rose); }
+
+/* ── Add Section Row ───────────────────────────────────────────── */
+.add-section-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 4px;
+}
+
+.add-section-input {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  width: 180px;
+}
+
+/* ── Style Blend — Emotional State prereqs block ──────────────── */
+.sb-prereqs {
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.sb-prereqs-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.sb-prereqs-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sb-prereqs-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sb-prereqs-fields label > span {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.sb-prereqs-fields input[type="text"],
+.sb-prereqs-fields input[type="number"] {
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 8px;
 }

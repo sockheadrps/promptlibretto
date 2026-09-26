@@ -322,6 +322,41 @@ button { font-family: inherit; cursor: pointer; }
   font-weight: 700;
 }
 
+.pfield-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.pfield-row > input {
+  flex: 1;
+  min-width: 0;
+}
+.pfield-test {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 0 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pfield-test:hover { background: rgba(255, 255, 255, 0.08); }
+.pfield-test:disabled { opacity: 0.5; cursor: wait; }
+.pfield-test-status {
+  font-family: var(--mono);
+  font-size: 10px;
+  min-height: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+.pfield-test-status.ok    { color: #7ec27e; }
+.pfield-test-status.warn  { color: #d4b46a; }
+.pfield-test-status.err   { color: #d47a7a; }
+.pfield-test-status.busy  { color: var(--muted); }
+
 input[type="text"],
 input[type="number"],
 textarea,

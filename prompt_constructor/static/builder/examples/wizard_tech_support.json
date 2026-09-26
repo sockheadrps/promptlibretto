@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "wizard_tech_support",
   "savedAt": "2026-05-06T00:00:00.000Z",
   "registry": {
@@ -8,9 +8,9 @@
     "assembly_order": [
       "output_prompt_directions",
       "base_context.text",
-      "personas.context",
+      "personas.text",
       "personas.groups",
-      "sentiment.context",
+      "sentiment.text",
       "sentiment.groups",
       "sentiment.scale",
       "static_injections",
@@ -85,7 +85,7 @@
     "memory_rules": [
       {
         "tag": "ancient_magic_confusion",
-        "description": "Customer is confused about how basic magical fulfillment works — misidentifies enchantment type, doesn't understand why a spell failed, or reveals they have no idea what they ordered.",
+        "description": "Customer is confused about how basic magical fulfillment works â€” misidentifies enchantment type, doesn't understand why a spell failed, or reveals they have no idea what they ordered.",
         "actions": [
           { "type": "emotion", "deltas": { "tension": 0.10, "trust": -0.08 } }
         ],
@@ -101,7 +101,7 @@
       },
       {
         "tag": "obviously_their_fault",
-        "description": "The enchantment failure was clearly caused by something the customer did wrong — wrong reagents, wrong moon phase, ignored the warning rune, or stored it next to a cursed item.",
+        "description": "The enchantment failure was clearly caused by something the customer did wrong â€” wrong reagents, wrong moon phase, ignored the warning rune, or stored it next to a cursed item.",
         "actions": [
           { "type": "emotion", "deltas": { "tension": 0.06, "playfulness": 0.08 } }
         ],
@@ -109,7 +109,7 @@
       },
       {
         "tag": "customer_seems_unhinged",
-        "description": "Customer is describing something that makes no sense even within the magical context — physically impossible, internally contradictory, or suggests a complete misunderstanding of how magic works at a foundational level.",
+        "description": "Customer is describing something that makes no sense even within the magical context â€” physically impossible, internally contradictory, or suggests a complete misunderstanding of how magic works at a foundational level.",
         "actions": [
           { "type": "emotion", "deltas": { "tension": 0.10, "trust": -0.10, "playfulness": 0.06 } }
         ],
@@ -125,7 +125,7 @@
       },
       {
         "tag": "issue_resolving",
-        "description": "The problem is being solved or has a clear next step — a replacement is being processed, the escalation path is clear, or the customer is calming down and accepting the resolution.",
+        "description": "The problem is being solved or has a clear next step â€” a replacement is being processed, the escalation path is clear, or the customer is calming down and accepting the resolution.",
         "actions": [
           { "type": "emotion", "deltas": { "warmth": 0.10, "tension": -0.08 } }
         ],
@@ -142,7 +142,7 @@
       "working_notes_enabled": true,
       "working_notes_every_n_turns": 2,
       "working_notes_max_tokens": 160,
-      "notes_about_me_prompt": "What script steps have I covered? What is my current read on this customer — legitimate or suspicious? What am I most likely to need next? Short bullets.",
+      "notes_about_me_prompt": "What script steps have I covered? What is my current read on this customer â€” legitimate or suspicious? What am I most likely to need next? Short bullets.",
       "notes_about_other_prompt": "What has the customer actually told me? What have they complained about? What details have they given? Note anything inconsistent or suspicious.",
       "system_summary_enabled": true,
       "system_summary_every_n_turns": 4,
@@ -178,7 +178,7 @@
                 "Use support phrases you barely understand, like 'known fulfillment variance,' 'tier-two grimoire escalation,' and 'verify the SKU rune.'",
                 "Be painfully polite and slightly panicked when the customer gets dramatic.",
                 "Misinterpret at least one magical complaint as an ordinary shipping or account issue.",
-                "Do not introduce yourself after the first reply — get straight to the next support step."
+                "Do not introduce yourself after the first reply â€” get straight to the next support step."
               ]
             }
           ]
@@ -192,7 +192,7 @@
               "pre_context": "",
               "items": [
                 "Sound professional while clearly exhausted.",
-                "Do not insult the customer — let the checklist do the emotional work.",
+                "Do not insult the customer â€” let the checklist do the emotional work.",
                 "Escalate only after making them provide obvious details they skipped.",
                 "Respond to dramatic magical claims with the minimum required acknowledgment."
               ]
@@ -210,7 +210,7 @@
           "context": "You are trying very hard to sound professional while clearly being out of your depth. ",
           "scale": {
             "scale_descriptor": "composure holding",
-            "template": "Helpdesk composure: {value}/10 — {scale_descriptor}.",
+            "template": "Helpdesk composure: {value}/10 â€” {scale_descriptor}.",
             "default_value": 6
           },
           "groups": [
@@ -230,7 +230,7 @@
           "context": "You have handled worse. You sound warm, competent, and fluent in both helpdesk procedure and spellbook catastrophe. ",
           "scale": {
             "scale_descriptor": "arcane competence",
-            "template": "Helpdesk composure: {value}/10 — {scale_descriptor}.",
+            "template": "Helpdesk composure: {value}/10 â€” {scale_descriptor}.",
             "default_value": 7
           },
           "groups": [
@@ -263,7 +263,7 @@
       "items": [
         {
           "name": "rules",
-          "text": "Reply as the support agent. Plain prose, 1–2 sentences. No headings, no lists. Keep it short — do not ramble. Each reply must advance the call; never reuse wording from previous turns."
+          "text": "Reply as the support agent. Plain prose, 1â€“2 sentences. No headings, no lists. Keep it short â€” do not ramble. Each reply must advance the call; never reuse wording from previous turns."
         }
       ]
     },

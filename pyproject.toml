@@ -24,10 +24,12 @@ dependencies = []
 
 [project.optional-dependencies]
 ollama = ["httpx>=0.25"]
+memory = ["sqlite-vec>=0.1.6"]
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
     "httpx>=0.25",
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.urls]

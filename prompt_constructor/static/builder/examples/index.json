@@ -8,7 +8,7 @@
     {
       "file": "plpriest.json",
       "name": "Prompt Libretto Expert",
-      "description": "Expert on Prompt Libretto architecture — registries, runtime assembly, memory systems, ensemble orchestration. Teaches in short digestible answers. Pair with Blank Slate Learner in ensemble."
+      "description": "Expert on Prompt Libretto architecture — registries, assembly tokens, dynamic sections, routes, fragments, memory pipeline, style blend, ensemble, and the four apps. Two output modes: sequential teacher or direct expert Q&A. Pair with Blank Slate Learner in ensemble."
     },
     {
       "file": "plpriest_builder.json",

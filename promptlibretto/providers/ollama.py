@@ -182,6 +182,14 @@ class OllamaProvider(ProviderAdapter):
             content = msg.get("content")
             if content:
                 return content
+            # Reasoning-model fallback (llama-server --reasoning on): if the
+            # main content is empty for this chunk but reasoning_content has
+            # text, surface it so the UI isn't blank. Callers that want to
+            # separate thinking from the final answer should read
+            # `reasoning_content` off the raw payload directly.
+            rc = msg.get("reasoning_content") or msg.get("reasoning")
+            if rc:
+                return rc
         # OpenAI-compatible (llama.cpp, vLLM, etc.): {"choices": [{"message": {"content": "..."}}]}
         choices = data.get("choices")
         if isinstance(choices, list) and choices:
@@ -191,14 +199,24 @@ class OllamaProvider(ProviderAdapter):
                 content = cmsg.get("content")
                 if content:
                     return content
+                rc = cmsg.get("reasoning_content") or cmsg.get("reasoning")
+                if rc:
+                    return rc
             # OpenAI completions style: {"choices": [{"text": "..."}]}
             text = first.get("text") if isinstance(first, dict) else None
             if text:
                 return text
             # Some servers nest as delta (streaming aggregates)
             delta = first.get("delta") if isinstance(first, dict) else None
-            if isinstance(delta, dict) and delta.get("content"):
-                return delta["content"]
+            if isinstance(delta, dict):
+                if delta.get("content"):
+                    return delta["content"]
+                # llama-server --reasoning on streams thinking as
+                # delta.reasoning_content; treat as content so the bubble
+                # populates even when the final answer is short.
+                rc = delta.get("reasoning_content") or delta.get("reasoning")
+                if rc:
+                    return rc
         # Ollama /api/generate: {"response": "..."}
         if data.get("response"):
             return data["response"]

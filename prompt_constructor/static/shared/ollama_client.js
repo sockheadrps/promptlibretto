@@ -67,17 +67,25 @@ export function buildPayload(request, stream, shape) {
 export function extractText(data) {
   if (!data || typeof data !== "object") return "";
   const msg = data.message;
-  if (msg && typeof msg === "object" && msg.content) return msg.content;
+  if (msg && typeof msg === "object") {
+    if (msg.content) return msg.content;
+    if (msg.reasoning_content) return msg.reasoning_content;
+    if (msg.reasoning) return msg.reasoning;
+  }
 
   const choices = data.choices;
   if (Array.isArray(choices) && choices.length) {
     const first = choices[0] || {};
-    if (first.message && typeof first.message === "object" && first.message.content) {
-      return first.message.content;
+    if (first.message && typeof first.message === "object") {
+      if (first.message.content) return first.message.content;
+      if (first.message.reasoning_content) return first.message.reasoning_content;
+      if (first.message.reasoning) return first.message.reasoning;
     }
     if (typeof first.text === "string" && first.text) return first.text;
-    if (first.delta && typeof first.delta === "object" && first.delta.content) {
-      return first.delta.content;
+    if (first.delta && typeof first.delta === "object") {
+      if (first.delta.content) return first.delta.content;
+      if (first.delta.reasoning_content) return first.delta.reasoning_content;
+      if (first.delta.reasoning) return first.delta.reasoning;
     }
   }
   if (typeof data.response === "string" && data.response) return data.response;
@@ -289,21 +297,36 @@ export async function streamGenerate(connection, request, onDelta) {
 }
 
 export async function listModels(connection) {
-  const url = tagsUrl(connection);
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), 5000);
-  try {
-    const resp = await fetch(url, { signal: abort.signal });
-    if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
-    const data = await resp.json();
-    // Ollama: {models: [{name, modified_at, size, ...}]}
-    if (Array.isArray(data.models)) return data.models.map((m) => m.name).filter(Boolean);
-    // OpenAI-compat: {data: [{id, object: "model"}]}
-    if (Array.isArray(data.data)) return data.data.map((m) => m.id).filter(Boolean);
-    return [];
-  } finally {
-    clearTimeout(timer);
+  // Try both endpoint shapes so a mis-typed chatPath doesn't hide the model
+  // list. Preferred shape (based on chatPath) is tried first.
+  const base = connection.baseUrl.replace(/\/+$/, "");
+  const preferOpenAI = resolveShape(connection) === "openai";
+  const candidates = preferOpenAI
+    ? ["/v1/models", "/api/tags"]
+    : ["/api/tags", "/v1/models"];
+  let lastErr = null;
+  for (const path of candidates) {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 5000);
+    try {
+      const resp = await fetch(base + path, { signal: abort.signal });
+      if (!resp.ok) {
+        lastErr = new Error(`${resp.status} ${resp.statusText}`);
+        continue;
+      }
+      const data = await resp.json();
+      // Ollama: {models: [{name, modified_at, size, ...}]}
+      if (Array.isArray(data.models)) return data.models.map((m) => m.name).filter(Boolean);
+      // OpenAI-compat: {data: [{id, object: "model"}]}
+      if (Array.isArray(data.data)) return data.data.map((m) => m.id).filter(Boolean);
+      return [];
+    } catch (err) {
+      lastErr = err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  throw lastErr || new Error("no model-list endpoint responded");
 }
 
 export async function testConnection(connection) {

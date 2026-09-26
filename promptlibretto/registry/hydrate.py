@@ -304,17 +304,17 @@ def _evaluate_selection(
         return rng.choice(sec.items)
 
     sel = sec_state.selected
+    if isinstance(sel, list):
+        matched = [it for it in sec.items if (it.get("id") or it.get("name")) in sel]
+        if matched:
+            return matched
+        # list was given but nothing matched — fall through to default below
     if sec.required:
         if isinstance(sel, str):
             for it in sec.items:
                 if (it.get("id") or it.get("name")) == sel:
                     return it
         return sec.items[0]
-    if isinstance(sel, list):
-        return [
-            it for it in sec.items
-            if it.get("id") in sel
-        ]
     return []
 
 
@@ -593,11 +593,22 @@ def hydrate(
     # Resolve tokens
     resolved: list[dict[str, Any]] = []
     injections_in_order = any(t == "injections" for t in order)
+    prefixes = reg.assembly_prefixes or {}
+    applied_prefix_sections: set[str] = set()
     for tok in order:
         sec = _token_section(tok, reg)
         s = _resolve_token_struct(tok, reg, rs, evaluated, rng, group_index, active)
         if not s:
             continue
+        # Token-specific prefix wins; section-level prefix applies once per section
+        prefix = prefixes.get(tok, "").strip()
+        if not prefix and sec not in applied_prefix_sections:
+            prefix = prefixes.get(sec, "").strip()
+            if prefix:
+                applied_prefix_sections.add(sec)
+        if prefix:
+            body = _struct_to_text(s)
+            s = {"kind": "plain", "text": prefix + "\n" + body, "section": sec}
         s["_section"] = sec
         resolved.append(s)
 

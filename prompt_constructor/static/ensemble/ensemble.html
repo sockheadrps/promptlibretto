@@ -114,9 +114,22 @@
             <label class="inline-toggle pfield-toggle"><input type="checkbox" id="a-debt_enabled" /><span>Memory debt</span></label>
             <label class="inline-toggle pfield-toggle"><input type="checkbox" id="a-episodic_enabled" /><span>Episodic memory</span></label>
             <label class="inline-toggle pfield-toggle"><input type="checkbox" id="a-relationship_enabled" /><span>Relationship arc</span></label>
-            <label class="pfield pfield-wide"><span>classifier_chat_path</span><input type="text" id="a-classifier_chat_path" placeholder="/api/chat  (Ollama)  or  /v1/chat/completions  (OpenAI-compat)" /></label>
-            <label class="pfield pfield-wide"><span>embed_url</span><input type="text" id="a-embed_url" placeholder="defaults to classifier_url" /></label>
-            <label class="pfield pfield-wide"><span>embed_path</span><input type="text" id="a-embed_path" placeholder="/api/embed  (Ollama)  or  /v1/embeddings  (llama.cpp / LM Studio)" /></label>
+            <label class="pfield pfield-wide"><span>classifier_url</span>
+              <div class="pfield-row"><input type="text" id="a-classifier_url" placeholder="http://localhost:11434  (defaults to studio base URL)" /><button type="button" class="pfield-test" data-endpoint-test="chat" data-side="a">Test</button></div>
+              <span class="pfield-test-status" id="a-classifier_url-status"></span>
+            </label>
+            <label class="pfield pfield-wide"><span>classifier_chat_path</span>
+              <div class="pfield-row"><input type="text" id="a-classifier_chat_path" placeholder="/api/chat  (Ollama)  or  /v1/chat/completions  (OpenAI-compat)" /><button type="button" class="pfield-test" data-endpoint-test="chat" data-side="a">Test</button></div>
+              <span class="pfield-test-status" id="a-classifier_chat_path-status"></span>
+            </label>
+            <label class="pfield pfield-wide"><span>embed_url</span>
+              <div class="pfield-row"><input type="text" id="a-embed_url" placeholder="defaults to classifier_url" /><button type="button" class="pfield-test" data-endpoint-test="embed" data-side="a">Test</button></div>
+              <span class="pfield-test-status" id="a-embed_url-status"></span>
+            </label>
+            <label class="pfield pfield-wide"><span>embed_path</span>
+              <div class="pfield-row"><input type="text" id="a-embed_path" placeholder="/api/embed  (Ollama)  or  /v1/embeddings  (llama.cpp / LM Studio)" /><button type="button" class="pfield-test" data-endpoint-test="embed" data-side="a">Test</button></div>
+              <span class="pfield-test-status" id="a-embed_path-status"></span>
+            </label>
           </div>
         </details>
         <details class="pcard-tuning model-only memory-only">
@@ -221,9 +234,22 @@
             <label class="inline-toggle pfield-toggle"><input type="checkbox" id="b-debt_enabled" /><span>Memory debt</span></label>
             <label class="inline-toggle pfield-toggle"><input type="checkbox" id="b-episodic_enabled" /><span>Episodic memory</span></label>
             <label class="inline-toggle pfield-toggle"><input type="checkbox" id="b-relationship_enabled" /><span>Relationship arc</span></label>
-            <label class="pfield pfield-wide"><span>classifier_chat_path</span><input type="text" id="b-classifier_chat_path" placeholder="/api/chat  (Ollama)  or  /v1/chat/completions  (OpenAI-compat)" /></label>
-            <label class="pfield pfield-wide"><span>embed_url</span><input type="text" id="b-embed_url" placeholder="defaults to classifier_url" /></label>
-            <label class="pfield pfield-wide"><span>embed_path</span><input type="text" id="b-embed_path" placeholder="/api/embed  (Ollama)  or  /v1/embeddings  (llama.cpp / LM Studio)" /></label>
+            <label class="pfield pfield-wide"><span>classifier_url</span>
+              <div class="pfield-row"><input type="text" id="b-classifier_url" placeholder="http://localhost:11434  (defaults to studio base URL)" /><button type="button" class="pfield-test" data-endpoint-test="chat" data-side="b">Test</button></div>
+              <span class="pfield-test-status" id="b-classifier_url-status"></span>
+            </label>
+            <label class="pfield pfield-wide"><span>classifier_chat_path</span>
+              <div class="pfield-row"><input type="text" id="b-classifier_chat_path" placeholder="/api/chat  (Ollama)  or  /v1/chat/completions  (OpenAI-compat)" /><button type="button" class="pfield-test" data-endpoint-test="chat" data-side="b">Test</button></div>
+              <span class="pfield-test-status" id="b-classifier_chat_path-status"></span>
+            </label>
+            <label class="pfield pfield-wide"><span>embed_url</span>
+              <div class="pfield-row"><input type="text" id="b-embed_url" placeholder="defaults to classifier_url" /><button type="button" class="pfield-test" data-endpoint-test="embed" data-side="b">Test</button></div>
+              <span class="pfield-test-status" id="b-embed_url-status"></span>
+            </label>
+            <label class="pfield pfield-wide"><span>embed_path</span>
+              <div class="pfield-row"><input type="text" id="b-embed_path" placeholder="/api/embed  (Ollama)  or  /v1/embeddings  (llama.cpp / LM Studio)" /><button type="button" class="pfield-test" data-endpoint-test="embed" data-side="b">Test</button></div>
+              <span class="pfield-test-status" id="b-embed_path-status"></span>
+            </label>
           </div>
         </details>
         <details class="pcard-tuning model-only memory-only">
